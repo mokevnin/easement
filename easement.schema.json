@@ -9,48 +9,75 @@
     "extends": {
       "description": "Config files merged underneath this one, relative to this file. Patterns stay relative to the root of the config being loaded.",
       "oneOf": [
-        { "type": "string" },
-        { "type": "array", "items": { "type": "string" } }
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       ]
     },
-    "version": { "const": 1, "description": "Config format version." },
+    "version": {
+      "const": 1,
+      "description": "Config format version."
+    },
     "components": {
       "description": "Named parts of the system and the paths they cover.",
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": { "$ref": "#/definitions/component" }
+      "additionalProperties": {
+        "$ref": "#/definitions/component"
+      }
     },
     "common": {
       "description": "Components every other component may depend on.",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "rules": {
       "description": "Per component: what it may depend on and use.",
       "type": "object",
-      "additionalProperties": { "$ref": "#/definitions/rule" }
+      "additionalProperties": {
+        "$ref": "#/definitions/rule"
+      }
     },
     "layers": {
       "description": "Components from the top layer to the bottom one: a layer may depend on any layer below it, never on one above.",
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "uniqueItems": true
     },
     "no_cycles": {
       "description": "Fail on dependency cycles between components: true for all, or a list of components.",
       "oneOf": [
-        { "type": "boolean" },
-        { "type": "array", "items": { "type": "string" } }
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       ]
     },
     "strict": {
-      "description": "Fail on checked files that belong to no component.",
+      "description": "Fail on checked files that belong to no component, except those matching `unowned`.",
       "type": "boolean"
     },
     "exclude": {
       "description": "Globs of paths to skip.",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "baseline": {
       "description": "Path of the baseline file, default easement.baseline.yml.",
@@ -63,22 +90,41 @@
         "roots": {
           "description": "Directories that act as sys.path entries, default [\".\", \"src\"].",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
+      }
+    },
+    "unowned": {
+      "description": "Globs of files and directories that may belong to no component in strict mode.",
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     }
   },
   "definitions": {
     "patterns": {
       "oneOf": [
-        { "type": "string" },
-        { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
       ]
     },
     "component": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["in"],
+      "required": [
+        "in"
+      ],
       "properties": {
         "in": {
           "description": "A glob or a list of globs naming a module: a directory or a file.",
@@ -89,8 +135,27 @@
           "$ref": "#/definitions/patterns"
         },
         "because": {
-          "description": "Why the public API exists; shown with privacy violations.",
+          "description": "Why the public API or the importer list exists; shown with their violations.",
           "type": "string"
+        },
+        "except": {
+          "description": "Files matching these patterns do not belong to this component, even though `in` matches them.",
+          "$ref": "#/definitions/patterns"
+        },
+        "priority": {
+          "description": "Which component wins when several match a file: the higher priority, then the longer pattern. Default 0.",
+          "type": "integer"
+        },
+        "isolated": {
+          "description": "The directories matched by `in` (each pattern needs a `*`, no `**`) are instances that must not import each other.",
+          "type": "boolean"
+        },
+        "allow_importers": {
+          "description": "When set, only these components (and the component itself) may import it.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -101,22 +166,30 @@
         "may_depend_on": {
           "description": "Components this one may depend on.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "must_not_depend_on": {
-          "description": "Components that are never allowed, even if common or layers would allow them.",
+          "description": "Components that are never allowed, even if common or layers would allow them. An item may carry its own reason.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
         },
         "may_use_external": {
           "description": "External modules this component may use; unset means no restriction. A pattern covers submodules: lodash covers lodash/fp.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "forbid_external": {
-          "description": "External modules this component must not use.",
+          "description": "External modules this component must not use. An item may carry its own reason.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
         },
         "max_fan_out": {
           "description": "Most components this one may depend on.",
@@ -132,8 +205,52 @@
         "because": {
           "description": "Why the rule exists; shown with its violations.",
           "type": "string"
+        },
+        "must_depend_on": {
+          "description": "Components that every directory of this component must import at least once. An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
+        },
+        "must_use_external": {
+          "description": "External modules that every directory of this component must use; a pattern covers submodules. An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
+        },
+        "requires_file": {
+          "description": "File names or globs that every directory of this component must contain. An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
         }
       }
+    },
+    "listed": {
+      "description": "A name, or a name with a reason of its own that is shown instead of the reason of the whole rule.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "because": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     }
   }
 }

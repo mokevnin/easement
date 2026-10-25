@@ -9,6 +9,7 @@ mod init;
 mod lang;
 mod report;
 mod scan;
+mod scope;
 mod suppress;
 
 use std::collections::hash_map::DefaultHasher;
@@ -52,6 +53,12 @@ enum Command {
         /// Check again whenever a file changes, re-reading only what changed.
         #[arg(long)]
         watch: bool,
+        /// Report only on the files of this component; repeat for several.
+        #[arg(long, value_name = "NAME")]
+        component: Vec<String>,
+        /// Report only on files under this path (a glob, relative to the config); repeat for several.
+        #[arg(long, value_name = "PATH")]
+        scope: Vec<String>,
     },
     /// Record current violations as legalized debt in the baseline file.
     Baseline {
@@ -122,21 +129,37 @@ impl Project {
         self.root.join(rel)
     }
 
-    fn analyze(&self, cache: &mut scan::Cache) -> Result<Analysis> {
+    fn analyze(&self, cache: &mut scan::Cache, scope: &scope::Scope) -> Result<Analysis> {
         let scan = scan::scan(&self.root, &self.config, cache)?;
         let map = ComponentMap::new(&self.config)?;
-        let (violations, edges, mut stats) = check::evaluate(&self.config, &map, &scan.deps);
+        let (violations, edges, mut stats) = check::evaluate(&self.config, &map, scope, &scan.deps);
         let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
         violations.extend(check::cycles(&self.config, &edges));
         violations.extend(check::metrics(&self.config, &edges));
         violations.extend(check::orphans(&self.config, &map, &scan.paths));
-        stats.files = scan.files;
+        violations.extend(check::required(
+            &self.config,
+            &map,
+            &scan.deps,
+            &scan.paths,
+            &scan.all_files,
+        ));
+        stats.files = scan
+            .paths
+            .iter()
+            .filter(|f| scope.contains(&map, f))
+            .count();
         stats.suppressed = suppressed;
-        stats.dynamic = scan.dynamic;
+        stats.dynamic = scan
+            .dynamic
+            .into_iter()
+            .filter(|d| scope.contains(&map, d.rsplit_once(':').map_or(d, |(f, _)| f)))
+            .collect();
         Ok(Analysis {
             violations,
             edges,
             stats,
+            map,
         })
     }
 
@@ -167,6 +190,7 @@ struct Analysis {
     violations: Vec<check::Violation>,
     edges: Vec<check::Edge>,
     stats: check::Stats,
+    map: ComponentMap,
 }
 
 struct CheckOptions {
@@ -174,14 +198,26 @@ struct CheckOptions {
     format: Format,
     no_baseline: bool,
     diff: Option<String>,
+    components: Vec<String>,
+    paths: Vec<String>,
 }
 
 fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
     let project = Project::open(&options.config)?;
+    let scope = scope::Scope::new(&project.config, &options.components, &options.paths)?;
     let Analysis {
-        violations, stats, ..
-    } = project.analyze(cache)?;
+        violations,
+        stats,
+        map,
+        ..
+    } = project.analyze(cache, &scope)?;
     let current = violations.iter().map(check::Violation::key).collect();
+    // Cycles and limits come from the whole project, so a violation belongs to
+    // the scope when any file behind it does.
+    let violations: Vec<_> = violations
+        .into_iter()
+        .filter(|v| v.evidence.iter().any(|(f, _)| scope.contains(&map, f)))
+        .collect();
     let changes = options
         .diff
         .as_ref()
@@ -200,6 +236,7 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
         Baseline::load(&project.baseline_path())?
     };
     let mut verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
+    verdict.stale.retain(|k| scope.contains(&map, &k.file));
     verdict
         .new
         .sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
@@ -246,12 +283,16 @@ fn run(cli: Cli) -> Result<bool> {
             no_baseline,
             diff,
             watch: watching,
+            component,
+            scope,
         } => {
             let options = CheckOptions {
                 config,
                 format,
                 no_baseline,
                 diff,
+                components: component,
+                paths: scope,
             };
             if watching {
                 watch(&options)
@@ -261,8 +302,11 @@ fn run(cli: Cli) -> Result<bool> {
         }
         Command::Baseline { config } => {
             let project = Project::open(&config)?;
-            let violations =
-                check::dedupe(project.analyze(&mut scan::Cache::default())?.violations);
+            let violations = check::dedupe(
+                project
+                    .analyze(&mut scan::Cache::default(), &scope::Scope::default())?
+                    .violations,
+            );
             let path = project.baseline_path();
             Baseline::from_violations(&violations).save(&path)?;
             println!(
@@ -286,7 +330,8 @@ fn run(cli: Cli) -> Result<bool> {
         }
         Command::Graph { config, format } => {
             let project = Project::open(&config)?;
-            let analysis = project.analyze(&mut scan::Cache::default())?;
+            let analysis =
+                project.analyze(&mut scan::Cache::default(), &scope::Scope::default())?;
             print!(
                 "{}",
                 graph::render(

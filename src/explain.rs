@@ -29,6 +29,24 @@ pub fn explain(config: &Config, map: &ComponentMap, rel: &str) -> Result<String>
             public.as_vec().join(", ")
         ));
     }
+    if component.priority != 0 {
+        out.push_str(&format!("  priority: {}\n", component.priority));
+    }
+    if let Some(except) = &component.except {
+        out.push_str(&format!("  except: {}\n", except.as_vec().join(", ")));
+    }
+    if component.isolated {
+        out.push_str("  isolated: instances of this component must not import each other\n");
+        if let Some(instance) = map.instance_of(rel) {
+            out.push_str(&format!("  instance: {instance}\n"));
+        }
+    }
+    if let Some(importers) = &component.allow_importers {
+        out.push_str(&format!(
+            "  may be imported only from: {}\n",
+            importers.join(", ")
+        ));
+    }
     let rule = config.rules.get(name);
     let mut allowed = Vec::new();
     let mut forbidden = Vec::new();
@@ -73,7 +91,36 @@ pub fn explain(config: &Config, map: &ComponentMap, rel: &str) -> Result<String>
         if !rule.forbid_external.is_empty() {
             out.push_str(&format!(
                 "  forbidden external modules: {}\n",
-                rule.forbid_external.join(", ")
+                rule.forbid_external
+                    .iter()
+                    .map(|l| l.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        let names = |items: &[crate::config::Listed]| {
+            items
+                .iter()
+                .map(|l| l.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if !rule.must_depend_on.is_empty() {
+            out.push_str(&format!(
+                "  every directory must import: {}\n",
+                names(&rule.must_depend_on)
+            ));
+        }
+        if !rule.must_use_external.is_empty() {
+            out.push_str(&format!(
+                "  every directory must use external: {}\n",
+                names(&rule.must_use_external)
+            ));
+        }
+        if !rule.requires_file.is_empty() {
+            out.push_str(&format!(
+                "  every directory must contain: {}\n",
+                names(&rule.requires_file)
             ));
         }
         if let Some(max) = rule.max_fan_out {
@@ -100,7 +147,8 @@ mod tests {
 components:
   web: { in: src/web }
   core: { in: src/core }
-  data: { in: src/data, public: src/data/api }
+  data: { in: src/data, public: src/data/api, allow_importers: [core], priority: 2 }
+  pages: { in: 'src/pages/*', isolated: true }
   shared: { in: src/shared }
 common: [shared]
 layers: [web, core]
@@ -108,6 +156,7 @@ rules:
   web:
     must_not_depend_on: [data]
     forbid_external: [moment]
+    requires_file: [README.md]
     because: pages go through core
 ",
         )
@@ -118,10 +167,15 @@ rules:
         assert!(out.contains("may depend on: core (layers), shared (common)"));
         assert!(out.contains("forbidden: data"));
         assert!(out.contains("forbidden external modules: moment"));
+        assert!(out.contains("every directory must contain: README.md"));
         assert!(out.contains("because: pages go through core"));
         let data = explain(&config, &map, "src/data/db.ts").unwrap();
         assert!(data.contains("public API: src/data/api"));
-        assert!(data.contains("not allowed: core, web"));
+        assert!(data.contains("may be imported only from: core"));
+        assert!(data.contains("priority: 2"));
+        let page = explain(&config, &map, "src/pages/home/a.ts").unwrap();
+        assert!(page.contains("instance: src/pages/home"));
+        assert!(data.contains("not allowed: core, pages, web"));
         assert!(explain(&config, &map, "stray.ts").is_err());
     }
 }

@@ -1,0 +1,31 @@
+version: 1
+
+components:
+  wiring: { in: src/app }
+  ee:
+    in: src/ee
+    allow_importers: [wiring]
+    because: ee is licensed separately
+  core: { in: src/core }
+  pages:
+    in: "src/pages/*"
+    isolated: true
+    because: pages ship as separate bundles
+  billing: { in: src/billing/feature/area }
+  tests: { in: "**/*.test.ts", priority: 1 }
+
+common: [ee]
+strict: true
+unowned: [src/generated]
+
+rules:
+  wiring: { may_depend_on: [core, pages] }
+  core:
+    must_not_depend_on:
+      - { name: ee, because: core never knows enterprise code }
+    forbid_external:
+      - { name: moment, because: "moment is deprecated, use date-fns" }
+      - lodash
+    because: core stays dependency-free
+  pages: { may_depend_on: [core] }
+  tests: { may_depend_on: [billing] }

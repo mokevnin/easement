@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 
 use crate::components::ComponentMap;
 use crate::config::{Config, DEFAULT_CONFIG};
+use crate::scope::Scope;
 use crate::{check, lang, scan};
 
 /// Directories whose children are the components, in order of preference.
@@ -157,7 +158,7 @@ pub fn run(root: &Path, force: bool) -> Result<String> {
     let config: Config = serde_norway::from_str(&draft)?;
     let scanned = scan::scan(root, &config, &mut scan::Cache::default())?;
     let map = ComponentMap::new(&config)?;
-    let (_, edges, _) = check::evaluate(&config, &map, &scanned.deps);
+    let (_, edges, _) = check::evaluate(&config, &map, &Scope::default(), &scanned.deps);
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for e in &edges {
         deps.entry(e.from.clone()).or_default().insert(e.to.clone());

@@ -37,6 +37,8 @@ easement check                 # exit 0: passed, 1: violations, 2: error
 easement check --format json   # machine-readable report; also sarif, github, junit
 easement check --diff origin/main  # only imports added in this change
 easement check --watch         # check again on every change
+easement check --component web # report only on the files of one component (repeatable)
+easement check --scope src/api # report only on files under a path (repeatable)
 easement baseline              # legalize current violations
 easement explain src/app/a.ts  # which component a file is in and what it may do
 easement graph                 # the components as a Mermaid diagram (--format dot)
@@ -67,10 +69,10 @@ rules:
 exclude: ["**/*_test.go"]
 ```
 
-- **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the longest pattern wins, so a single file can be carved out of a larger component.
+- **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the one with the higher `priority` wins (default 0), then the longest pattern, so a single file can be carved out of a larger component. `except` lists patterns a component gives up: its files matching them belong to the next component that matches, if any.
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
-- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all; to hold tests to rules of their own, make them a component whose pattern is longer than the one around them, since the longest pattern wins: `handler_tests: { in: "internal/handlers/*_test.go" }` takes the tests out of `handler`. A shorter glob such as `**/*_test.go` loses to the directory.
+- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all. To hold tests to rules of their own, make them a component with a `priority`: `tests: { in: "**/*_test.go", priority: 1 }` takes every test file out of the component of its directory, and `rules.tests.may_depend_on` is its allow-list.
 - **python.roots**: `sys.path` entries inside the project, default `[".", "src"]`.
 
 ```text
@@ -92,6 +94,8 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `external` | a component uses an external module its rule does not allow |
 | `metric` | a component exceeds `max_fan_out` or `max_instability` |
 | `orphan` | with `strict: true`, a checked file belongs to no component |
+| `isolation` | an instance of an `isolated` component imports another instance |
+| `required` | a directory of a component lacks an import or a file its rule requires |
 | `suppression-reason` | an inline suppression has no reason |
 | `unused-suppression` | an inline suppression matches no violation, or names a rule that cannot be suppressed (`dependency`, `privacy` and `external` can be) |
 
@@ -107,6 +111,30 @@ components:
 
 Other components may import only the public paths (`src/billing/index.ts`, anything under `src/billing/api`); code inside `billing` reaches its own internals freely. A component without `public` is open.
 
+### Instances of one component
+
+```yaml
+components:
+  pages:
+    in: "src/pages/*"
+    isolated: true
+    because: pages ship as separate bundles
+```
+
+Each directory that `src/pages/*` matches is an instance, and instances of an `isolated` component must not import each other: `src/pages/contacts` cannot import `src/pages/segments`. A file `contacts.tsx` and a directory `contacts/` are the same instance. Every `in` pattern of an isolated component needs a `*` to tell the instances apart, and no `**`. Violations are the `isolation` rule and can be suppressed inline; `because` of the component is printed with them.
+
+### Who may import a component
+
+```yaml
+components:
+  ee:
+    in: internal/ee
+    allow_importers: [wiring]
+    because: ee is licensed separately
+```
+
+Only the listed components (and `ee` itself) may import `ee`, even when `common` or `layers` would let everyone in. This is the other side of `may_depend_on`: write it where the rule is about the one being imported. The violation reads `pages -> ee: ee may be imported only from wiring`.
+
 ### Layers and forbidden dependencies
 
 ```yaml
@@ -120,6 +148,21 @@ rules:
 
 A layer may depend on every layer below it and never on one above. `must_not_depend_on` wins over everything that would allow the dependency: `may_depend_on`, `common` and `layers`. Its violations read `handler -> repository is forbidden`.
 
+An item of `must_not_depend_on` and `forbid_external` can carry a reason of its own, which is printed instead of the `because` of the rule:
+
+```yaml
+rules:
+  core:
+    must_not_depend_on:
+      - { name: ee, because: core never knows enterprise code }
+    forbid_external:
+      - { name: moment, because: "moment is deprecated, use date-fns" }
+      - lodash
+    because: core stays dependency-free   # printed for lodash
+```
+
+Quote a reason that contains a comma or a colon.
+
 ### External modules
 
 ```yaml
@@ -130,7 +173,20 @@ rules:
     may_use_external: [react, lodash]
 ```
 
-`forbid_external` lists modules the component must not use. `may_use_external` is an allow-list: everything else is a violation; without it any external module is fine. A pattern covers submodules, split at `/`, `.`, `::` and `\`: `lodash` covers `lodash/fp`, `@mantine/core` covers `@mantine/core/styles.css`, `java.util` covers `java.util.List`, `serde` covers `serde::Deserialize`. The standard library counts as external in Go, Python, Java and Rust, so an allow-list has to name it. `because` of the rule is printed with these violations too; it is one reason per component, not per key.
+`forbid_external` lists modules the component must not use. `may_use_external` is an allow-list: everything else is a violation; without it any external module is fine. A pattern covers submodules, split at `/`, `.`, `::` and `\`: `lodash` covers `lodash/fp`, `@mantine/core` covers `@mantine/core/styles.css`, `java.util` covers `java.util.List`, `serde` covers `serde::Deserialize`. The standard library counts as external in Go, Python, Java and Rust, so an allow-list has to name it. The reason of the matching item is printed with a violation, else the `because` of the rule.
+
+### Required imports and files
+
+```yaml
+rules:
+  resources:
+    must_depend_on: [shared]
+    must_use_external:
+      - { name: goverter, because: mappers are generated with goverter }
+    requires_file: [README.md]
+```
+
+The other side of `may_depend_on`: what a component must do rather than may. Every directory that holds checked files of the component is a unit, and some file in the unit has to import each listed component and external module (a pattern covers submodules, as in `forbid_external`) and the directory has to contain each listed file name or glob (`*_test.go` demands a test). A unit that falls short is one `required` violation per missing item, reported at the first file of the directory. With `src/api/*/resources` as the component, each `resources` directory is checked on its own. The rule cannot be suppressed inline; use the baseline for old debt.
 
 ### Coupling limits
 
@@ -145,7 +201,14 @@ Both count dependencies between components, so `common` components are counted t
 
 ### Strict mode
 
-`strict: true` fails on every checked file that belongs to no component, so a new directory cannot slip past the gate unnoticed. There is no way to exempt a directory yet: put it in `exclude` or make it a component.
+`strict: true` fails on every checked file that belongs to no component, so a new directory cannot slip past the gate unnoticed. `unowned` lists the files and directories that are allowed to belong to none:
+
+```yaml
+strict: true
+unowned: [ent, cmd, tools]
+```
+
+Unlike `exclude`, files in `unowned` are still read, so components can depend on them. `exclude` hides files from the check altogether.
 
 ### Cycles
 
@@ -172,6 +235,10 @@ import { client } from "../billing/generated"; // easement:disable-line privacy 
 ```
 
 A suppression without a reason does not suppress and fails as `suppression-reason`. One that no longer matches a violation fails as `unused-suppression`, so exceptions do not outlive the code they excused. Prefer the baseline for old debt; suppressions are for deliberate, reviewed exceptions.
+
+## Reporting on a part of the project
+
+`--component <name>` and `--scope <path>` narrow the report to the files of a component or the files under a path; given together, a file has to satisfy both. The whole project is still read, because cycles, limits and every edge need all of it, so the run is not faster, but the violations, the baseline's stale entries and the counters (`1358 files, 4183 deps` becomes the numbers of the part) are those of the part. With `--watch` the cache makes the reruns fast.
 
 ## Monorepos
 
@@ -208,7 +275,27 @@ Inputs: `version`, `config`, `working-directory`, `diff` and `format` (`github` 
   with: { sarif_file: easement.sarif }
 ```
 
-For [pre-commit](https://pre-commit.com), `.pre-commit-hooks.yaml` offers `easement` (built from source with cargo) and `easement-system` (the `easement` on the `PATH`).
+For git hooks we recommend [mise](https://mise.jdx.dev) to install `easement` and [hk](https://hk.jdx.dev) to run it:
+
+```toml
+# mise.toml
+[tools]
+"github:mokevnin/easement" = "latest"
+hk = "latest"
+```
+
+```pkl
+// hk.pkl
+hooks {
+    ["pre-push"] {
+        steps {
+            ["easement"] { check = "easement check" }
+        }
+    }
+}
+```
+
+Run it on `pre-push` rather than `pre-commit`: the check reads the whole project.
 
 `easement schema` prints the JSON Schema of `easement.yml`; `easement init` adds it to the file for editors that read a `yaml-language-server` comment. `easement check --watch` runs again after every change and re-reads only the files that changed; the cache lives in memory, so every run of the command starts cold.
 

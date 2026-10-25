@@ -34,6 +34,41 @@ pub struct Config {
     /// Fail on files that belong to no component.
     #[serde(default)]
     pub strict: bool,
+    /// Globs of files that may belong to no component in strict mode.
+    #[serde(default)]
+    pub unowned: Vec<String>,
+}
+
+/// A name in a rule's list, optionally with a reason of its own that is shown
+/// instead of the reason of the whole rule.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Listed {
+    Plain(String),
+    Reasoned(Reasoned),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reasoned {
+    name: String,
+    #[serde(default)]
+    because: Option<String>,
+}
+
+impl Listed {
+    pub fn name(&self) -> &str {
+        match self {
+            Listed::Plain(name) | Listed::Reasoned(Reasoned { name, .. }) => name,
+        }
+    }
+
+    pub fn because(&self) -> Option<&str> {
+        match self {
+            Listed::Plain(_) => None,
+            Listed::Reasoned(Reasoned { because, .. }) => because.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -83,9 +118,23 @@ pub struct Component {
     /// When set, other components may import only these paths of this component.
     #[serde(default)]
     pub public: Option<Patterns>,
-    /// Why the public API exists; shown with privacy violations.
+    /// Why the public API or the importer list exists; shown with their violations.
     #[serde(default)]
     pub because: Option<String>,
+    /// Files matching these patterns do not belong to this component, even
+    /// though `in` matches them.
+    #[serde(default)]
+    pub except: Option<Patterns>,
+    /// Which component wins when several match a file: the higher priority,
+    /// then the longer pattern.
+    #[serde(default)]
+    pub priority: i32,
+    /// The directories matched by `in` are instances that must not import each other.
+    #[serde(default)]
+    pub isolated: bool,
+    /// When set, only these components (and the component itself) may import it.
+    #[serde(default)]
+    pub allow_importers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,13 +160,22 @@ pub struct Rule {
     pub may_depend_on: Vec<String>,
     /// Components that are never allowed, even if `common` or `layers` would allow them.
     #[serde(default)]
-    pub must_not_depend_on: Vec<String>,
+    pub must_not_depend_on: Vec<Listed>,
     /// External modules the component may use; unset means no restriction.
     #[serde(default)]
     pub may_use_external: Option<Vec<String>>,
     /// External modules the component must not use.
     #[serde(default)]
-    pub forbid_external: Vec<String>,
+    pub forbid_external: Vec<Listed>,
+    /// Components that every directory of this component must import at least once.
+    #[serde(default)]
+    pub must_depend_on: Vec<Listed>,
+    /// External modules that every directory of this component must use.
+    #[serde(default)]
+    pub must_use_external: Vec<Listed>,
+    /// File names or globs that every directory of this component must contain.
+    #[serde(default)]
+    pub requires_file: Vec<Listed>,
     /// Most components the component may depend on.
     #[serde(default)]
     pub max_fan_out: Option<usize>,
@@ -160,11 +218,23 @@ impl Config {
             for to in &rule.may_depend_on {
                 check(to, &format!("rules.{from}.may_depend_on"))?;
             }
-            for to in &rule.must_not_depend_on {
+            for to in rule.must_not_depend_on.iter().map(Listed::name) {
                 check(to, &format!("rules.{from}.must_not_depend_on"))?;
-                if rule.may_depend_on.contains(to) {
+                if rule.may_depend_on.iter().any(|c| c == to) {
                     bail!("rules.{from} both allows and forbids `{to}`");
                 }
+            }
+            for to in rule.must_depend_on.iter().map(Listed::name) {
+                check(to, &format!("rules.{from}.must_depend_on"))?;
+            }
+            for pattern in rule
+                .must_use_external
+                .iter()
+                .chain(&rule.requires_file)
+                .map(Listed::name)
+            {
+                globset::Glob::new(pattern)
+                    .with_context(|| format!("bad pattern `{pattern}` in rules.{from}"))?;
             }
             if rule
                 .max_instability
@@ -183,6 +253,20 @@ impl Config {
                 .is_some_and(|p| p.as_vec().is_empty())
             {
                 bail!("component `{name}` has an empty `public` list");
+            }
+            for importer in component.allow_importers.iter().flatten() {
+                check(importer, &format!("components.{name}.allow_importers"))?;
+            }
+            if component.isolated
+                && component
+                    .patterns
+                    .as_vec()
+                    .iter()
+                    .any(|p| p.contains("**") || !p.contains('*'))
+            {
+                bail!(
+                    "component `{name}` is isolated, so every `in` pattern needs a `*` to tell the instances apart and no `**`"
+                );
             }
         }
         let mut layers = BTreeSet::new();
@@ -207,7 +291,17 @@ impl Config {
     pub fn forbids(&self, from: &str, to: &str) -> bool {
         self.rules
             .get(from)
-            .is_some_and(|r| r.must_not_depend_on.iter().any(|c| c == to))
+            .is_some_and(|r| r.must_not_depend_on.iter().any(|c| c.name() == to))
+    }
+
+    /// The reason given with `to` in the `must_not_depend_on` of `from`, if any.
+    pub fn forbid_reason(&self, from: &str, to: &str) -> Option<&str> {
+        self.rules
+            .get(from)?
+            .must_not_depend_on
+            .iter()
+            .find(|c| c.name() == to)?
+            .because()
     }
 
     pub fn allows(&self, from: &str, to: &str) -> bool {
@@ -392,6 +486,65 @@ rules:
         assert!(!c.allows("top", "low"));
         assert!(!c.allows("top", "m"));
         assert!(c.allows("mid", "m"));
+    }
+
+    #[test]
+    fn isolated_needs_a_star_and_importers_must_exist() {
+        let err = parse(
+            "version: 1
+components:
+  a: { in: src/a, isolated: true }
+",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("isolated"));
+        let err = parse(
+            "version: 1
+components:
+  a: { in: 'src/**', isolated: true }
+",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("isolated"));
+        let err = parse(
+            "version: 1
+components:
+  a: { in: a, allow_importers: [ghost] }
+",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ghost"));
+    }
+
+    #[test]
+    fn listed_names_carry_their_own_reason() {
+        let c = parse(
+            "version: 1
+components:
+  a: { in: a }
+  b: { in: b }
+  c: { in: c }
+rules:
+  a:
+    must_not_depend_on: [{ name: b, because: why b }, c]
+    because: why a
+",
+        )
+        .unwrap();
+        assert!(c.forbids("a", "b") && c.forbids("a", "c"));
+        assert_eq!(c.forbid_reason("a", "b"), Some("why b"));
+        assert_eq!(c.forbid_reason("a", "c"), None);
+        assert!(
+            parse(
+                "version: 1
+components:
+  a: { in: a }
+rules:
+  a: { forbid_external: [{ name: x, because: y, oops: z }] }
+"
+            )
+            .is_err()
+        );
     }
 
     #[test]

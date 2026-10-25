@@ -758,3 +758,182 @@ fn swift_resolves_package_modules() {
         3,
     );
 }
+
+fn reports(root: &Path, args: &[&str]) -> Vec<serde_json::Value> {
+    let mut all = vec!["check", "--format", "json"];
+    all.extend_from_slice(args);
+    let out = easement(root, &all).get_output().stdout.clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    report["violations"].as_array().unwrap().clone()
+}
+
+fn find<'a>(found: &'a [serde_json::Value], file: &str, rule: &str) -> &'a serde_json::Value {
+    found
+        .iter()
+        .find(|v| v["file"] == file && v["rule"] == rule)
+        .unwrap_or_else(|| panic!("no {rule} in {file}: {found:?}"))
+}
+
+#[test]
+fn instances_importers_priority_reasons_and_unowned() {
+    let (_tmp, root) = fixture("structure");
+    let found = reports(&root, &[]);
+    assert_eq!(found.len(), 7, "{found:?}");
+
+    // Instances of `pages` must not import each other.
+    let isolation = find(&found, "src/pages/contacts/index.ts", "isolation");
+    assert!(
+        isolation["message"]
+            .as_str()
+            .unwrap()
+            .contains("src/pages/contacts -> src/pages/segments")
+    );
+    assert_eq!(isolation["because"], "pages ship as separate bundles");
+
+    // `ee` is imported only from wiring, even though `common` lets everyone in.
+    let importers = find(&found, "src/pages/segments/list.ts", "dependency");
+    assert!(
+        importers["message"]
+            .as_str()
+            .unwrap()
+            .contains("may be imported only from wiring")
+    );
+    assert_eq!(importers["because"], "ee is licensed separately");
+
+    // The priority of `tests` beats the longer pattern of `billing`.
+    let test = find(&found, "src/billing/feature/area/ui.test.ts", "dependency");
+    assert_eq!(test["from"], "tests");
+
+    // A reason on the listed name beats the reason of the rule.
+    assert_eq!(
+        find(&found, "src/core/util.ts", "dependency")["because"],
+        "core never knows enterprise code"
+    );
+    let externals: Vec<_> = found.iter().filter(|v| v["rule"] == "external").collect();
+    assert_eq!(externals.len(), 2);
+    let because =
+        |target: &str| externals.iter().find(|v| v["target"] == target).unwrap()["because"].clone();
+    assert_eq!(because("moment"), "moment is deprecated, use date-fns");
+    assert_eq!(because("lodash/fp"), "core stays dependency-free");
+
+    // Only the file outside every component and outside `unowned` is an orphan.
+    let orphans: Vec<_> = found.iter().filter(|v| v["rule"] == "orphan").collect();
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0]["file"], "src/stray.ts");
+}
+
+#[test]
+fn isolation_can_be_suppressed() {
+    let (_tmp, root) = fixture("structure");
+    let file = root.join("src/pages/contacts/index.ts");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        format!("// easement:disable-next-line isolation -- shared list\n{text}"),
+    )
+    .unwrap();
+    let found = reports(&root, &[]);
+    assert!(!found.iter().any(|v| v["rule"] == "isolation"), "{found:?}");
+}
+
+#[test]
+fn component_and_scope_narrow_the_report() {
+    let (_tmp, root) = fixture("structure");
+
+    let core = reports(&root, &["--component", "core"]);
+    assert_eq!(core.len(), 3, "{core:?}");
+    assert!(core.iter().all(|v| v["file"] == "src/core/util.ts"));
+
+    let pages = reports(&root, &["--scope", "src/pages"]);
+    let files: Vec<_> = pages.iter().map(|v| v["file"].as_str().unwrap()).collect();
+    assert_eq!(
+        files,
+        ["src/pages/contacts/index.ts", "src/pages/segments/list.ts"]
+    );
+
+    // Both restrictions must hold.
+    assert!(reports(&root, &["--component", "core", "--scope", "src/pages"]).is_empty());
+
+    // The counters follow the scope, the cycles and limits still see everything.
+    let out = easement(
+        &root,
+        &["check", "--format", "json", "--component", "pages"],
+    )
+    .get_output()
+    .stdout
+    .clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(report["stats"]["files"], 2);
+    assert_eq!(report["stats"]["internal_deps"], 3);
+
+    easement(&root, &["check", "--component", "ghost"])
+        .code(2)
+        .stderr(contains("unknown component `ghost`"));
+}
+
+#[test]
+fn scoped_runs_do_not_report_stale_entries_of_other_files() {
+    let (_tmp, root) = fixture("structure");
+    easement(&root, &["baseline"]).success();
+    // Fix a violation inside `pages`: its baseline entry is stale there, not in `core`.
+    fs::write(
+        root.join("src/pages/segments/list.ts"),
+        "export const list = 1;\n",
+    )
+    .unwrap();
+    easement(&root, &["check", "--component", "core"])
+        .success()
+        .stdout(contains("0 stale"));
+    easement(&root, &["check", "--component", "pages"])
+        .code(1)
+        .stdout(contains("1 stale"));
+}
+
+#[test]
+fn required_imports_modules_and_files_are_checked_per_directory() {
+    let (_tmp, root) = fixture("required");
+    let found = reports(&root, &[]);
+    let got: Vec<(String, String)> = found
+        .iter()
+        .map(|v| {
+            assert_eq!(v["rule"], "required");
+            (
+                v["file"].as_str().unwrap().into(),
+                v["target"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    let has = |file: &str, target: &str| {
+        assert!(
+            got.contains(&(file.into(), target.into())),
+            "{file} {target}: {got:?}"
+        );
+    };
+    // `books` has everything; `users` imports shared from one file but misses the rest.
+    has("src/api/users/resources/b.ts", "external goverter");
+    has("src/api/users/resources/b.ts", "file README.md");
+    has("src/api/orders/resources/d.ts", "import shared");
+    has("src/api/orders/resources/d.ts", "external goverter");
+    has("src/api/orders/resources/d.ts", "file README.md");
+    assert_eq!(got.len(), 5, "{got:?}");
+    assert_eq!(
+        found[0]["because"], "mappers are generated with goverter",
+        "{found:?}"
+    );
+
+    // Adding what is missing clears the violations of that directory.
+    let users = root.join("src/api/users/resources");
+    fs::write(users.join("README.md"), "# users\n").unwrap();
+    fs::write(
+        users.join("b.ts"),
+        "import goverter from \"goverter\";\nexport const b = goverter;\n",
+    )
+    .unwrap();
+    let found = reports(&root, &[]);
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .all(|v| v["file"] == "src/api/orders/resources/d.ts")
+    );
+}
