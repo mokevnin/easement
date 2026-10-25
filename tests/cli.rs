@@ -705,6 +705,10 @@ fn watch_checks_again_after_a_change() {
 /// that must be seen: the count of internal dependencies proves the adapter resolved them.
 fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
     let (_tmp, root) = fixture(name);
+    if name == "rust" {
+        // Not stored in the fixture: tools that walk the repository would take it for a crate.
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"shop\"\n").unwrap();
+    }
     let (found, stats) = violations(&root);
     assert_eq!(
         found,
