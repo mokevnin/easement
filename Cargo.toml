@@ -28,6 +28,21 @@ tree-sitter-java = "0.23.5"
 tree-sitter-python = "0.25.0"
 tree-sitter-typescript = "0.23.2"
 
+[package.metadata.deb]
+section = "devel"
+priority = "optional"
+assets = [
+    ["target/release/easement", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/easement/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/easement", dest = "/usr/bin/easement", mode = "755" },
+    { source = "LICENSE", dest = "/usr/share/licenses/easement/LICENSE", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/easement/README.md", mode = "644", doc = true },
+]
+
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
