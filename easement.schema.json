@@ -102,6 +102,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "tests": {
+      "description": "`auto` puts the test files of every language (`*_test.go`, `*.test.ts`, `test_*.py`, `*Test.java`, …) into a component named `tests`, which `rules.tests` can restrict. Without such a rule tests may import anything.",
+      "enum": [
+        "auto"
+      ]
     }
   },
   "definitions": {
@@ -156,6 +162,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "public_symbols": {
+          "description": "When set, other components may use only these names from this component's packages. Needs an adapter that reports symbols (Go).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -164,10 +177,10 @@
       "additionalProperties": false,
       "properties": {
         "may_depend_on": {
-          "description": "Components this one may depend on.",
+          "description": "Components this one may depend on. An item may carry its own reason, shown by `explain`.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/listed"
           }
         },
         "must_not_depend_on": {
@@ -178,10 +191,10 @@
           }
         },
         "may_use_external": {
-          "description": "External modules this component may use; unset means no restriction. A pattern covers submodules: lodash covers lodash/fp.",
+          "description": "External modules this component may use; unset means no restriction. A pattern covers submodules: lodash covers lodash/fp. An item may carry its own reason.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/listed"
           }
         },
         "forbid_external": {
@@ -222,6 +235,27 @@
         },
         "requires_file": {
           "description": "File names or globs that every directory of this component must contain. An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
+        },
+        "forbid_file": {
+          "description": "File names or globs that no file of this component may match. An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
+        },
+        "requires_directive": {
+          "description": "Regular expressions that some file in every directory of this component must match, for dependencies written as comments (`//go:embed`, `goverter:converter`). An item may carry its own reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/listed"
+          }
+        },
+        "forbid_symbol": {
+          "description": "Names this component must not use, as `package.Name` or `import/path.Name` (`ent.Client`). Needs an adapter that reports symbols (Go). An item may carry its own reason.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/listed"

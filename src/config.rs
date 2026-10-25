@@ -37,7 +37,39 @@ pub struct Config {
     /// Globs of files that may belong to no component in strict mode.
     #[serde(default)]
     pub unowned: Vec<String>,
+    /// `auto` puts the test files of every language into a component named
+    /// `tests`, which `rules.tests` can restrict; without such a rule tests may
+    /// import anything.
+    #[serde(default)]
+    pub tests: Option<TestsMode>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TestsMode {
+    Auto,
+}
+
+/// The component that `tests: auto` creates.
+pub const TESTS: &str = "tests";
+
+/// Test files by the conventions of the supported languages.
+const TEST_PATTERNS: &[&str] = &[
+    "**/*_test.go",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/__tests__/**",
+    "**/test_*.py",
+    "**/*_test.py",
+    "**/*Test.java",
+    "**/*Tests.java",
+    "**/*Test.kt",
+    "**/*Tests.kt",
+    "**/*Test.cs",
+    "**/*Tests.cs",
+    "**/*Test.php",
+    "**/*Tests.swift",
+];
 
 /// A name in a rule's list, optionally with a reason of its own that is shown
 /// instead of the reason of the whole rule.
@@ -132,6 +164,10 @@ pub struct Component {
     /// The directories matched by `in` are instances that must not import each other.
     #[serde(default)]
     pub isolated: bool,
+    /// When set, other components may use only these names from this component's
+    /// packages (`Scoped`, `Tx`). Needs an adapter that reports symbols (Go).
+    #[serde(default)]
+    pub public_symbols: Option<Vec<String>>,
     /// When set, only these components (and the component itself) may import it.
     #[serde(default)]
     pub allow_importers: Option<Vec<String>>,
@@ -157,16 +193,20 @@ impl Patterns {
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     #[serde(default)]
-    pub may_depend_on: Vec<String>,
+    pub may_depend_on: Vec<Listed>,
     /// Components that are never allowed, even if `common` or `layers` would allow them.
     #[serde(default)]
     pub must_not_depend_on: Vec<Listed>,
     /// External modules the component may use; unset means no restriction.
     #[serde(default)]
-    pub may_use_external: Option<Vec<String>>,
+    pub may_use_external: Option<Vec<Listed>>,
     /// External modules the component must not use.
     #[serde(default)]
     pub forbid_external: Vec<Listed>,
+    /// Names the component must not use, as `package.Name` or `import/path.Name`:
+    /// `ent.Client`, `entgo.io/ent.Client`. Needs an adapter that reports symbols (Go).
+    #[serde(default)]
+    pub forbid_symbol: Vec<Listed>,
     /// Components that every directory of this component must import at least once.
     #[serde(default)]
     pub must_depend_on: Vec<Listed>,
@@ -176,6 +216,13 @@ pub struct Rule {
     /// File names or globs that every directory of this component must contain.
     #[serde(default)]
     pub requires_file: Vec<Listed>,
+    /// File names or globs that no file of this component may match.
+    #[serde(default)]
+    pub forbid_file: Vec<Listed>,
+    /// Regular expressions that some file in every directory of this component
+    /// must match, for dependencies written as comments (`//go:embed`).
+    #[serde(default)]
+    pub requires_directive: Vec<Listed>,
     /// Most components the component may depend on.
     #[serde(default)]
     pub max_fan_out: Option<usize>,
@@ -192,8 +239,33 @@ impl Config {
         let value = load_value(path, &mut Vec::new())?;
         let config: Config = serde_norway::from_value(value)
             .with_context(|| format!("invalid config {}", path.display()))?;
+        let config = config.with_tests()?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// Adds the `tests` component when `tests: auto` asks for it.
+    fn with_tests(mut self) -> Result<Self> {
+        if self.tests.is_none() {
+            return Ok(self);
+        }
+        if self.components.contains_key(TESTS) {
+            bail!("`tests: auto` creates a component named `{TESTS}`, which is already declared");
+        }
+        self.components.insert(
+            TESTS.to_string(),
+            Component {
+                patterns: Patterns::Many(TEST_PATTERNS.iter().map(|p| p.to_string()).collect()),
+                public: None,
+                because: None,
+                except: None,
+                priority: 1_000_000,
+                isolated: false,
+                public_symbols: None,
+                allow_importers: None,
+            },
+        );
+        Ok(self)
     }
 
     fn validate(&self) -> Result<()> {
@@ -215,12 +287,12 @@ impl Config {
         }
         for (from, rule) in &self.rules {
             check(from, "rules")?;
-            for to in &rule.may_depend_on {
+            for to in rule.may_depend_on.iter().map(Listed::name) {
                 check(to, &format!("rules.{from}.may_depend_on"))?;
             }
             for to in rule.must_not_depend_on.iter().map(Listed::name) {
                 check(to, &format!("rules.{from}.must_not_depend_on"))?;
-                if rule.may_depend_on.iter().any(|c| c == to) {
+                if rule.may_depend_on.iter().any(|c| c.name() == to) {
                     bail!("rules.{from} both allows and forbids `{to}`");
                 }
             }
@@ -231,10 +303,21 @@ impl Config {
                 .must_use_external
                 .iter()
                 .chain(&rule.requires_file)
+                .chain(&rule.forbid_file)
                 .map(Listed::name)
             {
                 globset::Glob::new(pattern)
                     .with_context(|| format!("bad pattern `{pattern}` in rules.{from}"))?;
+            }
+            for symbol in rule.forbid_symbol.iter().map(Listed::name) {
+                if !symbol.contains('.') {
+                    bail!("rules.{from}.forbid_symbol `{symbol}` must look like `package.Name`");
+                }
+            }
+            for pattern in rule.requires_directive.iter().map(Listed::name) {
+                regex::Regex::new(pattern).with_context(|| {
+                    format!("bad regular expression `{pattern}` in rules.{from}.requires_directive")
+                })?;
             }
             if rule
                 .max_instability
@@ -304,15 +387,26 @@ impl Config {
             .because()
     }
 
+    /// The reason given with `to` in the `may_depend_on` of `from`, if any.
+    pub fn allow_reason(&self, from: &str, to: &str) -> Option<&str> {
+        self.rules
+            .get(from)?
+            .may_depend_on
+            .iter()
+            .find(|c| c.name() == to)?
+            .because()
+    }
+
     pub fn allows(&self, from: &str, to: &str) -> bool {
         from == to
+            || self.tests.is_some() && from == TESTS && !self.rules.contains_key(TESTS)
             || !self.forbids(from, to)
                 && (self.common.iter().any(|c| c == to)
                     || self.above(from, to)
                     || self
                         .rules
                         .get(from)
-                        .is_some_and(|r| r.may_depend_on.iter().any(|c| c == to)))
+                        .is_some_and(|r| r.may_depend_on.iter().any(|c| c.name() == to)))
     }
 
     /// Whether `from` is a higher layer than `to`.
@@ -437,6 +531,7 @@ rules:
 
     fn parse(yaml: &str) -> Result<Config> {
         let config: Config = serde_norway::from_str(yaml)?;
+        let config = config.with_tests()?;
         config.validate()?;
         Ok(config)
     }
@@ -579,6 +674,59 @@ rules:
         )
         .unwrap_err();
         assert!(err.to_string().contains("max_instability"));
+    }
+
+    #[test]
+    fn tests_auto_adds_a_component_that_is_open_unless_ruled() {
+        let open = parse(
+            "version: 1
+components:
+  a: { in: a }
+tests: auto
+",
+        )
+        .unwrap();
+        assert!(open.components.contains_key("tests"));
+        assert!(open.allows("tests", "a"));
+        assert!(!open.allows("a", "tests"));
+        let ruled = parse(
+            "version: 1
+components:
+  a: { in: a }
+  helper: { in: testhelper }
+tests: auto
+rules:
+  tests: { may_depend_on: [helper] }
+",
+        )
+        .unwrap();
+        assert!(ruled.allows("tests", "helper"));
+        assert!(!ruled.allows("tests", "a"));
+        let err = parse(
+            "version: 1
+components:
+  tests: { in: t }
+tests: auto
+",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already declared"));
+    }
+
+    #[test]
+    fn may_depend_on_carries_reasons() {
+        let c = parse(
+            "version: 1
+components:
+  a: { in: a }
+  b: { in: b }
+rules:
+  a: { may_depend_on: [{ name: b, because: why b }] }
+",
+        )
+        .unwrap();
+        assert!(c.allows("a", "b"));
+        assert_eq!(c.allow_reason("a", "b"), Some("why b"));
     }
 
     #[test]

@@ -6,7 +6,9 @@ use tree_sitter::{Language, Query};
 
 use super::{Adapter, Import, Target, dynamic_calls, query_imports, relative};
 
-/// `import … from`, `export … from`, `import x = require()`, `require()`, `import()`.
+/// `import … from`, `export … from`, `import x = require()`, `require()`, `import()`
+/// (also in types: `typeof import('x')`), and the module paths that test runners
+/// take: `vi.mock('x')`, `jest.mock('x')`, `jest.requireActual('x')`.
 const QUERY: &str = r#"
 (import_statement source: (string) @spec)
 (export_statement source: (string) @spec)
@@ -18,6 +20,13 @@ const QUERY: &str = r#"
 (call_expression
   function: (import)
   arguments: (arguments . (string) @spec))
+(call_expression
+  function: (member_expression
+    object: (identifier) @runner
+    property: (property_identifier) @method)
+  arguments: (arguments . (string) @spec)
+  (#match? @runner "^(vi|jest)$")
+  (#match? @method "^(mock|doMock|unmock|doUnmock|importActual|importMock|requireActual|requireMock|createMockFromModule|setMock)$"))
 "#;
 
 /// `require(x)` and `import(x)` with their first argument.
@@ -170,6 +179,26 @@ const h = notRequire("./h");
             .map(|i| i.specifier)
             .collect();
         assert_eq!(got, ["./a", "./b", "./c", "./d", "./e", "./f", "./g"]);
+    }
+
+    #[test]
+    fn extracts_type_imports_and_test_mocks() {
+        let ts = TypeScript::new(Path::new("/nonexistent")).unwrap();
+        let src = "type A = typeof import('./a');
+type B = import('./b').B;
+vi.mock('./c', () => ({}));
+jest.requireActual('./d');
+const e = vi.importActual<Mod>('./f');
+other.mock('./g');
+vi.fn('./h');
+";
+        let got: Vec<_> = ts
+            .imports(Path::new("x.test.ts"), src)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.specifier)
+            .collect();
+        assert_eq!(got, ["./a", "./b", "./c", "./d", "./f"]);
     }
 
     #[test]

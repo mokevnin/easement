@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,10 @@ pub enum RuleId {
     Isolation,
     /// A directory of a component lacks an import or a file the rules require.
     Required,
+    /// A file a component's rules forbid.
+    File,
+    /// A use of a name the rules forbid or the target does not make public.
+    Symbol,
     /// An inline suppression that matches no violation.
     UnusedSuppression,
     /// An inline suppression without a reason.
@@ -44,17 +49,20 @@ impl RuleId {
             RuleId::Orphan => "orphan",
             RuleId::Isolation => "isolation",
             RuleId::Required => "required",
+            RuleId::File => "file",
+            RuleId::Symbol => "symbol",
             RuleId::UnusedSuppression => "unused-suppression",
             RuleId::SuppressionReason => "suppression-reason",
         }
     }
 
     /// Rules that an inline comment can suppress.
-    pub const SUPPRESSIBLE: [RuleId; 4] = [
+    pub const SUPPRESSIBLE: [RuleId; 5] = [
         RuleId::Dependency,
         RuleId::Privacy,
         RuleId::External,
         RuleId::Isolation,
+        RuleId::Symbol,
     ];
 
     pub fn suppressible(s: &str) -> Option<Self> {
@@ -119,6 +127,20 @@ pub struct Stats {
     pub unresolved: Vec<String>,
     /// `file:line` of imports whose target is computed at run time and so is not checked.
     pub dynamic: Vec<String>,
+    /// In diff mode: `a -> b` for component dependencies that exist only
+    /// because of the changed lines.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub new_dependencies: Vec<String>,
+}
+
+/// A name used through an import, with the import resolved.
+#[derive(Debug, Clone)]
+pub struct SymbolRef {
+    pub file: std::path::PathBuf,
+    pub line: usize,
+    pub specifier: String,
+    pub name: String,
+    pub target: Target,
 }
 
 /// An import between two different components.
@@ -274,6 +296,21 @@ pub fn evaluate(
     }
     stats.unmapped_files = unmapped.len();
     (found, edges, stats)
+}
+
+/// Component dependencies, as `a -> b`, whose every import sits on a line
+/// that `changed` accepts: the edges that did not exist before the change.
+pub fn new_dependencies(edges: &[Edge], changed: impl Fn(&str, usize) -> bool) -> Vec<String> {
+    let mut all_changed: BTreeMap<(&str, &str), bool> = BTreeMap::new();
+    for e in edges {
+        let entry = all_changed.entry((&e.from, &e.to)).or_insert(true);
+        *entry &= changed(&e.file, e.line);
+    }
+    all_changed
+        .into_iter()
+        .filter(|(_, new)| *new)
+        .map(|((from, to), _)| format!("{from} -> {to}"))
+        .collect()
 }
 
 /// Dependency cycles between the components covered by `no_cycles`: one
@@ -491,10 +528,11 @@ struct Unit {
     external: BTreeSet<String>,
 }
 
-/// `must_depend_on`, `must_use_external` and `requires_file`: every directory
+/// `must_depend_on`, `must_use_external`, `requires_file` and `requires_directive`: every directory
 /// that holds checked files of a component must import what the rule lists and
 /// contain the files it names. One violation per directory and missing item.
 pub fn required(
+    root: &Path,
     config: &Config,
     map: &ComponentMap,
     deps: &[Dep],
@@ -506,7 +544,8 @@ pub fn required(
         config.rules.get(from).is_some_and(|r| {
             !(r.must_depend_on.is_empty()
                 && r.must_use_external.is_empty()
-                && r.requires_file.is_empty())
+                && r.requires_file.is_empty()
+                && r.requires_directive.is_empty())
         })
     };
     let mut units: BTreeMap<(String, String), Unit> = BTreeMap::new();
@@ -606,6 +645,138 @@ pub fn required(
                     wanted,
                 );
             }
+        }
+        for wanted in &rule.requires_directive {
+            let Ok(pattern) = regex::Regex::new(wanted.name()) else {
+                continue;
+            };
+            let present = unit.files.iter().any(|file| {
+                std::fs::read_to_string(root.join(file)).is_ok_and(|text| pattern.is_match(&text))
+            });
+            if !present {
+                missing(
+                    format!("directive {}", wanted.name()),
+                    format!(
+                        "{shown} ({component}) must contain a comment or text matching `{}`, and no file in it does",
+                        wanted.name()
+                    ),
+                    wanted,
+                );
+            }
+        }
+    }
+    found
+}
+
+/// `forbid_symbol` and `public_symbols`: names used through imports.
+pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<Violation> {
+    let mut found = Vec::new();
+    for used in uses {
+        let file = slash(&used.file);
+        let Some(from) = map.component_of(&file) else {
+            continue;
+        };
+        let mut report = |message: String, target: String, to: &str, because: Option<&str>| {
+            found.push(Violation {
+                rule: RuleId::Symbol,
+                evidence: vec![(file.clone(), used.line)],
+                file: file.clone(),
+                line: used.line,
+                message,
+                because: because.map(str::to_string),
+                from: from.to_string(),
+                to: to.to_string(),
+                target,
+                specifier: used.specifier.clone(),
+            });
+        };
+        if let Some(rule) = config.rules.get(from) {
+            for listed in &rule.forbid_symbol {
+                if names_symbol(listed.name(), &used.specifier, &used.name) {
+                    report(
+                        format!("{from} must not use {}", listed.name()),
+                        listed.name().to_string(),
+                        "",
+                        listed.because().or(rule.because.as_deref()),
+                    );
+                }
+            }
+        }
+        if let Target::Internal(path) = &used.target
+            && let Some(to) = map.component_of(&slash(path))
+            && to != from
+            && let Some(public) = &config.components[to].public_symbols
+            && !public.contains(&used.name)
+        {
+            report(
+                format!(
+                    "{from} -> {to}: {} is not in the public symbols of {to} ({})",
+                    used.name,
+                    public.join(", ")
+                ),
+                format!("{}.{}", used.specifier, used.name),
+                to,
+                config.components[to].because.as_deref(),
+            );
+        }
+    }
+    found
+}
+
+/// Whether `pattern` (`pkg.Name` or `import/path.Name`) names the symbol
+/// `name` used through the import `specifier`.
+fn names_symbol(pattern: &str, specifier: &str, name: &str) -> bool {
+    let Some((qualifier, wanted)) = pattern.rsplit_once('.') else {
+        return false;
+    };
+    wanted == name
+        && (qualifier == specifier
+            || specifier
+                .strip_suffix(qualifier)
+                .is_some_and(|rest| rest.ends_with('/')))
+}
+
+/// `forbid_file`: files of a component whose name or path matches a forbidden glob.
+pub fn forbidden_files(config: &Config, map: &ComponentMap, files: &[String]) -> Vec<Violation> {
+    let mut found = Vec::new();
+    for (component, rule) in &config.rules {
+        if rule.forbid_file.is_empty() {
+            continue;
+        }
+        let matchers: Vec<(&Listed, globset::GlobMatcher)> = rule
+            .forbid_file
+            .iter()
+            .filter_map(|l| Some((l, globset::Glob::new(l.name()).ok()?.compile_matcher())))
+            .collect();
+        for file in files {
+            if map.component_of(file) != Some(component.as_str()) {
+                continue;
+            }
+            let name = file.rsplit_once('/').map_or(file.as_str(), |(_, n)| n);
+            let Some((listed, _)) = matchers
+                .iter()
+                .find(|(_, m)| m.is_match(name) || m.is_match(file))
+            else {
+                continue;
+            };
+            found.push(Violation {
+                rule: RuleId::File,
+                file: file.clone(),
+                line: 1,
+                message: format!(
+                    "{component} must not contain {file} (forbid_file {})",
+                    listed.name()
+                ),
+                because: listed
+                    .because()
+                    .or(rule.because.as_deref())
+                    .map(str::to_string),
+                from: component.clone(),
+                to: String::new(),
+                target: file.clone(),
+                specifier: String::new(),
+                evidence: vec![(file.clone(), 1)],
+            });
         }
     }
     found
@@ -718,6 +889,27 @@ rules:
         assert!(found[0].message.contains("depends on 2 components"));
         assert!(found[1].message.contains("instability 0.67"));
         assert!(metrics(&limits("max_fan_out: 2, max_instability: 0.7"), &edges).is_empty());
+    }
+
+    #[test]
+    fn a_dependency_is_new_only_when_all_its_imports_changed() {
+        let edges = [
+            Edge {
+                line: 1,
+                ..edge("a", "b")
+            },
+            Edge {
+                line: 2,
+                ..edge("a", "b")
+            },
+            Edge {
+                line: 3,
+                ..edge("a", "c")
+            },
+        ];
+        // Line 1 of a/x is old, so a -> b existed before; only a -> c is new.
+        let got = new_dependencies(&edges, |_, line| line != 1);
+        assert_eq!(got, ["a -> c"]);
     }
 
     #[test]

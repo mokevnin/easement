@@ -42,8 +42,11 @@ easement check --scope src/api # report only on files under a path (repeatable)
 easement baseline              # legalize current violations
 easement explain src/app/a.ts  # which component a file is in and what it may do
 easement graph                 # the components as a Mermaid diagram (--format dot)
+easement suggest               # what the real graph says about the config
 easement schema                # the JSON Schema of easement.yml
 ```
+
+`easement suggest` reads the real graph against the config and lists the `may_depend_on` entries no import uses, the imports that nothing allows, and the components whose instances never import each other and so could be `isolated`.
 
 `easement init` finds the components in the layout of the project (the subdirectories of `internal/`, `src/`, `app/`, … or the top-level directories) and allows every dependency it finds between them. The first `easement check` passes; remove the dependencies that should not exist, and add `because:` reasons.
 
@@ -72,8 +75,8 @@ exclude: ["**/*_test.go"]
 - **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the one with the higher `priority` wins (default 0), then the longest pattern, so a single file can be carved out of a larger component. `except` lists patterns a component gives up: its files matching them belong to the next component that matches, if any.
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
-- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all. To hold tests to rules of their own, make them a component with a `priority`: `tests: { in: "**/*_test.go", priority: 1 }` takes every test file out of the component of its directory, and `rules.tests.may_depend_on` is its allow-list.
-- **python.roots**: `sys.path` entries inside the project, default `[".", "src"]`.
+- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all. To hold tests to rules of their own, see [Tests](#tests).
+- **`python`**: `roots` lists the `sys.path` entries inside the project, default `[".", "src"]`.
 
 ```text
 $ easement check
@@ -95,9 +98,11 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `metric` | a component exceeds `max_fan_out` or `max_instability` |
 | `orphan` | with `strict: true`, a checked file belongs to no component |
 | `isolation` | an instance of an `isolated` component imports another instance |
-| `required` | a directory of a component lacks an import or a file its rule requires |
+| `required` | a directory of a component lacks an import, a file or a directive its rule requires |
+| `file` | a component holds a file its `forbid_file` rule forbids |
+| `symbol` | a component uses a name its `forbid_symbol` rule forbids, or one outside the `public_symbols` of another component |
 | `suppression-reason` | an inline suppression has no reason |
-| `unused-suppression` | an inline suppression matches no violation, or names a rule that cannot be suppressed (`dependency`, `privacy` and `external` can be) |
+| `unused-suppression` | an inline suppression matches no violation, or names a rule that cannot be suppressed (`dependency`, `privacy`, `external`, `isolation` and `symbol` can be) |
 
 ### Public API
 
@@ -161,6 +166,8 @@ rules:
     because: core stays dependency-free   # printed for lodash
 ```
 
+`may_depend_on`, `may_use_external`, `must_depend_on`, `must_use_external`, `requires_file`, `forbid_file`, `requires_directive` and `forbid_symbol` take the same items. For the allow-lists the reason says why the dependency is allowed and is shown by `easement explain`.
+
 Quote a reason that contains a comma or a colon.
 
 ### External modules
@@ -187,6 +194,52 @@ rules:
 ```
 
 The other side of `may_depend_on`: what a component must do rather than may. Every directory that holds checked files of the component is a unit, and some file in the unit has to import each listed component and external module (a pattern covers submodules, as in `forbid_external`) and the directory has to contain each listed file name or glob (`*_test.go` demands a test). A unit that falls short is one `required` violation per missing item, reported at the first file of the directory. With `src/api/*/resources` as the component, each `resources` directory is checked on its own. The rule cannot be suppressed inline; use the baseline for old debt.
+
+### Files and directives
+
+```yaml
+rules:
+  ui:
+    forbid_file:
+      - { name: "*.css", because: styles live in the design system }
+  resources:
+    requires_directive:
+      - { name: "goverter:converter", because: mappers are generated }
+```
+
+`forbid_file` fails on every file of the component whose name or path matches a glob (`file` violation, one per file). `requires_directive` is for dependencies that are written as comments rather than imports (`// goverter:converter`, `//go:generate`, `//go:embed`): some file in every directory of the component has to match each regular expression, like `requires_file` does for names. A directory that does not is one `required` violation per missing expression.
+
+### Symbols
+
+```yaml
+components:
+  db:
+    in: internal/db
+    public_symbols: [Scoped, Tx]
+    because: handlers get a scoped client, never the raw one
+
+rules:
+  handler:
+    forbid_symbol:
+      - { name: "db.Client", because: use db.Scoped so every query is tenant-bound }
+```
+
+`forbid_symbol` names what a component must not use, as `package.Name` or `import/path.Name`. `public_symbols` is the other side: other components may use only these names from the component's packages (`only Scoped and Tx`). Both are `symbol` violations at the line of the use and can be suppressed inline.
+
+This is name-based, not type-based: easement matches `db.Client` through the import that brings `db` in (its alias, or the package name from the path), so `*db.Client` in a signature is seen too, but a value that merely has that type, or a local variable shadowing the import name, is not told apart. Symbols are read for Go only; for other languages the rules say nothing. Adapters add support by implementing `symbol_uses`.
+
+### Tests
+
+```yaml
+tests: auto
+
+rules:
+  tests:
+    may_depend_on: [testhelper, service]
+    because: tests reach the database only through testhelper
+```
+
+`tests: auto` puts the test files of every language into a component named `tests` (`*_test.go`, `*.test.*` and `*.spec.*` for TypeScript and JavaScript, `test_*.py` and `*_test.py`, `*Test.java`, `*Tests.java`, `*Test.kt`, `*Test.cs`, `*Tests.cs`, `*Test.php`, `*Tests.swift`, `__tests__/`). It beats every other component for those files. Without a `tests` rule tests may import anything, which is the same as not checking them; with one, `may_depend_on` is their allow-list. Name the component `tests` yourself and `tests: auto` refuses to run.
 
 ### Coupling limits
 
@@ -313,6 +366,8 @@ Entries are keyed by rule, file, target and components, not by line, so unrelate
 
 `easement check --diff <base>` reports only violations whose import line was added or changed since the merge-base with `<base>`, including uncommitted and untracked files. Old violations elsewhere do not fail the change, so the gate can be turned on without a baseline. In CI fetch the base branch (`actions/checkout` with `fetch-depth: 0`).
 
+The report ends with the new dependencies between components that the change brings: `app -> ui` is listed when every import behind that edge is on a changed line, so a reviewer sees the change to the graph and not only the violations. `--format github` adds it as a notice and `--format json` as `stats.new_dependencies`.
+
 The baseline still applies, and stale entries are still reported. A rule change in `easement.yml` does not touch the importing lines, so it shows up only in a full `easement check`; run both on pull requests if the config changes often.
 
 ## Languages
@@ -320,7 +375,7 @@ The baseline still applies, and stale entries are still reported. A rule change 
 | Language | Extracts | Resolves |
 |---|---|---|
 | Go | `import` | module paths from every `go.mod` in the repo |
-| TypeScript / JavaScript | `import`, `export … from`, `import x = require()`, `require()`, `import()` | Node/bundler rules via [oxc_resolver]: relative paths, `tsconfig` `paths`, package `exports`, workspaces, `.js` → `.ts` |
+| TypeScript / JavaScript | `import`, `export … from`, `import x = require()`, `require()`, `import()`, `typeof import()`, `vi.mock()` and `jest.mock()` (also `requireActual`, `importActual`, `doMock`, …) | Node/bundler rules via [oxc_resolver]: relative paths, `tsconfig` `paths`, package `exports`, workspaces, `.js` → `.ts` |
 | Python | `import`, `from … import`, relative imports | longest existing module or package under the source roots; `from a import b` resolves to `a/b.py` if it exists, otherwise to `a` |
 | Java | `import`, `import static`, `import ….*` | classes indexed by their `package` declaration, so any source layout and multi-module builds work without configuration |
 | Rust | `use`, `mod x;` | the module tree of the crate: `crate::`, `self::`, `super::`, and other crates of the workspace by name; a path points at the deepest module file it passes through |
@@ -329,7 +384,7 @@ The baseline still applies, and stale entries are still reported. A rule change 
 | PHP | `use`, `use function`, `use const`, group `use`, `require`/`include` of a literal | PSR-4 maps of every `composer.json`; a function or constant points at the directory of its namespace |
 | Swift | `import` | modules in the SwiftPM layout: `Sources/<Module>` next to a `Package.swift` |
 
-Known limits: references by fully qualified name without an import (Java, C#, Kotlin, PHP) are not seen. Imports whose target is computed at run time (`importlib.import_module(name)`, `require(path)`, `import(path)`, `Class.forName(name)`) cannot be checked; the report counts them (`N dynamic imports not analysed`) and `--format json` lists them in `stats.dynamic`. easement sees imports of packages, files and modules, not of symbols, so a rule cannot tell `ent.Client` from another name in the same package. In Rust, `#[path]` attributes and items re-exported through another module are not followed. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
+Known limits: references by fully qualified name without an import (Java, C#, Kotlin, PHP) are not seen. Imports whose target is computed at run time (`importlib.import_module(name)`, `require(path)`, `import(path)`, `Class.forName(name)`) cannot be checked; the report counts them (`N dynamic imports not analysed`) and `--format json` lists them in `stats.dynamic`. Symbol rules are name-based and exist for Go only, see [Symbols](#symbols); easement does not resolve types. In Rust, `#[path]` attributes and items re-exported through another module are not followed. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
 
 Adding a language means implementing one trait (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
 
@@ -365,7 +420,7 @@ Where `easement` differs:
 
 Where the others are stronger:
 
-- **Depth.** `easement` sees imports, not types. Rules about classes, methods, annotations, naming or call chains (ArchUnit, arch-go), and symbol-level rules in general, are out of its reach.
+- **Depth.** `easement` sees imports and, for Go, the names used through them, but it does not resolve types. Rules about classes, methods, annotations, naming or call chains (ArchUnit, arch-go) are out of its reach.
 - **Resolution.** A tool built for one ecosystem knows its build system better than a general adapter does: dependency-cruiser and its TypeScript options, import-linter and Python packaging, ArchUnit and the classpath.
 - **Maturity.** The tools above have years of use behind them. `easement` is early.
 

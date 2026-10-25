@@ -6,8 +6,9 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
+use crate::check::SymbolRef;
 use crate::config::Config;
-use crate::lang::{self, Import, Target};
+use crate::lang::{self, Import, SymbolUse, Target};
 use crate::suppress::{self, Suppression};
 
 /// A resolved dependency of one project file.
@@ -25,6 +26,7 @@ struct Parsed {
     len: u64,
     imports: Vec<Import>,
     dynamic: Vec<usize>,
+    symbols: Vec<SymbolUse>,
     suppressions: Vec<Suppression>,
 }
 
@@ -41,6 +43,7 @@ pub struct Scan {
     /// Every checked file, relative to the root with `/` separators.
     pub paths: Vec<String>,
     pub deps: Vec<Dep>,
+    pub symbols: Vec<SymbolRef>,
     pub suppressions: Vec<Suppression>,
 }
 
@@ -60,6 +63,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
     let mut deps = Vec::new();
+    let mut symbols = Vec::new();
     let mut dynamic = Vec::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
@@ -99,6 +103,9 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 dynamic: adapter.dynamic_imports(path, &source).with_context(|| {
                     format!("{} adapter failed on {}", adapter.name(), rel.display())
                 })?,
+                symbols: adapter.symbol_uses(path, &source).with_context(|| {
+                    format!("{} adapter failed on {}", adapter.name(), rel.display())
+                })?,
                 suppressions: suppress::parse(&slash(&rel), &source),
             };
             cache.0.insert(rel.clone(), parsed);
@@ -113,6 +120,15 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 .iter()
                 .map(|l| format!("{}:{l}", slash(&rel))),
         );
+        for used in &parsed.symbols {
+            symbols.push(SymbolRef {
+                file: rel.clone(),
+                line: used.line,
+                specifier: used.specifier.clone(),
+                name: used.name.clone(),
+                target: adapter.resolve(path, &used.specifier),
+            });
+        }
         for import in &parsed.imports {
             deps.push(Dep {
                 file: rel.clone(),
@@ -128,6 +144,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         dynamic,
         paths,
         deps,
+        symbols,
         suppressions,
     })
 }

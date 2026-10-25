@@ -264,6 +264,7 @@ dependencies = [
  "ignore",
  "oxc_resolver",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "serde_norway",

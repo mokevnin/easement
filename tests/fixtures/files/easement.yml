@@ -1,0 +1,13 @@
+version: 1
+
+components:
+  ui: { in: src/ui }
+  conv: { in: "src/conv/*" }
+
+rules:
+  ui:
+    forbid_file:
+      - { name: "*.css", because: styles live in the design system }
+  conv:
+    requires_directive:
+      - { name: "goverter:converter", because: mappers are generated }

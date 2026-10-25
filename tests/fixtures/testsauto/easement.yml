@@ -1,0 +1,14 @@
+version: 1
+
+components:
+  app: { in: src/app }
+  db: { in: src/db }
+  helper: { in: src/testhelper }
+
+tests: auto
+
+rules:
+  app: { may_depend_on: [db] }
+  tests:
+    may_depend_on: [app, helper]
+    because: tests reach the database only through testhelper
