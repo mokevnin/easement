@@ -10,6 +10,15 @@ Declare the components of your system and which of them may depend on which. `ea
 
 Early. Go, TypeScript/JavaScript, Python and Java work.
 
+## Install
+
+```sh
+brew install mokevnin/tap/easement
+cargo install easement
+```
+
+Prebuilt binaries for macOS, Linux and Windows are attached to each [GitHub release](https://github.com/mokevnin/easement/releases), with shell and PowerShell installers.
+
 ## Usage
 
 ```sh
@@ -45,7 +54,7 @@ exclude: ["**/*_test.go"]
 - **exclude**: globs to skip. `.gitignore` is honoured and `node_modules` is always skipped.
 - **python.roots**: `sys.path` entries inside the project, default `[".", "src"]`.
 
-```
+```text
 $ easement check
 internal/handlers/books.go:6: handler -> repository is not allowed (imports example.com/shop/internal/repository)
 
@@ -91,6 +100,10 @@ Languages whose dependencies are not visible from imports (Ruby, Elixir) are out
 4. Compare violations with the baseline and report.
 
 [oxc_resolver]: https://github.com/oxc-project/oxc-resolver
+
+## Development
+
+Tools are pinned in `mise.toml`: `mise install`, `mise run setup` for the git hooks, then `mise run check` (every lint, the same set CI runs) and `cargo test`. Commits follow Conventional Commits; releases are cut by merging the release-please pull request.
 
 ## License
 
