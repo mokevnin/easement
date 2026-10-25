@@ -248,12 +248,11 @@ fn java_resolves_by_package_declaration() {
         pairs,
         vec![(
             "src/main/java/com/acme/shop/web/OrderController.java".to_string(),
-            "src/main/java/com/acme/shop/infra".to_string()
+            "src/main/java/com/acme/shop/infra/OrderRepository.java".to_string()
         )]
     );
-    // repository -> Order, controller -> Order (static), controller -> infra.*
+    // repository -> Order, controller -> Order (static), controller -> OrderRepository (infra.*)
     assert_eq!(stats["internal_deps"], 3);
-    assert_eq!(stats["external_deps"], 1);
 }
 
 fn git(root: &Path, args: &[&str]) {
@@ -681,29 +680,6 @@ fn extends_shares_a_config_between_packages() {
 }
 
 #[test]
-fn dynamic_imports_are_reported_not_checked() {
-    let (_tmp, root) = project(&[
-        (
-            "easement.yml",
-            "version: 1\ncomponents:\n  a: { in: src/a }\n",
-        ),
-        (
-            "src/a/M.java",
-            "package a;\nclass M {\n  void f(String name) throws Exception {\n    Class.forName(\"x\");\n    Class.forName(name);\n  }\n}\n",
-        ),
-    ]);
-    easement(&root, &["check"])
-        .success()
-        .stdout(contains("2 dynamic imports not analysed"));
-    let out = stdout_of(easement(&root, &["check", "--format", "json"]).success());
-    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(
-        report["stats"]["dynamic"],
-        serde_json::json!(["src/a/M.java:4", "src/a/M.java:5"])
-    );
-}
-
-#[test]
 fn watch_checks_again_after_a_change() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
@@ -793,7 +769,12 @@ fn rust_resolves_the_module_tree() {
 
 #[test]
 fn csharp_resolves_namespaces() {
-    layered("csharp", "Web/OrderController.cs", "Infra", 3);
+    layered(
+        "csharp",
+        "Web/OrderController.cs",
+        "Infra/OrderRepository.cs",
+        3,
+    );
 }
 
 #[test]

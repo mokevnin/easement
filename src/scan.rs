@@ -27,7 +27,6 @@ struct Parsed {
     modified: Option<SystemTime>,
     len: u64,
     imports: Vec<Import>,
-    dynamic: Vec<usize>,
     suppressions: Vec<Suppression>,
 }
 
@@ -39,8 +38,6 @@ pub struct Cache(HashMap<PathBuf, Parsed>);
 pub struct Scan {
     /// Every file that is not excluded, source or not, relative to the root with `/` separators.
     pub all_files: Vec<String>,
-    /// `file:line` of imports whose target is computed at run time.
-    pub dynamic: Vec<String>,
     /// Every checked file, relative to the root with `/` separators.
     pub paths: Vec<String>,
     pub deps: Vec<Dep>,
@@ -67,7 +64,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
     let mut deps = Vec::new();
-    let mut dynamic = Vec::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
     for entry in walker(root).build() {
@@ -106,9 +102,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 imports: adapter.imports(path, &source).with_context(|| {
                     format!("{} adapter failed on {}", adapter.name(), rel.display())
                 })?,
-                dynamic: adapter.dynamic_imports(path, &source).with_context(|| {
-                    format!("{} adapter failed on {}", adapter.name(), rel.display())
-                })?,
                 suppressions: suppress::parse(&slash(&rel), &source),
             };
             cache.0.insert(rel.clone(), parsed);
@@ -117,12 +110,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         seen.insert(rel.clone());
         paths.push(slash(&rel));
         suppressions.extend(parsed.suppressions.iter().cloned());
-        dynamic.extend(
-            parsed
-                .dynamic
-                .iter()
-                .map(|l| format!("{}:{l}", slash(&rel))),
-        );
         for import in &parsed.imports {
             deps.push(Dep {
                 file: rel.clone(),
@@ -154,7 +141,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let symbols = facts.symbols;
     Ok(Scan {
         all_files,
-        dynamic,
         paths,
         deps,
         symbols,

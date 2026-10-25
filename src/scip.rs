@@ -134,6 +134,16 @@ fn split(symbol: &str) -> Option<Parsed<'_>> {
 /// anything but identifier characters, and a suffix (`/` namespace, `#` type,
 /// `.` term, `().` method, `:` meta, `!` macro, `[T]` type parameter, `(p)` parameter).
 fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
+    scan(text).map(|found| {
+        found
+            .into_iter()
+            .map(|(name, kind, _)| (name, kind))
+            .collect()
+    })
+}
+
+/// The descriptors with the offset, in characters, at which each one ends.
+fn scan(text: &str) -> Option<Vec<(String, Kind, usize)>> {
     let chars: Vec<char> = text.chars().collect();
     let mut at = 0;
     let mut found = Vec::new();
@@ -199,9 +209,26 @@ fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
             }
             _ => return None,
         };
-        found.push((name, kind));
+        found.push((name, kind, at));
     }
     Some(found)
+}
+
+/// `symbol` cut after its first type descriptor: the class that a member such as a
+/// method or a constructor belongs to. The symbol itself when there is no type.
+fn class_symbol(symbol: &str) -> String {
+    let mut parts = symbol.splitn(5, ' ');
+    let header: Vec<&str> = parts.by_ref().take(4).collect();
+    let Some(text) = parts.next() else {
+        return symbol.to_string();
+    };
+    match scan(text).and_then(|d| d.into_iter().find(|(_, kind, _)| *kind == Kind::Type)) {
+        Some((_, _, end)) => {
+            let kept: String = text.chars().take(end).collect();
+            format!("{} {kept}", header.join(" "))
+        }
+        None => symbol.to_string(),
+    }
 }
 
 /// What a reference points at.
@@ -210,6 +237,8 @@ enum Referent {
     Module,
     /// A name inside a module.
     Member(String),
+    /// A package or namespace named on its own, which is not a dependency.
+    Package,
 }
 
 impl Parsed<'_> {
@@ -221,7 +250,16 @@ impl Parsed<'_> {
             return Referent::Module;
         }
         // PHP, Java and C# have no module symbols: a class is what an import names.
-        if matches!(self.scheme, "scip-php" | "scip-java" | "scip-dotnet")
+        let class_based = matches!(self.scheme, "scip-php" | "scip-java" | "scip-dotnet");
+        if class_based
+            && self
+                .descriptors
+                .iter()
+                .all(|(_, kind)| *kind == Kind::Namespace)
+        {
+            return Referent::Package;
+        }
+        if class_based
             && matches!(self.descriptors.last(), Some((_, Kind::Type)))
             && self.descriptors[..self.descriptors.len() - 1]
                 .iter()
@@ -426,10 +464,19 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
         // (target, module) -> first line
         let mut first: BTreeMap<(Option<&str>, String), usize> = BTreeMap::new();
         for reference in &document.references {
-            let Some(parsed) = split(&reference.symbol) else {
+            // For PHP, Java and C# a member (a method, a constructor) is a use of its class.
+            let symbol = if reference.symbol.starts_with("scip-php ")
+                || reference.symbol.starts_with("scip-java ")
+                || reference.symbol.starts_with("scip-dotnet ")
+            {
+                class_symbol(&reference.symbol)
+            } else {
+                reference.symbol.clone()
+            };
+            let Some(parsed) = split(&symbol) else {
                 continue;
             };
-            let mut internal = defined.get(reference.symbol.as_str()).copied();
+            let mut internal = defined.get(symbol.as_str()).copied();
             match parsed.referent() {
                 Referent::Module => {
                     if shadowed(&parsed, reference.line) {
@@ -441,7 +488,12 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
                     if internal == Some(document.path.as_str()) {
                         continue;
                     }
-                    if internal.is_none() && own.contains(&parsed.owner()) {
+                    // C# gives its own types and the framework's the same header, so there
+                    // an undefined type is always external.
+                    if internal.is_none()
+                        && parsed.scheme != "scip-dotnet"
+                        && own.contains(&parsed.owner())
+                    {
                         continue;
                     }
                     let module = match internal {
@@ -454,6 +506,7 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
                     let line = first.entry((internal, module)).or_insert(reference.line);
                     *line = (*line).min(reference.line);
                 }
+                Referent::Package => {}
                 Referent::Member(name) => {
                     if !symbols {
                         continue;

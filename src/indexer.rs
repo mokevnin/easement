@@ -117,6 +117,32 @@ pub const LANGUAGES: &[Language] = &[
         needs: require_composer,
     },
     Language {
+        name: "java",
+        binary: "scip-java",
+        markers: &["pom.xml", "build.gradle", "build.gradle.kts"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["java"],
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "cs install scip-java (Coursier), see https://sourcegraph.github.io/scip-java",
+        skip_dirs: &["target", "build"],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
+        name: "csharp",
+        binary: "scip-dotnet",
+        markers: &["*.csproj", "*.sln", "*.slnx"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["cs"],
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "dotnet tool install --global scip-dotnet",
+        skip_dirs: &["bin", "obj"],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
         name: "rust",
         binary: "rust-analyzer",
         markers: &["Cargo.toml"],
@@ -146,12 +172,22 @@ impl Language {
             && !file.split('/').any(|part| self.skip_dirs.contains(&part))
     }
 
+    /// A marker is a file name, or `*.ext` for any file with that extension.
+    fn has_marker(&self, name: &str) -> bool {
+        self.markers
+            .iter()
+            .any(|marker| match marker.strip_prefix('*') {
+                Some(suffix) => name.ends_with(suffix),
+                None => *marker == name,
+            })
+    }
+
     fn roots(&self, files: &[String]) -> Vec<String> {
         let mut dirs: Vec<String> = files
             .iter()
             .filter_map(|f| {
                 let (dir, name) = f.rsplit_once('/').unwrap_or(("", f));
-                self.markers.contains(&name).then(|| dir.to_string())
+                self.has_marker(name).then(|| dir.to_string())
             })
             .collect();
         dirs.sort();
@@ -349,12 +385,12 @@ mod tests {
         assert_eq!(LANGUAGES[0].roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
         // A workspace root holds its members; Python falls back to the root.
-        assert_eq!(LANGUAGES[4].roots(&files), [""]);
+        assert_eq!(LANGUAGES[6].roots(&files), [""]);
         assert_eq!(LANGUAGES[2].roots(&files), [""]);
         let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
             .map(String::from)
             .to_vec();
-        assert_eq!(LANGUAGES[4].roots(&nested), ["a", "b"]);
+        assert_eq!(LANGUAGES[6].roots(&nested), ["a", "b"]);
     }
 
     #[test]
