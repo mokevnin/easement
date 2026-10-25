@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/mokevnin/easement/compare/v0.1.0...v0.1.1) (2026-10-25)
+
+
+### Features
+
+* external, layer and metric rules, five more languages, CI formats and tooling ([#4](https://github.com/mokevnin/easement/issues/4)) ([abafd9d](https://github.com/mokevnin/easement/commit/abafd9d3d440ca7f07da06ab731b2a37e8380708))
+
 ## 0.1.0 (2026-10-25)
 
 
