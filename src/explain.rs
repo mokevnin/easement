@@ -55,14 +55,18 @@ pub fn explain(config: &Config, map: &ComponentMap, rel: &str) -> Result<String>
         if config.forbids(name, to) {
             forbidden.push(to.as_str());
         } else if config.allows(name, to) {
-            let why = if rule.is_some_and(|r| r.may_depend_on.contains(to)) {
+            let why = if rule.is_some_and(|r| r.may_depend_on.iter().any(|c| c.name() == to)) {
                 "may_depend_on"
             } else if config.common.contains(to) {
                 "common"
             } else {
                 "layers"
             };
-            allowed.push(format!("{to} ({why})"));
+            let because = config
+                .allow_reason(name, to)
+                .map(|b| format!(": {b}"))
+                .unwrap_or_default();
+            allowed.push(format!("{to} ({why}{because})"));
         } else {
             other.push(to.as_str());
         }
@@ -85,7 +89,12 @@ pub fn explain(config: &Config, map: &ComponentMap, rel: &str) -> Result<String>
         if let Some(external) = &rule.may_use_external {
             out.push_str(&format!(
                 "  external modules: only {}\n",
-                list(&external.clone())
+                list(
+                    &external
+                        .iter()
+                        .map(|l| l.name().to_string())
+                        .collect::<Vec<_>>()
+                )
             ));
         }
         if !rule.forbid_external.is_empty() {
@@ -121,6 +130,18 @@ pub fn explain(config: &Config, map: &ComponentMap, rel: &str) -> Result<String>
             out.push_str(&format!(
                 "  every directory must contain: {}\n",
                 names(&rule.requires_file)
+            ));
+        }
+        if !rule.forbid_file.is_empty() {
+            out.push_str(&format!(
+                "  forbidden files: {}\n",
+                names(&rule.forbid_file)
+            ));
+        }
+        if !rule.requires_directive.is_empty() {
+            out.push_str(&format!(
+                "  every directory must match: {}\n",
+                names(&rule.requires_directive)
             ));
         }
         if let Some(max) = rule.max_fan_out {

@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, query_imports, relative};
+use std::collections::HashMap;
+
+use tree_sitter::Node;
+
+use super::{Adapter, Import, SymbolUse, Target, parse, query_imports, relative};
 
 const QUERY: &str = "(import_spec path: (_) @spec)";
 
@@ -41,6 +45,32 @@ impl Go {
     }
 }
 
+/// The name a package is usually imported by: the last path element, skipping
+/// a major-version suffix (`/v2`) and the `.v3` of `gopkg.in/yaml.v3`.
+fn package_name(path: &str) -> &str {
+    let mut parts = path.rsplit('/');
+    let last = parts.next().unwrap_or(path);
+    let last = match parts.next() {
+        Some(previous)
+            if last.len() > 1
+                && last.starts_with('v')
+                && last[1..].chars().all(|c| c.is_ascii_digit()) =>
+        {
+            previous
+        }
+        _ => last,
+    };
+    last.split('.').next().unwrap_or(last)
+}
+
+fn walk<'t>(node: Node<'t>, visit: &mut impl FnMut(Node<'t>)) {
+    visit(node);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk(child, visit);
+    }
+}
+
 fn module_path(go_mod: &str) -> Option<String> {
     go_mod.lines().find_map(|line| {
         let rest = line.trim().strip_prefix("module")?;
@@ -63,6 +93,56 @@ impl Adapter for Go {
 
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>> {
         query_imports(&self.language, &self.query, path, source)
+    }
+
+    /// `pkg.Name` in expressions and types, where `pkg` is the name an import
+    /// gives (its alias, or the package name from its path). A local variable
+    /// that shadows an import name is not told apart.
+    fn symbol_uses(&self, path: &Path, source: &str) -> Result<Vec<SymbolUse>> {
+        let tree = parse(&self.language, path, source)?;
+        let bytes = source.as_bytes();
+        let text = |node: Node| node.utf8_text(bytes).unwrap_or_default().to_string();
+        let mut names: HashMap<String, String> = HashMap::new();
+        walk(tree.root_node(), &mut |node| {
+            if node.kind() != "import_spec" {
+                return;
+            }
+            let Some(spec) = node.child_by_field_name("path") else {
+                return;
+            };
+            let specifier = text(spec).trim_matches(['"', '`']).to_string();
+            let local = match node.child_by_field_name("name").map(text) {
+                Some(alias) if alias == "_" || alias == "." => return,
+                Some(alias) => alias,
+                None => package_name(&specifier).to_string(),
+            };
+            names.insert(local, specifier);
+        });
+        let mut uses = Vec::new();
+        walk(tree.root_node(), &mut |node| {
+            let (qualifier, member) = match node.kind() {
+                "selector_expression" => (
+                    node.child_by_field_name("operand")
+                        .filter(|n| n.kind() == "identifier"),
+                    node.child_by_field_name("field"),
+                ),
+                "qualified_type" => (
+                    node.child_by_field_name("package"),
+                    node.child_by_field_name("name"),
+                ),
+                _ => return,
+            };
+            if let (Some(qualifier), Some(member)) = (qualifier, member)
+                && let Some(specifier) = names.get(&text(qualifier))
+            {
+                uses.push(SymbolUse {
+                    specifier: specifier.clone(),
+                    name: text(member),
+                    line: member.start_position().row + 1,
+                });
+            }
+        });
+        Ok(uses)
     }
 
     fn resolve(&self, _file: &Path, specifier: &str) -> Target {
@@ -97,6 +177,46 @@ mod tests {
             Some("example.com/app")
         );
         assert_eq!(module_path("modulex foo"), None);
+    }
+
+    #[test]
+    fn finds_symbols_used_through_imports() {
+        let go = Go::new(Path::new("/nonexistent")).unwrap();
+        let src = "package h
+import (
+  \"fmt\"
+  store \"example.com/app/db\"
+  \"example.com/app/api/v2\"
+  _ \"example.com/app/drivers\"
+)
+func f(c *store.Client) {
+  fmt.Println(api.Scoped(1), c.Tx, store.Raw)
+}
+";
+        let got: Vec<_> = go
+            .symbol_uses(Path::new("h.go"), src)
+            .unwrap()
+            .into_iter()
+            .map(|u| (u.specifier, u.name, u.line))
+            .collect();
+        let want = |s: &str, n: &str, l| (s.to_string(), n.to_string(), l);
+        assert_eq!(
+            got,
+            vec![
+                want("example.com/app/db", "Client", 8),
+                want("fmt", "Println", 9),
+                want("example.com/app/api/v2", "Scoped", 9),
+                want("example.com/app/db", "Raw", 9),
+            ]
+        );
+    }
+
+    #[test]
+    fn package_names_skip_version_suffixes() {
+        assert_eq!(package_name("example.com/app/db"), "db");
+        assert_eq!(package_name("example.com/app/api/v2"), "api");
+        assert_eq!(package_name("gopkg.in/yaml.v3"), "yaml");
+        assert_eq!(package_name("fmt"), "fmt");
     }
 
     #[test]

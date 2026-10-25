@@ -304,6 +304,23 @@ fn diff_mode_judges_only_changed_lines() {
         ]
     );
     assert_eq!(report["diff"]["base"], "main");
+    let new: Vec<&str> = report["stats"]["new_dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    assert_eq!(new, ["app -> ui", "domain -> infra"]);
+    easement(&root, &["check", "--diff", "main"])
+        .code(1)
+        .stdout(contains(
+            "New dependencies between components in this change:\n  app -> ui\n  domain -> infra\n",
+        ));
+    easement(&root, &["check", "--diff", "main", "--format", "github"])
+        .code(1)
+        .stdout(contains(
+            "::notice title=easement graph::New component dependencies in this change: app -> ui, domain -> infra",
+        ));
 
     easement(&root, &["check", "--diff", "no-such-branch"])
         .code(2)
@@ -936,4 +953,86 @@ fn required_imports_modules_and_files_are_checked_per_directory() {
             .iter()
             .all(|v| v["file"] == "src/api/orders/resources/d.ts")
     );
+}
+
+#[test]
+fn forbidden_files_and_required_directives_are_reported() {
+    let (_tmp, root) = fixture("files");
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains(
+            "src/ui/a.css:1: ui must not contain src/ui/a.css (forbid_file *.css)",
+        ))
+        .stdout(contains("because: styles live in the design system"))
+        .stdout(contains(
+            "src/conv/bad/m.ts:1: src/conv/bad (conv) must contain a comment or text matching `goverter:converter`",
+        ))
+        .stdout(contains("src/conv/ok").not())
+        .stdout(contains("2 violation(s)"));
+}
+
+#[test]
+fn tests_auto_gives_test_files_their_own_allow_list() {
+    let (_tmp, root) = fixture("testsauto");
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains(
+            "src/app/x.test.ts:3: tests -> db is not allowed (imports ../db/d)",
+        ))
+        .stdout(contains(
+            "because: tests reach the database only through testhelper",
+        ))
+        .stdout(contains("1 violation(s)"));
+    easement(&root, &["explain", "src/app/x.test.ts"])
+        .success()
+        .stdout(contains("component: tests"));
+}
+
+#[test]
+fn symbols_are_checked_through_imports() {
+    let (_tmp, root) = fixture("symbols");
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains(
+            "internal/handlers/books.go:9: handler must not use db.Client [symbol]",
+        ))
+        .stdout(contains("because: use db.Scoped so every query is tenant-bound"))
+        .stdout(contains(
+            "internal/handlers/books.go:12: handler -> db: Raw is not in the public symbols of db (Scoped, Tx)",
+        ))
+        .stdout(contains("because: handlers get a scoped client, never the raw one"))
+        .stdout(contains(
+            "internal/handlers/books.go:9: handler -> db: Client is not in the public symbols of db",
+        ))
+        // Scoped and Tx are public; the Raw on line 10 is suppressed.
+        .stdout(contains("books.go:10").not())
+        .stdout(contains("3 violation(s)"));
+}
+
+#[test]
+fn suggest_reports_what_the_graph_says_about_the_config() {
+    let (_tmp, root) = fixture("ts");
+    easement(&root, &["suggest"])
+        .success()
+        .stdout(contains("Imported but not allowed"))
+        .stdout(contains("app: infra (1 import(s))"));
+}
+
+#[test]
+fn readme_mentions_every_config_key_of_the_schema() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../easement.schema.json")).unwrap();
+    let readme = include_str!("../README.md");
+    let mut missing = Vec::new();
+    let mut keys = |properties: &serde_json::Value| {
+        for key in properties["properties"].as_object().unwrap().keys() {
+            if !readme.contains(&format!("{key}:")) && !readme.contains(&format!("`{key}`")) {
+                missing.push(key.clone());
+            }
+        }
+    };
+    keys(&schema);
+    keys(&schema["definitions"]["component"]);
+    keys(&schema["definitions"]["rule"]);
+    assert!(missing.is_empty(), "README never mentions: {missing:?}");
 }

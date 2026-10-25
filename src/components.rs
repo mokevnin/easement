@@ -103,9 +103,7 @@ impl ComponentMap {
                         allowed: rule
                             .may_use_external
                             .as_deref()
-                            .map(|p| {
-                                glob_set(name, "may_use_external", p.iter().map(String::as_str))
-                            })
+                            .map(|p| glob_set(name, "may_use_external", p.iter().map(|l| l.name())))
                             .transpose()?,
                         forbidden: glob_set(
                             name,

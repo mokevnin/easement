@@ -68,6 +68,15 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
             out.push_str(&format!("  [{}] {what}\n", k.rule.as_str()));
         }
     }
+    if !stats.new_dependencies.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("New dependencies between components in this change:\n");
+        for d in &stats.new_dependencies {
+            out.push_str(&format!("  {d}\n"));
+        }
+    }
     if !out.is_empty() {
         out.push('\n');
     }
@@ -208,6 +217,16 @@ pub fn github(verdict: &Verdict, stats: &Stats) -> String {
             "::error title={}::{}\n",
             escape_property(&format!("easement {STALE}")),
             escape_command(&stale_message(k))
+        ));
+    }
+    if !stats.new_dependencies.is_empty() {
+        out.push_str(&format!(
+            "::notice title={}::{}\n",
+            escape_property("easement graph"),
+            escape_command(&format!(
+                "New component dependencies in this change: {}",
+                stats.new_dependencies.join(", ")
+            ))
         ));
     }
     out.push_str(

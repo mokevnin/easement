@@ -18,6 +18,7 @@ dunce = "1.0.5"
 globset = "0.4.20"
 ignore = "0.4.33"
 oxc_resolver = "11.24.3"
+regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_norway = "0.9.42"

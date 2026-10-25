@@ -10,6 +10,7 @@ mod lang;
 mod report;
 mod scan;
 mod scope;
+mod suggest;
 mod suppress;
 
 use std::collections::hash_map::DefaultHasher;
@@ -85,6 +86,12 @@ enum Command {
         #[arg(long, value_enum, default_value_t = graph::GraphFormat::Mermaid)]
         format: graph::GraphFormat,
     },
+    /// Say what the current dependency graph suggests for the config: allowances
+    /// nothing uses, imports nothing allows, instances that could be isolated.
+    Suggest {
+        #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
+        config: PathBuf,
+    },
     /// Print the JSON Schema of easement.yml.
     Schema,
 }
@@ -132,12 +139,16 @@ impl Project {
     fn analyze(&self, cache: &mut scan::Cache, scope: &scope::Scope) -> Result<Analysis> {
         let scan = scan::scan(&self.root, &self.config, cache)?;
         let map = ComponentMap::new(&self.config)?;
-        let (violations, edges, mut stats) = check::evaluate(&self.config, &map, scope, &scan.deps);
+        let (mut violations, edges, mut stats) =
+            check::evaluate(&self.config, &map, scope, &scan.deps);
+        violations.extend(check::symbols(&self.config, &map, &scan.symbols));
         let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
         violations.extend(check::cycles(&self.config, &edges));
         violations.extend(check::metrics(&self.config, &edges));
         violations.extend(check::orphans(&self.config, &map, &scan.paths));
+        violations.extend(check::forbidden_files(&self.config, &map, &scan.all_files));
         violations.extend(check::required(
+            &self.root,
             &self.config,
             &map,
             &scan.deps,
@@ -158,6 +169,8 @@ impl Project {
         Ok(Analysis {
             violations,
             edges,
+            deps: scan.deps,
+            files: scan.paths,
             stats,
             map,
         })
@@ -189,6 +202,8 @@ impl Project {
 struct Analysis {
     violations: Vec<check::Violation>,
     edges: Vec<check::Edge>,
+    deps: Vec<scan::Dep>,
+    files: Vec<String>,
     stats: check::Stats,
     map: ComponentMap,
 }
@@ -207,8 +222,9 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
     let scope = scope::Scope::new(&project.config, &options.components, &options.paths)?;
     let Analysis {
         violations,
-        stats,
+        mut stats,
         map,
+        edges,
         ..
     } = project.analyze(cache, &scope)?;
     let current = violations.iter().map(check::Violation::key).collect();
@@ -223,6 +239,9 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
         .as_ref()
         .map(|base| diff::Changes::collect(&project.root, base))
         .transpose()?;
+    if let Some(changes) = &changes {
+        stats.new_dependencies = check::new_dependencies(&edges, |f, l| changes.contains(f, l));
+    }
     let judged = match &changes {
         Some(changes) => violations
             .into_iter()
@@ -339,6 +358,22 @@ fn run(cli: Cli) -> Result<bool> {
                     &project.config,
                     &analysis.edges,
                     &analysis.violations
+                )
+            );
+            Ok(true)
+        }
+        Command::Suggest { config } => {
+            let project = Project::open(&config)?;
+            let analysis =
+                project.analyze(&mut scan::Cache::default(), &scope::Scope::default())?;
+            print!(
+                "{}",
+                suggest::suggest(
+                    &project.config,
+                    &analysis.map,
+                    &analysis.edges,
+                    &analysis.deps,
+                    &analysis.files
                 )
             );
             Ok(true)

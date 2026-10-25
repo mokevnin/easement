@@ -25,6 +25,17 @@ pub struct Import {
     pub line: usize,
 }
 
+/// A use of a name that an import brings in: `db.Client` in Go is the
+/// specifier of `db`'s import and the name `Client`.
+#[derive(Debug, Clone)]
+pub struct SymbolUse {
+    /// The specifier of the import the name comes through.
+    pub specifier: String,
+    pub name: String,
+    /// 1-based line number.
+    pub line: usize,
+}
+
 /// Where an import points to after resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
@@ -45,6 +56,11 @@ pub trait Adapter {
     fn handles(&self, path: &Path) -> bool;
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>>;
     fn resolve(&self, file: &Path, specifier: &str) -> Target;
+    /// Names used through imports, for the symbol rules. Adapters that cannot
+    /// tell report none, and those rules then say nothing about their files.
+    fn symbol_uses(&self, _path: &Path, _source: &str) -> Result<Vec<SymbolUse>> {
+        Ok(Vec::new())
+    }
     /// Lines of imports the adapter cannot analyse because the target is
     /// computed at run time (`importlib.import_module(name)`, `require(path)`).
     fn dynamic_imports(&self, _path: &Path, _source: &str) -> Result<Vec<usize>> {
