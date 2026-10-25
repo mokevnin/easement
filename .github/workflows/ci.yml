@@ -123,6 +123,14 @@ jobs:
           brew install bash
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
 
+      # scip-java wraps javac in a bash script that needs bash 4.4; macOS ships 3.2.
+      - name: Install a current bash
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install bash
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
       - name: Install the C# indexer
         shell: bash
         run: |
