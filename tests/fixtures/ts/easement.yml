@@ -1,0 +1,12 @@
+version: 1
+
+components:
+  domain: { in: src/domain }
+  infra:  { in: src/infra }
+  app:    { in: src/app }
+  ui:     { in: src/ui }
+
+rules:
+  infra: { may_depend_on: [domain] }
+  app:   { may_depend_on: [domain] }
+  ui:    { may_depend_on: [app] }

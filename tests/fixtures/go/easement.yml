@@ -1,0 +1,13 @@
+version: 1
+
+components:
+  handler:    { in: internal/handlers }
+  service:    { in: internal/services }
+  repository: { in: internal/repository }
+  model:      { in: internal/models }
+
+common: [model]
+
+rules:
+  handler: { may_depend_on: [service] }
+  service: { may_depend_on: [repository] }
