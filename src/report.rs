@@ -1,3 +1,4 @@
+use anstyle::{AnsiColor, Style};
 use serde::Serialize;
 use serde_json::json;
 
@@ -37,7 +38,33 @@ pub fn json(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     serde_json::to_string_pretty(&report).expect("report serializes")
 }
 
+const BOLD: Style = Style::new().bold();
+const DIM: Style = Style::new().dimmed();
+const RED: Style = AnsiColor::Red.on_default().bold();
+const GREEN: Style = AnsiColor::Green.on_default().bold();
+const YELLOW: Style = AnsiColor::Yellow.on_default();
+
+/// `text` wrapped in the escape codes of `style`, or as it is when `color` is off.
+fn paint(color: bool, style: Style, text: &str) -> String {
+    if color {
+        format!("{style}{text}{style:#}")
+    } else {
+        text.to_string()
+    }
+}
+
+/// The plain text report.
 pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> String {
+    render(verdict, stats, changes, false)
+}
+
+/// The text report with ANSI styles; the caller strips them where the output
+/// is not a terminal.
+pub fn colored(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> String {
+    render(verdict, stats, changes, true)
+}
+
+fn render(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>, color: bool) -> String {
     let mut out = String::new();
     if let Some(c) = changes {
         let short = &c.merge_base[..c.merge_base.len().min(12)];
@@ -48,21 +75,26 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     }
     for v in &verdict.new {
         out.push_str(&format!(
-            "{}:{}: {} [{}]\n",
-            v.file,
-            v.line,
+            "{}: {} {}\n",
+            paint(color, BOLD, &format!("{}:{}", v.file, v.line)),
             v.message,
-            v.rule.as_str()
+            paint(color, RED, &format!("[{}]", v.rule.as_str()))
         ));
         if let Some(because) = &v.because {
-            out.push_str(&format!("  because: {because}\n"));
+            out.push_str(&paint(color, DIM, &format!("  because: {because}")));
+            out.push('\n');
         }
     }
     if !verdict.stale.is_empty() {
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str("Stale baseline entries (fixed, run `easement baseline` to shrink it):\n");
+        out.push_str(&paint(
+            color,
+            YELLOW,
+            "Stale baseline entries (fixed, run `easement baseline` to shrink it):",
+        ));
+        out.push('\n');
         for k in &verdict.stale {
             let what = stale_description(k);
             out.push_str(&format!("  [{}] {what}\n", k.rule.as_str()));
@@ -80,7 +112,11 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     if !out.is_empty() {
         out.push('\n');
     }
-    let status = if verdict.passed() { "passed" } else { "failed" };
+    let status = if verdict.passed() {
+        paint(color, GREEN, "passed")
+    } else {
+        paint(color, RED, "failed")
+    };
     out.push_str(&format!(
         "easement {status}: {} violation(s), {} stale, {} legalized; {} files, {} internal deps",
         verdict.new.len(),

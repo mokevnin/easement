@@ -1066,6 +1066,46 @@ fn suggest_reports_what_the_graph_says_about_the_config() {
 }
 
 #[test]
+fn completions_cover_every_shell_and_subcommand() {
+    let tmp = TempDir::new().unwrap();
+    for (shell, marker) in [
+        ("bash", "_easement()"),
+        ("zsh", "#compdef easement"),
+        ("fish", "complete -c easement"),
+        ("powershell", "Register-ArgumentCompleter"),
+        ("elvish", "edit:completion:arg-completer"),
+    ] {
+        let script = stdout_of(easement(tmp.path(), &["completions", shell]).success());
+        assert!(script.contains(marker), "{shell}: {script}");
+        assert!(script.contains("baseline"), "{shell} lacks subcommands");
+    }
+    easement(tmp.path(), &["completions", "tcsh"])
+        .code(2)
+        .stderr(contains("invalid value"));
+}
+
+#[test]
+fn color_follows_the_flag_and_the_environment() {
+    let (_tmp, root) = fixture("java");
+    let run = |args: &[&str], envs: &[(&str, &str)]| {
+        let mut cmd = Command::cargo_bin("easement").unwrap();
+        cmd.current_dir(&root).args(args);
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
+        stdout_of(cmd.assert().code(1))
+    };
+    // Piped output carries no escape codes by default.
+    assert!(!run(&["check"], &[]).contains('\x1b'));
+    // `--color always` forces them; `NO_COLOR` and `--color never` remove them.
+    assert!(run(&["check", "--color", "always"], &[]).contains('\x1b'));
+    assert!(!run(&["check", "--color", "never"], &[("CLICOLOR_FORCE", "1")]).contains('\x1b'));
+    assert!(!run(&["check"], &[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")]).contains('\x1b'));
+    // The structured formats are never coloured.
+    assert!(!run(&["check", "--format", "json", "--color", "always"], &[]).contains('\x1b'));
+}
+
+#[test]
 fn readme_mentions_every_config_key_of_the_schema() {
     let schema: serde_json::Value =
         serde_json::from_str(include_str!("../easement.schema.json")).unwrap();
