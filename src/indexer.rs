@@ -288,16 +288,26 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         .output()
         .with_context(|| format!("cannot run {}", language.binary))?;
     if !output.status.success() {
-        let text = String::from_utf8_lossy(&output.stderr);
-        let lines: Vec<&str> = text.lines().collect();
+        // Some indexers report on stdout (Maven), others on stderr.
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         // The first lines name the error, the last ones the place; keep both.
         let excerpt = if lines.len() > 14 {
             [&lines[..5], &["    …"][..], &lines[lines.len() - 8..]].concat()
         } else {
             lines
         };
+        let hint = if text.contains("LAUNCHER_ARGS[@]: unbound variable") {
+            "\nscip-java's wrapper needs bash 4.4 or newer; the bash of macOS is 3.2, put a newer one first on the PATH (`brew install bash`)"
+        } else {
+            ""
+        };
         bail!(
-            "{} failed in {shown} ({}); if that directory is not part of the project, add it to `exclude`:\n{}",
+            "{} failed in {shown} ({}); if that directory is not part of the project, add it to `exclude`:\n{}{hint}",
             language.binary,
             output.status,
             excerpt.join("\n")
