@@ -244,6 +244,12 @@ impl Config {
         Ok(config)
     }
 
+    /// Whether any rule needs the uses of names, not only the imports.
+    pub fn uses_symbols(&self) -> bool {
+        self.components.values().any(|c| c.public_symbols.is_some())
+            || self.rules.values().any(|r| !r.forbid_symbol.is_empty())
+    }
+
     /// Adds the `tests` component when `tests: auto` asks for it.
     fn with_tests(mut self) -> Result<Self> {
         if self.tests.is_none() {

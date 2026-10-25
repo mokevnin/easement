@@ -19,7 +19,40 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
+/// Writes a stub package for each import specifier into `node_modules`, so the
+/// TypeScript indexer sees the module as installed: `lodash/fp` becomes
+/// `node_modules/lodash/package.json` and `node_modules/lodash/fp.d.ts`.
+fn stub_packages(root: &Path, specifiers: &[&str]) {
+    for specifier in specifiers {
+        let mut parts = specifier.split('/');
+        let first = parts.next().unwrap();
+        let (name, rest): (String, Vec<&str>) = if first.starts_with('@') {
+            (
+                format!("{first}/{}", parts.next().unwrap()),
+                parts.collect(),
+            )
+        } else {
+            (first.to_string(), parts.collect())
+        };
+        let dir = root.join("node_modules").join(&name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"{name}","version":"1.0.0","types":"index.d.ts"}}"#),
+        )
+        .unwrap();
+        let stub = "declare const stub: any;\nexport default stub;\n";
+        fs::write(dir.join("index.d.ts"), stub).unwrap();
+        if !rest.is_empty() {
+            let file = dir.join(format!("{}.d.ts", rest.join("/")));
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, stub).unwrap();
+        }
+    }
+}
+
 /// A scratch copy of a fixture project, so tests can write baselines and edit code.
+/// A `modules.txt` in the fixture lists third-party imports to stub as installed.
 fn fixture(name: &str) -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
     let src = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -27,6 +60,10 @@ fn fixture(name: &str) -> (TempDir, PathBuf) {
         .join(name);
     copy_dir(&src, tmp.path());
     let root = tmp.path().to_path_buf();
+    if let Ok(list) = fs::read_to_string(root.join("modules.txt")) {
+        stub_packages(&root, &list.lines().collect::<Vec<_>>());
+        fs::remove_file(root.join("modules.txt")).unwrap();
+    }
     (tmp, root)
 }
 
@@ -79,7 +116,7 @@ fn ts_resolves_relative_alias_require_and_js_extension() {
                 "src/infra/db.ts".into()
             ),
             (
-                "src/ui/page.tsx".into(),
+                "src/ui/legacy.js".into(),
                 "infra".into(),
                 "src/infra/db.ts".into()
             ),
@@ -102,7 +139,7 @@ fn baseline_is_a_ratchet() {
         .stdout(contains("2 legalized"));
 
     // Paying off debt without shrinking the baseline fails the gate.
-    let page = root.join("src/ui/page.tsx");
+    let page = root.join("src/ui/legacy.js");
     let fixed = fs::read_to_string(&page)
         .unwrap()
         .replace("const db = require(\"../infra/db\");", "const db = 1;");
@@ -453,8 +490,18 @@ fn stdout_of(assert: assert_cmd::assert::Assert) -> String {
 }
 
 /// A scratch project made of the given files.
+const TSCONFIG: &str = r#"{"compilerOptions":{"target":"es2022","module":"esnext","moduleResolution":"bundler","allowJs":true,"noEmit":true,"skipLibCheck":true},"include":["**/*"],"exclude":["node_modules"]}"#;
+
+/// A scratch project from the given files; the TypeScript indexer needs a
+/// `tsconfig.json`, so one is added when there are TypeScript or JavaScript files.
 fn project(files: &[(&str, &str)]) -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
+    let has_ts = files
+        .iter()
+        .any(|(p, _)| [".ts", ".tsx", ".js"].iter().any(|e| p.ends_with(e)));
+    if has_ts && !files.iter().any(|(p, _)| *p == "tsconfig.json") {
+        fs::write(tmp.path().join("tsconfig.json"), TSCONFIG).unwrap();
+    }
     for (path, text) in files {
         let path = tmp.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -977,7 +1024,7 @@ fn tests_auto_gives_test_files_their_own_allow_list() {
     easement(&root, &["check"])
         .code(1)
         .stdout(contains(
-            "src/app/x.test.ts:3: tests -> db is not allowed (imports ../db/d)",
+            "src/app/x.test.ts:3: tests -> db is not allowed (imports src/db/d.ts)",
         ))
         .stdout(contains(
             "because: tests reach the database only through testhelper",

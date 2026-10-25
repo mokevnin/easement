@@ -5,10 +5,12 @@ mod config;
 mod diff;
 mod explain;
 mod graph;
+mod indexer;
 mod init;
 mod lang;
 mod report;
 mod scan;
+mod scip;
 mod scope;
 mod suggest;
 mod suppress;
@@ -161,6 +163,11 @@ impl Project {
             .filter(|f| scope.contains(&map, f))
             .count();
         stats.suppressed = suppressed;
+        stats.uncovered = scan
+            .uncovered
+            .into_iter()
+            .filter(|f| scope.contains(&map, f))
+            .collect();
         stats.dynamic = scan
             .dynamic
             .into_iter()

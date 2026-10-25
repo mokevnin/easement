@@ -98,6 +98,12 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
             stats.dynamic.len()
         ));
     }
+    if !stats.uncovered.is_empty() {
+        out.push_str(&format!(
+            ", {} files not covered by an indexer",
+            stats.uncovered.len()
+        ));
+    }
     if stats.unresolved_deps > 0 {
         out.push_str(&format!(", {} unresolved", stats.unresolved_deps));
     }
