@@ -1,0 +1,13 @@
+version: 1
+
+components:
+  resources: { in: "src/api/*/resources" }
+  shared: { in: src/shared }
+
+rules:
+  resources:
+    may_depend_on: [shared]
+    must_depend_on: [shared]
+    must_use_external:
+      - { name: goverter, because: mappers are generated with goverter }
+    requires_file: [README.md]

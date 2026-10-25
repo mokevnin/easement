@@ -34,7 +34,8 @@ struct Parsed {
 pub struct Cache(HashMap<PathBuf, Parsed>);
 
 pub struct Scan {
-    pub files: usize,
+    /// Every file that is not excluded, source or not, relative to the root with `/` separators.
+    pub all_files: Vec<String>,
     /// `file:line` of imports whose target is computed at run time.
     pub dynamic: Vec<String>,
     /// Every checked file, relative to the root with `/` separators.
@@ -57,6 +58,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let exclude = exclude_set(&config.exclude)?;
     let adapters = lang::adapters(root, config)?;
     let mut paths = Vec::new();
+    let mut all_files = Vec::new();
     let mut deps = Vec::new();
     let mut dynamic = Vec::new();
     let mut suppressions = Vec::new();
@@ -73,6 +75,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         if exclude.is_match(&rel) {
             continue;
         }
+        all_files.push(slash(&rel));
         let Some(adapter) = adapters.iter().find(|a| a.handles(path)) else {
             continue;
         };
@@ -121,7 +124,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     }
     cache.0.retain(|path, _| seen.contains(path));
     Ok(Scan {
-        files: paths.len(),
+        all_files,
         dynamic,
         paths,
         deps,
