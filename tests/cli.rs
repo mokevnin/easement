@@ -104,7 +104,7 @@ fn baseline_is_a_ratchet() {
     let page = root.join("src/ui/page.tsx");
     let fixed = fs::read_to_string(&page)
         .unwrap()
-        .replace("const db = require(\"../infra/db\");\n", "const db = 1;\n");
+        .replace("const db = require(\"../infra/db\");", "const db = 1;");
     fs::write(&page, fixed).unwrap();
     easement(&root, &["check"])
         .code(1)
