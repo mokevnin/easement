@@ -14,8 +14,16 @@ brew install mokevnin/tap/easement
 
 Homebrew works on macOS and Linux. Other options:
 
+- the install script for macOS and Linux, which checks the archive against the checksums of the release and installs to `/usr/local/bin`:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/mokevnin/easement/main/install.sh | sh
+  ```
+
+  Pass `-b <dir>` to install elsewhere and `-v <version>` to pin a release: `... | sh -s -- -b ~/.local/bin -v 0.1.0`;
+- `.deb` and `.rpm` packages for amd64 and arm64 on each [GitHub release](https://github.com/mokevnin/easement/releases): `sudo apt install ./easement_<version>-1_amd64.deb` or `sudo dnf install ./easement-<version>-1.x86_64.rpm`;
 - `cargo install easement`;
-- prebuilt binaries for macOS, Linux and Windows, with shell and PowerShell installers, on each [GitHub release](https://github.com/mokevnin/easement/releases).
+- prebuilt binaries for macOS, Linux and Windows, with a PowerShell installer for Windows, on each release.
 
 ## Status
 

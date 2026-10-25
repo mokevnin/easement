@@ -1,0 +1,64 @@
+name: Build Linux packages
+
+# Called by release.yml (a custom local artifacts job of dist): builds the .deb and the .rpm of each
+# Linux architecture on a native runner. dist uploads what is named artifacts-* to the GitHub release.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist plan of the release
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          cache: false
+
+      - name: Install the packagers
+        run: cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1
+
+      # The same profile dist builds the archives with.
+      - name: Build
+        run: cargo build --locked --profile dist
+
+      - name: Package
+        run: |
+          cargo deb --no-build --profile dist --output target/distrib/
+          cargo generate-rpm --profile dist --output target/distrib/
+          cd target/distrib
+          for package in *.deb *.rpm; do
+            sha256sum "$package" > "$package.sha256"
+          done
+          ls -l
+
+      - name: Upload packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: artifacts-linux-packages-${{ matrix.arch }}
+          path: |
+            target/distrib/*.deb
+            target/distrib/*.rpm
+            target/distrib/*.sha256
