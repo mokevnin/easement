@@ -769,6 +769,15 @@ fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
         )
         .unwrap();
     }
+    if name == "php" {
+        // scip-php reads the autoloader, so the (empty) dependencies have to be installed.
+        let status = std::process::Command::new("composer")
+            .args(["install", "--no-interaction", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .expect("composer is needed for the PHP indexer");
+        assert!(status.success(), "composer install");
+    }
     let (found, stats) = violations(&root);
     assert_eq!(
         found,

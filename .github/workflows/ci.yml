@@ -100,4 +100,12 @@ jobs:
         shell: bash
         run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # The released scip-php (v0.0.2) cannot be installed: every protobuf it accepts has a
+      # security advisory. This is a commit of its main branch.
+      - name: Install the PHP indexer
+        shell: bash
+        run: |
+          composer global require "davidrjenni/scip-php:dev-main#71a5b117ec4c5dd2af302e363410e604e5df309e" --no-interaction
+          echo "$(composer global config bin-dir --absolute --quiet)" >> "$GITHUB_PATH"
+
       - run: cargo test --locked
