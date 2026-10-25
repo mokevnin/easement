@@ -1,5 +1,3 @@
-import requests
-
 from shop.domain import order
 from shop.infra.db import save
 from . import views

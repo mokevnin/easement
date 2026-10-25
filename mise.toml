@@ -1,13 +1,14 @@
 # One toolchain for developers, git hooks and CI: `mise install`, then `mise run check`.
 [tools]
-rust = { version = "1.97.0", components = "rustfmt,clippy" }
+rust = { version = "1.97.0", components = "rustfmt,clippy,rust-analyzer" }
 "aqua:axodotdev/cargo-dist" = "0.33.1"
 node = "24"
 go = "1.27.3"
-# The SCIP indexers easement runs on Go and TypeScript projects; the tests need them.
+# The SCIP indexers easement runs (rust-analyzer is the Rust one); the tests need them.
 "go:github.com/scip-code/scip-go/cmd/scip-go" = "0.2.9"
 # Keep the version in step with package.json, which CI installs it from.
 "npm:@sourcegraph/scip-typescript" = "0.5.2"
+"npm:@sourcegraph/scip-python" = "0.6.8"
 pnpm = "12.15.0"
 hk = "2.8.1"
 pkl = "0.32.2"

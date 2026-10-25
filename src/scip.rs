@@ -10,7 +10,7 @@
 //! References to symbols that no document of the index defines point outside
 //! the project: they are external modules.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -208,6 +208,12 @@ enum Referent {
 
 impl Parsed<'_> {
     fn referent(&self) -> Referent {
+        // A Python module is the term `__init__` of its namespace.
+        if self.scheme == "scip-python"
+            && matches!(self.descriptors.as_slice(), [(_, Kind::Namespace), (name, _)] if name == "__init__")
+        {
+            return Referent::Module;
+        }
         match self
             .descriptors
             .iter()
@@ -219,14 +225,20 @@ impl Parsed<'_> {
     }
 
     /// The namespace descriptors joined: the import path of a Go package, the
-    /// file of a TypeScript module.
-    fn namespace(&self) -> String {
+    /// dotted name of a Python module, the path of a Rust module.
+    fn namespace(&self, separator: &str) -> String {
         self.descriptors
             .iter()
             .take_while(|(_, kind)| *kind == Kind::Namespace)
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>()
-            .join("/")
+            .join(separator)
+    }
+
+    /// The package that owns the symbol, with the scheme: what tells the
+    /// project's own symbols from those of its dependencies.
+    fn owner(&self) -> String {
+        format!("{} {}", self.scheme, self.package)
     }
 
     /// The external module the symbol belongs to, in the spelling of the
@@ -234,7 +246,27 @@ impl Parsed<'_> {
     fn external_module(&self) -> String {
         match self.scheme {
             // Go: the package path (`fmt`, `net/http`, `github.com/lib/pq`).
-            "scip-go" => self.namespace(),
+            "scip-go" => self.namespace("/"),
+            // Python: the dotted module (`os.path`, `requests`).
+            "scip-python" => self.namespace("."),
+            // Rust: the crate and the module path; the standard library is
+            // spread over `core`, `alloc` and `std` but written `std::…`.
+            "rust-analyzer" => {
+                let krate = match self.package {
+                    "core" | "alloc" | "std" => "std".to_string(),
+                    other => other.replace('-', "_"),
+                };
+                std::iter::once(krate)
+                    .chain(
+                        self.descriptors
+                            .iter()
+                            .take_while(|(_, kind)| *kind == Kind::Namespace)
+                            .map(|(name, _)| name.clone())
+                            .filter(|name| name != "crate"),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("::")
+            }
             // TypeScript: the npm package and the file inside it that was imported
             // (`lodash/fp`, `moment/locale/ru`); `@types/x` stands for `x`.
             _ => {
@@ -266,7 +298,9 @@ impl Parsed<'_> {
     /// The qualifier that `forbid_symbol` names: what the code calls the module.
     fn qualifier(&self, internal: Option<&str>) -> String {
         match (self.scheme, internal) {
-            ("scip-go", _) => self.namespace(),
+            ("scip-go", _) => self.namespace("/"),
+            ("scip-python", _) => self.namespace("."),
+            ("rust-analyzer", _) => self.external_module(),
             (_, Some(path)) => path
                 .rsplit_once('.')
                 .map_or(path, |(stem, _)| stem)
@@ -305,19 +339,79 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
             }
         }
     }
+    // Packages that define something are the project's own: a reference into
+    // one that no definition matches (a relative import in Python) is not external.
+    let own: BTreeSet<String> = defined
+        .keys()
+        .filter_map(|symbol| split(symbol).map(|parsed| parsed.owner()))
+        .collect();
+    // Python names a module by its path from the working directory in its
+    // definition (`src.shop.infra`) but as imported in a reference (`shop.infra`,
+    // or just `views` for a relative import), so match those by their ending.
+    let mut python_modules: Vec<(String, &str)> = Vec::new();
+    for (symbol, path) in &defined {
+        if let Some(parsed) = split(symbol)
+            && parsed.scheme == "scip-python"
+            && matches!(parsed.referent(), Referent::Module)
+        {
+            python_modules.push((parsed.namespace("."), path));
+        }
+    }
+    let python_module = |name: &str| -> Option<&str> {
+        let ending = format!(".{name}");
+        let mut found = python_modules
+            .iter()
+            .filter(|(module, _)| module == name || module.ends_with(&ending))
+            .map(|(_, path)| *path);
+        let first = found.next()?;
+        found.all(|path| path == first).then_some(first)
+    };
     let mut deps = Vec::new();
     let mut uses = Vec::new();
     for document in documents {
+        // Rust writes `crate::domain::order::Order` as a reference to every module on
+        // the path; only the deepest one is what the line depends on.
+        let mut paths: HashMap<usize, Vec<Vec<String>>> = HashMap::new();
+        for reference in &document.references {
+            if let Some(parsed) = split(&reference.symbol)
+                && parsed.scheme == "rust-analyzer"
+                && matches!(parsed.referent(), Referent::Module)
+            {
+                paths
+                    .entry(reference.line)
+                    .or_default()
+                    .push(parsed.descriptors.iter().map(|(n, _)| n.clone()).collect());
+            }
+        }
+        let shadowed = |parsed: &Parsed, line: usize| {
+            parsed.scheme == "rust-analyzer"
+                && paths.get(&line).is_some_and(|all| {
+                    let mine: Vec<String> =
+                        parsed.descriptors.iter().map(|(n, _)| n.clone()).collect();
+                    all.iter().any(|other| {
+                        other.len() > mine.len() && (other.starts_with(&mine) || mine == ["crate"])
+                    })
+                })
+        };
         // (target, module) -> first line
         let mut first: BTreeMap<(Option<&str>, String), usize> = BTreeMap::new();
         for reference in &document.references {
             let Some(parsed) = split(&reference.symbol) else {
                 continue;
             };
-            let internal = defined.get(reference.symbol.as_str()).copied();
+            let mut internal = defined.get(reference.symbol.as_str()).copied();
             match parsed.referent() {
                 Referent::Module => {
+                    if shadowed(&parsed, reference.line) {
+                        continue;
+                    }
+                    if internal.is_none() && parsed.scheme == "scip-python" {
+                        internal = python_module(&parsed.namespace("."));
+                    }
                     if internal == Some(document.path.as_str()) {
+                        continue;
+                    }
+                    if internal.is_none() && own.contains(&parsed.owner()) {
                         continue;
                     }
                     let module = match internal {
@@ -330,11 +424,11 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
                     let line = first.entry((internal, module)).or_insert(reference.line);
                     *line = (*line).min(reference.line);
                 }
-                Referent::Member(name) if symbols => {
-                    let module_symbol = member_module(&reference.symbol);
-                    let home = module_symbol
-                        .as_deref()
-                        .and_then(|m| defined.get(m).copied());
+                Referent::Member(name) => {
+                    if !symbols {
+                        continue;
+                    }
+                    let home = internal;
                     if home == Some(document.path.as_str()) {
                         continue;
                     }
@@ -350,7 +444,6 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
                         target,
                     });
                 }
-                Referent::Member(_) => {}
             }
         }
         for ((internal, module), line) in first {
@@ -370,41 +463,6 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
         deps,
         symbols: uses,
     }
-}
-
-/// The module symbol a member symbol lives in: the same header with only the
-/// namespace descriptors.
-fn member_module(symbol: &str) -> Option<String> {
-    let mut parts = symbol.splitn(5, ' ');
-    let header: Vec<&str> = parts.by_ref().take(4).collect();
-    let descriptors = parts.next()?;
-    let mut module = String::new();
-    let mut at = 0;
-    let chars: Vec<char> = descriptors.chars().collect();
-    while at < chars.len() {
-        let start = at;
-        if chars[at] == '`' {
-            at += 1;
-            while at < chars.len() && !(chars[at] == '`' && chars.get(at + 1) != Some(&'`')) {
-                at += if chars[at] == '`' { 2 } else { 1 };
-            }
-            at += 1;
-        } else {
-            while at < chars.len() && !matches!(chars[at], '/' | '#' | '.' | ':' | '!' | '(' | '[')
-            {
-                at += 1;
-            }
-        }
-        if chars.get(at) != Some(&'/') {
-            break;
-        }
-        at += 1;
-        module.extend(&chars[start..at]);
-    }
-    if module.is_empty() {
-        return None;
-    }
-    Some(format!("{} {}", header.join(" "), module))
 }
 
 impl Documents {
@@ -458,7 +516,7 @@ mod tests {
         assert_eq!(d[3].1, Kind::Other);
         let go = split("scip-go gomod example.com/app . `example.com/app/internal/db`/Scoped().")
             .unwrap();
-        assert_eq!(go.namespace(), "example.com/app/internal/db");
+        assert_eq!(go.namespace("/"), "example.com/app/internal/db");
         assert!(matches!(go.referent(), Referent::Member(n) if n == "Scoped"));
         assert!(matches!(split(DB).unwrap().referent(), Referent::Module));
     }

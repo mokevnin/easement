@@ -21,8 +21,6 @@ pub struct Config {
     pub exclude: Vec<String>,
     #[serde(default)]
     pub baseline: Option<PathBuf>,
-    #[serde(default)]
-    pub python: PythonConfig,
     /// Fail on dependency cycles between components: `true` for all of them,
     /// or a list to limit the check.
     #[serde(default)]
@@ -120,26 +118,6 @@ impl NoCycles {
             NoCycles::Among(list) => list.iter().any(|c| c == component),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PythonConfig {
-    /// Directories that act as `sys.path` entries, relative to the project root.
-    #[serde(default = "default_python_roots")]
-    pub roots: Vec<PathBuf>,
-}
-
-impl Default for PythonConfig {
-    fn default() -> Self {
-        Self {
-            roots: default_python_roots(),
-        }
-    }
-}
-
-fn default_python_roots() -> Vec<PathBuf> {
-    vec![".".into(), "src".into()]
 }
 
 #[derive(Debug, Deserialize)]

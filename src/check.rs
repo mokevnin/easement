@@ -120,11 +120,8 @@ pub struct Stats {
     pub files: usize,
     pub internal_deps: usize,
     pub external_deps: usize,
-    pub unresolved_deps: usize,
     pub unmapped_files: usize,
     pub suppressed: usize,
-    /// `file:line: specifier` for imports that look internal but did not resolve.
-    pub unresolved: Vec<String>,
     /// `file:line` of imports whose target is computed at run time and so is not checked.
     pub dynamic: Vec<String>,
     /// Source files of an indexed language that its indexer did not cover.
@@ -194,15 +191,6 @@ pub fn evaluate(
                         target: module.clone(),
                         specifier: dep.specifier.clone(),
                     });
-                }
-                continue;
-            }
-            Target::Unresolved => {
-                if counted {
-                    stats.unresolved_deps += 1;
-                    stats
-                        .unresolved
-                        .push(format!("{file}:{}: {}", dep.line, dep.specifier));
                 }
                 continue;
             }
@@ -578,7 +566,6 @@ pub fn required(
             Target::External(module) => {
                 unit.external.insert(module.clone());
             }
-            Target::Unresolved => {}
         }
     }
     let mut dir_files: BTreeMap<&str, Vec<&str>> = BTreeMap::new();

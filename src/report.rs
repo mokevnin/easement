@@ -140,9 +140,6 @@ fn render(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>, color: bo
             stats.uncovered.len()
         ));
     }
-    if stats.unresolved_deps > 0 {
-        out.push_str(&format!(", {} unresolved", stats.unresolved_deps));
-    }
     if stats.unmapped_files > 0 {
         out.push_str(&format!(
             ", {} files outside components",

@@ -4,14 +4,10 @@ use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 
-use crate::config::Config;
-
 pub mod csharp;
 pub mod java;
 pub mod kotlin;
 pub mod php;
-pub mod python;
-pub mod rust;
 pub mod swift;
 
 /// One dependency found in a source file.
@@ -30,8 +26,6 @@ pub enum Target {
     Internal(PathBuf),
     /// A third-party or standard-library module.
     External(String),
-    /// Looks internal but could not be resolved.
-    Unresolved,
 }
 
 /// A language adapter: extracts imports from a file and resolves them.
@@ -50,11 +44,9 @@ pub trait Adapter {
     }
 }
 
-pub fn adapters(root: &Path, config: &Config) -> Result<Vec<Box<dyn Adapter>>> {
+pub fn adapters(root: &Path) -> Result<Vec<Box<dyn Adapter>>> {
     Ok(vec![
-        Box::new(python::Python::new(root, &config.python.roots)?),
         Box::new(java::Java::new(root)?),
-        Box::new(rust::Rust::new(root)?),
         Box::new(csharp::CSharp::new(root)?),
         Box::new(kotlin::Kotlin::new(root)?),
         Box::new(php::Php::new(root)?),

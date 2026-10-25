@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`easement` is a Rust command line: an architecture quality gate. Go and TypeScript dependencies come from SCIP indexers that `src/indexer.rs` runs and `src/scip.rs` reads; the other languages still use tree-sitter adapters (`src/lang/`) that extract and resolve imports. The tests need `scip-go` and `scip-typescript`, which `mise.toml` installs. The core (`src/config.rs`, `src/components.rs`, `src/check.rs`, `src/baseline.rs`, `src/diff.rs`) is language-agnostic.
+`easement` is a Rust command line: an architecture quality gate. Go, TypeScript, Python and Rust dependencies come from SCIP indexers that `src/indexer.rs` runs and `src/scip.rs` reads; Java, C#, Kotlin, PHP and Swift still use tree-sitter adapters (`src/lang/`) that extract and resolve imports. The tests need `scip-go`, `scip-typescript`, `scip-python` and `rust-analyzer`, which `mise.toml` installs. The core (`src/config.rs`, `src/components.rs`, `src/check.rs`, `src/baseline.rs`, `src/diff.rs`) is language-agnostic.
 
 - Tools come from `mise.toml`. `mise run check` runs every lint (the same set CI runs) and `cargo test` runs the tests; both must pass before a push. `mise run setup` installs the git hooks.
 - A change in behaviour starts with a test: unit tests next to the code, end-to-end tests in `tests/cli.rs` against the fixture projects in `tests/fixtures/`.

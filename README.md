@@ -29,7 +29,7 @@ Homebrew works on macOS and Linux. Other options:
 
 ## Status
 
-Early. Go and TypeScript/JavaScript are resolved by [SCIP](https://scip-code.org/) indexers, so they need the [indexers](#indexers) installed; Python, Java, Rust, C#, Kotlin, PHP and Swift are read with tree-sitter until their indexers are wired in.
+Early. Go, TypeScript/JavaScript, Python and Rust are resolved by [SCIP](https://scip-code.org/) indexers, so they need the [indexers](#indexers) installed; Java, C#, Kotlin, PHP and Swift are read with tree-sitter until their indexers are wired in.
 
 ## Usage
 
@@ -81,7 +81,6 @@ exclude: ["**/*_test.go"]
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
 - **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all. To hold tests to rules of their own, see [Tests](#tests).
-- **`python`**: `roots` lists the `sys.path` entries inside the project, default `[".", "src"]`.
 
 ```text
 $ easement check
@@ -381,17 +380,17 @@ The baseline still applies, and stale entries are still reported. A rule change 
 |---|---|---|
 | Go | everything `scip-go` resolves | per `go.mod`, as the Go toolchain does |
 | TypeScript / JavaScript | everything `scip-typescript` resolves: `import`, `export … from`, `import()`, `typeof import()`, `require()` in JavaScript files | the TypeScript compiler's own rules: `tsconfig` `paths`, package `exports`, workspaces, `.js` → `.ts` |
-| Python | `import`, `from … import`, relative imports | longest existing module or package under the source roots; `from a import b` resolves to `a/b.py` if it exists, otherwise to `a` |
+| Python | everything `scip-python` resolves | the interpreter's rules, as `pyright` sees them: absolute and relative imports, packages, the installed environment |
 | Java | `import`, `import static`, `import ….*` | classes indexed by their `package` declaration, so any source layout and multi-module builds work without configuration |
-| Rust | `use`, `mod x;` | the module tree of the crate: `crate::`, `self::`, `super::`, and other crates of the workspace by name; a path points at the deepest module file it passes through |
+| Rust | everything `rust-analyzer scip` resolves | the crate graph from `cargo metadata`: `crate::`, `self::`, `super::`, workspace members, `mod x;` |
 | C# | `using`, `using static`, `using Alias =`, `global using` | namespaces indexed by their `namespace` declarations: a namespace is the directory of the first file that declares it, a type is `Type.cs` next to it |
 | Kotlin | `import`, `import … as`, `import ….*` | top-level declarations indexed by the `package` of their file, like Java; a file may hold several classes |
 | PHP | `use`, `use function`, `use const`, group `use`, `require`/`include` of a literal | PSR-4 maps of every `composer.json`; a function or constant points at the directory of its namespace |
 | Swift | `import` | modules in the SwiftPM layout: `Sources/<Module>` next to a `Package.swift` |
 
-Go and TypeScript come from a SCIP index, which is exact but has its own limits: only files that a `tsconfig.json` includes are indexed, and easement says how many source files no index covered (`N files not covered by an indexer`); `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine); a violation names the target file (`imports src/db/d.ts`) rather than the specifier as written; `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen. Imports computed at run time are not reported for these two languages.
+Go, TypeScript, Python and Rust come from a SCIP index, which is exact but has its own limits: only files that a `tsconfig.json` includes are indexed, and easement says how many source files no index covered (`N files not covered by an indexer`); `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine); a violation names the target file (`imports src/db/d.ts`) rather than the specifier as written; `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen. Imports computed at run time are not reported for these languages. In Python third-party modules have to be installed in the environment the indexer sees, or their imports are not seen (there is no check for that yet, unlike `node_modules`), and a module reference is matched to its file by the end of its dotted name, so an import that two modules could satisfy is skipped. In Rust the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`). `scip-python` 0.6.8 crashes on Windows (`new RegExp(path.sep, 'g')` in its own code), so on Windows easement stops with an error when there are Python files; add them to `exclude` to check the rest, until the indexer is fixed.
 
-Known limits of the languages that tree-sitter reads: references by fully qualified name without an import (Java, C#, Kotlin, PHP) are not seen. Imports whose target is computed at run time (`importlib.import_module(name)`, `require(path)`, `import(path)`, `Class.forName(name)`) cannot be checked; the report counts them (`N dynamic imports not analysed`) and `--format json` lists them in `stats.dynamic`. In Rust, `#[path]` attributes and items re-exported through another module are not followed. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
+Known limits of the languages that tree-sitter reads: references by fully qualified name without an import (Java, C#, Kotlin, PHP) are not seen. Imports whose target is computed at run time (`Class.forName(name)`) cannot be checked; the report counts them (`N dynamic imports not analysed`) and `--format json` lists them in `stats.dynamic`. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
 
 Adding a language to the indexed set means naming its indexer and the marker file it runs in (`src/indexer.rs`) and mapping its symbols to module names (`src/scip.rs`). A language that has no indexer can still be read with a tree-sitter adapter (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
 
@@ -401,12 +400,14 @@ Adding a language to the indexed set means naming its indexer and the marker fil
 |---|---|---|
 | Go | [`scip-go`](https://github.com/scip-code/scip-go) | a `go.mod`; the Go toolchain and the module dependencies |
 | TypeScript, JavaScript | [`scip-typescript`](https://github.com/sourcegraph/scip-typescript) | a `tsconfig.json` (with `allowJs` for JavaScript); `npm install` (or pnpm, yarn) done |
+| Python | [`scip-python`](https://github.com/sourcegraph/scip-python) | Python and Node; the dependencies installed in the environment; **not Windows** (see below) |
+| Rust | `rust-analyzer scip` | a `Cargo.toml` (the outermost one holds the workspace); `rustup component add rust-analyzer` |
 
 ```sh
-mise use -g go:github.com/scip-code/scip-go/cmd/scip-go npm:@sourcegraph/scip-typescript
+mise use -g go:github.com/scip-code/scip-go/cmd/scip-go npm:@sourcegraph/scip-typescript npm:@sourcegraph/scip-python
 ```
 
-`easement check` finds the `go.mod` and `tsconfig.json` files, runs the indexer in each of those directories and reads the result. A missing indexer, a failed run (add a directory that is not part of the project to `exclude`), or a `package.json` with dependencies but no `node_modules` is an error (exit code 2), never a quiet gap; source files that no `go.mod` or `tsconfig.json` covers are counted in the report as `files not covered by an indexer`: without installed packages the indexer cannot see third-party modules, so `forbid_external` would silently pass.
+`easement check` finds the `go.mod`, `tsconfig.json` and `Cargo.toml` files (Python projects: `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, or else the project root), runs the indexer in each of those directories and reads the result. A missing indexer, a failed run (add a directory that is not part of the project to `exclude`), or a `package.json` with dependencies but no `node_modules` is an error (exit code 2), never a quiet gap; source files that no `go.mod`, `tsconfig.json` or `Cargo.toml` covers are counted in the report as `files not covered by an indexer`: without installed packages the indexer cannot see third-party modules, so `forbid_external` would silently pass.
 
 Languages whose dependencies are not visible from imports (Ruby, Elixir) are out of scope.
 
@@ -434,7 +435,7 @@ Most architecture checkers are tied to one language. `easement` is not a replace
 Where `easement` differs:
 
 - **One config, one baseline, one report.** A repository with a Go backend and a TypeScript frontend gets the same component model, the same suppressions and the same CI output (`sarif`, `github`, `junit`) for both.
-- **The compiler's view, through SCIP.** Go and TypeScript are resolved by their SCIP indexers, so aliases, `tsconfig` paths and re-exports are what the compiler sees; for the other languages files are read with tree-sitter and nothing has to build. The price of the indexers is that dependencies have to be installed, which ArchUnit, working on compiled classes, also asks for.
+- **The compiler's view, through SCIP.** Go, TypeScript, Python and Rust are resolved by their SCIP indexers, so aliases, `tsconfig` paths and re-exports are what the compiler sees; for the other languages files are read with tree-sitter and nothing has to build. The price of the indexers is that dependencies have to be installed, which ArchUnit, working on compiled classes, also asks for.
 - **Adoption and review features built in.** A baseline for existing violations, `--diff` to judge only what a pull request adds, `--scope` for a part of the project, and `extends` for shared policy in a monorepo.
 - **One static binary.** No runtime to install in CI.
 
