@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -369,4 +370,387 @@ fn public_api_cycles_reasons_and_suppressions() {
         .success()
         .stdout(contains("5 violation(s)"));
     easement(&root, &["check"]).success();
+}
+
+#[test]
+fn layers_forbidden_externals_metrics_and_strict() {
+    let (_tmp, root) = fixture("policy");
+    let out = easement(&root, &["check", "--format", "json"])
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let found: Vec<(String, String, String)> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["rule"].as_str().unwrap().into(),
+                v["file"].as_str().unwrap().into(),
+                v["target"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    let has = |rule: &str, file: &str, target: &str| {
+        assert!(
+            found.contains(&(rule.into(), file.into(), target.into())),
+            "missing {rule} {file} {target} in {found:?}"
+        );
+    };
+    has("dependency", "src/web/page.ts", "src/data/db.ts");
+    has("dependency", "src/core/run.ts", "src/web/page.ts");
+    has("external", "src/web/page.ts", "moment/locale/ru");
+    has("external", "src/core/run.ts", "axios");
+    has("metric", "src/core/run.ts", "max_fan_out");
+    has("orphan", "src/stray.ts", "src/stray.ts");
+    assert_eq!(found.len(), 6, "{found:?}");
+    // Layers allow web -> core, core -> data, and common allows shared.
+    assert!(!found.iter().any(|(_, _, t)| t == "src/core/run.ts"));
+    assert!(!found.iter().any(|(_, _, t)| t == "src/shared/fmt.ts"));
+    assert!(!found.iter().any(|(_, _, t)| t == "lodash/fp"));
+}
+
+#[test]
+fn external_violations_can_be_suppressed() {
+    let (_tmp, root) = fixture("policy");
+    let page = root.join("src/web/page.ts");
+    let text = fs::read_to_string(&page).unwrap();
+    fs::write(
+        &page,
+        text.replace(
+            "import moment",
+            "// easement:disable-next-line external -- legacy locale\nimport moment",
+        ),
+    )
+    .unwrap();
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(predicates::str::contains("moment").not())
+        .stdout(contains("1 suppressed"));
+}
+
+fn stdout_of(assert: assert_cmd::assert::Assert) -> String {
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+/// A scratch project made of the given files.
+fn project(files: &[(&str, &str)]) -> (TempDir, PathBuf) {
+    let tmp = TempDir::new().unwrap();
+    for (path, text) in files {
+        let path = tmp.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let root = tmp.path().to_path_buf();
+    (tmp, root)
+}
+
+#[test]
+fn ci_formats() {
+    let (_tmp, root) = fixture("policy");
+
+    let github = stdout_of(easement(&root, &["check", "--format", "github"]).code(1));
+    assert!(
+        github.contains(
+            "::error file=src/web/page.ts,line=2,title=easement dependency::web -> data is forbidden"
+        ),
+        "{github}"
+    );
+
+    let sarif: serde_json::Value = serde_json::from_str(&stdout_of(
+        easement(&root, &["check", "--format", "sarif"]).code(1),
+    ))
+    .unwrap();
+    assert_eq!(sarif["version"], "2.1.0");
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 6);
+    assert!(results.iter().any(|r| {
+        r["ruleId"] == "orphan"
+            && r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "src/stray.ts"
+    }));
+
+    let junit = stdout_of(easement(&root, &["check", "--format", "junit"]).code(1));
+    assert!(junit.contains("<testsuite name=\"easement\" tests=\"6\" failures=\"6\">"));
+    assert!(junit.contains("type=\"external\""));
+}
+
+#[test]
+fn init_writes_a_config_that_passes() {
+    let (_tmp, root) = project(&[
+        (
+            "src/web/page.ts",
+            "import { run } from '../core/run';\nexport const p = run;\n",
+        ),
+        (
+            "src/core/run.ts",
+            "import { q } from '../data/q';\nexport const run = q;\n",
+        ),
+        ("src/data/q.ts", "export const q = 1;\n"),
+        ("tests/t.ts", "export {};\n"),
+    ]);
+    easement(&root, &["init"])
+        .success()
+        .stdout(contains("3 components and 2 allowed dependencies"));
+    let config = fs::read_to_string(root.join("easement.yml")).unwrap();
+    assert!(config.contains("  web: { in: src/web }"), "{config}");
+    assert!(
+        config.contains("  web: { may_depend_on: [core] }"),
+        "{config}"
+    );
+    assert!(
+        config.contains("  core: { may_depend_on: [data] }"),
+        "{config}"
+    );
+    assert!(!config.contains("tests"), "{config}");
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("passed"));
+    // Turning the generated allowance around is a violation.
+    fs::write(
+        root.join("src/data/q.ts"),
+        "import { run } from '../core/run';\nexport const q = run;\n",
+    )
+    .unwrap();
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains("data -> core is not allowed"));
+    easement(&root, &["init"])
+        .code(2)
+        .stderr(contains("already exists"));
+    easement(&root, &["init", "--force"]).success();
+}
+
+#[test]
+fn explain_graph_and_schema() {
+    let (_tmp, root) = fixture("policy");
+
+    let explained = stdout_of(easement(&root, &["explain", "src/web/page.ts"]).success());
+    assert!(
+        explained.contains("component: web (matches `src/web`)"),
+        "{explained}"
+    );
+    assert!(explained.contains("may depend on: core (layers), shared (common)"));
+    assert!(explained.contains("forbidden: data"));
+    easement(&root, &["explain", "src/stray.ts"])
+        .code(2)
+        .stderr(contains("belongs to no component"));
+
+    let mermaid = stdout_of(easement(&root, &["graph"]).success());
+    assert!(mermaid.starts_with("graph LR\n"), "{mermaid}");
+    assert!(
+        mermaid.contains("-.->"),
+        "the forbidden web -> data edge is dashed: {mermaid}"
+    );
+    assert!(mermaid.contains("linkStyle"));
+    let dot = stdout_of(easement(&root, &["graph", "--format", "dot"]).success());
+    assert!(dot.starts_with("digraph easement {"), "{dot}");
+    assert!(dot.contains("color=red"));
+
+    let schema: serde_json::Value =
+        serde_json::from_str(&stdout_of(easement(&root, &["schema"]).success())).unwrap();
+    assert_eq!(schema["type"], "object");
+}
+
+/// The keys serde reports as the valid ones, read from its error for an unknown key.
+fn config_keys(yaml: &str) -> Vec<String> {
+    let (_tmp, root) = project(&[("easement.yml", yaml)]);
+    let stderr = easement(&root, &["check"])
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(stderr).unwrap();
+    let list = stderr
+        .split("expected one of ")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap();
+    let mut keys: Vec<String> = list
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(String::from)
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn schema_lists_exactly_the_config_keys() {
+    let (_tmp, root) = fixture("policy");
+    let schema: serde_json::Value =
+        serde_json::from_str(&stdout_of(easement(&root, &["schema"]).success())).unwrap();
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        let mut keys: Vec<String> = value["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    };
+    // `extends` is merged away before the config is read, so serde never lists it.
+    let mut top = keys(&schema);
+    top.retain(|k| k != "extends");
+    assert_eq!(
+        top,
+        config_keys("version: 1\nbogus: 1\ncomponents:\n  a: { in: a }\n")
+    );
+    assert_eq!(
+        keys(&schema["definitions"]["component"]),
+        config_keys("version: 1\ncomponents:\n  a: { in: a, bogus: 1 }\n")
+    );
+    assert_eq!(
+        keys(&schema["definitions"]["rule"]),
+        config_keys("version: 1\ncomponents:\n  a: { in: a }\nrules:\n  a: { bogus: 1 }\n")
+    );
+}
+
+#[test]
+fn extends_shares_a_config_between_packages() {
+    let (_tmp, root) = project(&[
+        (
+            "shared/easement.base.yml",
+            "version: 1\ncomponents:\n  ui: { in: src/ui }\n  db: { in: src/db }\nrules:\n  ui: { because: the UI never touches the database }\n",
+        ),
+        ("easement.yml", "extends: shared/easement.base.yml\n"),
+        ("src/ui/a.ts", "import '../db/q';\n"),
+        ("src/db/q.ts", "export {};\n"),
+    ]);
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains("ui -> db is not allowed"))
+        .stdout(contains("because: the UI never touches the database"));
+}
+
+#[test]
+fn dynamic_imports_are_reported_not_checked() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  a: { in: src/a }\n",
+        ),
+        (
+            "src/a/m.py",
+            "import importlib\nimportlib.import_module('x')\nimportlib.import_module(name)\n",
+        ),
+    ]);
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("1 dynamic imports not analysed"));
+    let out = stdout_of(easement(&root, &["check", "--format", "json"]).success());
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        report["stats"]["dynamic"],
+        serde_json::json!(["src/a/m.py:3"])
+    );
+}
+
+#[test]
+fn watch_checks_again_after_a_change() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  a: { in: src/a }\n  b: { in: src/b }\n",
+        ),
+        ("src/a/x.ts", "export {};\n"),
+        ("src/b/y.ts", "export {};\n"),
+    ]);
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin("easement"))
+        .current_dir(&root)
+        .args(["check", "--watch"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let wait_for = |text: &str| -> bool {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(line) if line.contains(text) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    };
+    let passed = wait_for("easement passed");
+    if passed {
+        fs::write(root.join("src/a/x.ts"), "import '../b/y';\n").unwrap();
+    }
+    let failed = passed && wait_for("a -> b is not allowed");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(passed, "the first check did not pass");
+    assert!(failed, "the change was not picked up");
+}
+
+/// Every layered fixture has one forbidden import, web -> infra, and allowed ones
+/// that must be seen: the count of internal dependencies proves the adapter resolved them.
+fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
+    let (_tmp, root) = fixture(name);
+    let (found, stats) = violations(&root);
+    assert_eq!(
+        found,
+        vec![(file.to_string(), target.to_string())],
+        "{name}"
+    );
+    assert_eq!(stats["internal_deps"], internal_deps, "{name}");
+}
+
+#[test]
+fn rust_resolves_the_module_tree() {
+    // `use super::*` in the inline test module adds nothing; `use std::fmt` is external.
+    layered("rust", "src/web/mod.rs", "src/infra/repo.rs", 8);
+}
+
+#[test]
+fn csharp_resolves_namespaces() {
+    layered("csharp", "Web/OrderController.cs", "Infra", 3);
+}
+
+#[test]
+fn kotlin_resolves_packages_and_declarations() {
+    layered(
+        "kotlin",
+        "src/main/kotlin/com/acme/shop/web/OrderController.kt",
+        "src/main/kotlin/com/acme/shop/infra/OrderRepository.kt",
+        3,
+    );
+}
+
+#[test]
+fn php_resolves_psr4_names() {
+    layered(
+        "php",
+        "src/Web/OrderController.php",
+        "src/Infra/OrderRepository.php",
+        3,
+    );
+}
+
+#[test]
+fn swift_resolves_package_modules() {
+    layered(
+        "swift",
+        "Sources/Web/OrderController.swift",
+        "Sources/Infra",
+        3,
+    );
 }

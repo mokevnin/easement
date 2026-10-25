@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/mokevnin/easement/main/easement.schema.json",
+  "title": "easement.yml",
+  "description": "Configuration of the easement architecture quality gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extends": {
+      "description": "Config files merged underneath this one, relative to this file. Patterns stay relative to the root of the config being loaded.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "version": { "const": 1, "description": "Config format version." },
+    "components": {
+      "description": "Named parts of the system and the paths they cover.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/component" }
+    },
+    "common": {
+      "description": "Components every other component may depend on.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rules": {
+      "description": "Per component: what it may depend on and use.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/rule" }
+    },
+    "layers": {
+      "description": "Components from the top layer to the bottom one: a layer may depend on any layer below it, never on one above.",
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "no_cycles": {
+      "description": "Fail on dependency cycles between components: true for all, or a list of components.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "strict": {
+      "description": "Fail on checked files that belong to no component.",
+      "type": "boolean"
+    },
+    "exclude": {
+      "description": "Globs of paths to skip.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "baseline": {
+      "description": "Path of the baseline file, default easement.baseline.yml.",
+      "type": "string"
+    },
+    "python": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Directories that act as sys.path entries, default [\".\", \"src\"].",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "patterns": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      ]
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["in"],
+      "properties": {
+        "in": {
+          "description": "A glob or a list of globs naming a module: a directory or a file.",
+          "$ref": "#/definitions/patterns"
+        },
+        "public": {
+          "description": "When set, other components may import only these paths.",
+          "$ref": "#/definitions/patterns"
+        },
+        "because": {
+          "description": "Why the public API exists; shown with privacy violations.",
+          "type": "string"
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "may_depend_on": {
+          "description": "Components this one may depend on.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "must_not_depend_on": {
+          "description": "Components that are never allowed, even if common or layers would allow them.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "may_use_external": {
+          "description": "External modules this component may use; unset means no restriction. A pattern covers submodules: lodash covers lodash/fp.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbid_external": {
+          "description": "External modules this component must not use.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "max_fan_out": {
+          "description": "Most components this one may depend on.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_instability": {
+          "description": "Highest instability, out / (in + out), from 0 (stable) to 1.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "because": {
+          "description": "Why the rule exists; shown with its violations.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

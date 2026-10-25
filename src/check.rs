@@ -16,6 +16,12 @@ pub enum RuleId {
     Privacy,
     /// A dependency cycle between components.
     Cycle,
+    /// A component uses an external module its rule does not allow.
+    External,
+    /// A component exceeds a coupling limit.
+    Metric,
+    /// A file that belongs to no component, in strict mode.
+    Orphan,
     /// An inline suppression that matches no violation.
     UnusedSuppression,
     /// An inline suppression without a reason.
@@ -28,16 +34,19 @@ impl RuleId {
             RuleId::Dependency => "dependency",
             RuleId::Privacy => "privacy",
             RuleId::Cycle => "cycle",
+            RuleId::External => "external",
+            RuleId::Metric => "metric",
+            RuleId::Orphan => "orphan",
             RuleId::UnusedSuppression => "unused-suppression",
             RuleId::SuppressionReason => "suppression-reason",
         }
     }
 
     /// Rules that an inline comment can suppress.
+    pub const SUPPRESSIBLE: [RuleId; 3] = [RuleId::Dependency, RuleId::Privacy, RuleId::External];
+
     pub fn suppressible(s: &str) -> Option<Self> {
-        [RuleId::Dependency, RuleId::Privacy]
-            .into_iter()
-            .find(|r| r.as_str() == s)
+        Self::SUPPRESSIBLE.into_iter().find(|r| r.as_str() == s)
     }
 }
 
@@ -96,6 +105,8 @@ pub struct Stats {
     pub suppressed: usize,
     /// `file:line: specifier` for imports that look internal but did not resolve.
     pub unresolved: Vec<String>,
+    /// `file:line` of imports whose target is computed at run time and so is not checked.
+    pub dynamic: Vec<String>,
 }
 
 /// An import between two different components.
@@ -122,8 +133,25 @@ pub fn evaluate(
     for dep in deps {
         let target = match &dep.target {
             Target::Internal(path) => slash(path),
-            Target::External(_) => {
+            Target::External(module) => {
                 stats.external_deps += 1;
+                let file = slash(&dep.file);
+                if let Some(from) = map.component_of(&file)
+                    && let Some(problem) = map.external_problem(from, module)
+                {
+                    found.push(Violation {
+                        rule: RuleId::External,
+                        evidence: vec![(file.clone(), dep.line)],
+                        file,
+                        line: dep.line,
+                        message: format!("{from} -> external {module} {problem}"),
+                        because: config.reason(from).map(str::to_string),
+                        from: from.to_string(),
+                        to: String::new(),
+                        target: module.clone(),
+                        specifier: dep.specifier.clone(),
+                    });
+                }
                 continue;
             }
             Target::Unresolved => {
@@ -156,9 +184,14 @@ pub fn evaluate(
             line: dep.line,
         });
         let (rule, message, because) = if !config.allows(from, to) {
+            let how = if config.forbids(from, to) {
+                "is forbidden"
+            } else {
+                "is not allowed"
+            };
             (
                 RuleId::Dependency,
-                format!("{from} -> {to} is not allowed (imports {})", dep.specifier),
+                format!("{from} -> {to} {how} (imports {})", dep.specifier),
                 config.reason(from),
             )
         } else if !map.is_public(to, &target) {
@@ -333,6 +366,92 @@ fn shortest_cycle<'a>(
     unreachable!("a strongly connected group has a cycle through every member")
 }
 
+/// Coupling limits: `max_fan_out` counts the components a component depends
+/// on, `max_instability` is `out / (in + out)` over the same component edges.
+pub fn metrics(config: &Config, edges: &[Edge]) -> Vec<Violation> {
+    let mut out: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut incoming: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for e in edges {
+        out.entry(&e.from).or_default().insert(&e.to);
+        incoming.entry(&e.to).or_default().insert(&e.from);
+    }
+    let mut found = Vec::new();
+    for (name, rule) in &config.rules {
+        let Some(targets) = out.get(name.as_str()) else {
+            continue;
+        };
+        let fan_out = targets.len();
+        let fan_in = incoming.get(name.as_str()).map_or(0, BTreeSet::len);
+        let instability = fan_out as f64 / (fan_in + fan_out) as f64;
+        let mut evidence: Vec<(String, usize)> = edges
+            .iter()
+            .filter(|e| e.from == *name)
+            .map(|e| (e.file.clone(), e.line))
+            .collect();
+        evidence.sort();
+        let (file, line) = evidence[0].clone();
+        let list = targets.iter().copied().collect::<Vec<_>>().join(", ");
+        let mut over = |limit: &str, message: String| {
+            found.push(Violation {
+                rule: RuleId::Metric,
+                file: file.clone(),
+                line,
+                message,
+                because: rule.because.clone(),
+                from: name.clone(),
+                to: String::new(),
+                target: limit.to_string(),
+                specifier: String::new(),
+                evidence: evidence.clone(),
+            });
+        };
+        if let Some(max) = rule.max_fan_out
+            && fan_out > max
+        {
+            over(
+                "max_fan_out",
+                format!(
+                    "{name} depends on {fan_out} components, more than max_fan_out {max}: {list}"
+                ),
+            );
+        }
+        if let Some(max) = rule.max_instability
+            && instability > max
+        {
+            over(
+                "max_instability",
+                format!(
+                    "{name} has instability {instability:.2} ({fan_out} out, {fan_in} in), above max_instability {max}"
+                ),
+            );
+        }
+    }
+    found
+}
+
+/// In strict mode, every checked file must belong to a component.
+pub fn orphans(config: &Config, map: &ComponentMap, files: &[String]) -> Vec<Violation> {
+    if !config.strict {
+        return Vec::new();
+    }
+    files
+        .iter()
+        .filter(|f| map.component_of(f).is_none())
+        .map(|file| Violation {
+            rule: RuleId::Orphan,
+            file: file.clone(),
+            line: 1,
+            message: "file belongs to no component (strict mode)".to_string(),
+            because: None,
+            from: String::new(),
+            to: String::new(),
+            target: file.clone(),
+            specifier: String::new(),
+            evidence: vec![(file.clone(), 1)],
+        })
+        .collect()
+}
+
 /// One violation per key, the earliest line, sorted by key.
 pub fn dedupe(violations: Vec<Violation>) -> Vec<Violation> {
     let mut unique: BTreeMap<Key, Violation> = BTreeMap::new();
@@ -391,6 +510,49 @@ no_cycles: {no_cycles}
         );
         assert_eq!(found[0].from, "a,b,c");
         assert_eq!(found[0].evidence.len(), 4);
+    }
+
+    fn limits(rule: &str) -> Config {
+        serde_norway::from_str(&format!(
+            "version: 1
+components:
+  a: {{ in: a }}
+  b: {{ in: b }}
+  c: {{ in: c }}
+rules:
+  a: {{ {rule} }}
+"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn metrics_report_fan_out_and_instability() {
+        let edges = [edge("a", "b"), edge("a", "c"), edge("b", "a")];
+        // a: out 2, in 1 -> instability 0.67
+        let found = metrics(&limits("max_fan_out: 1, max_instability: 0.5"), &edges);
+        let targets: Vec<_> = found.iter().map(|v| v.target.as_str()).collect();
+        assert_eq!(targets, ["max_fan_out", "max_instability"]);
+        assert!(found[0].message.contains("depends on 2 components"));
+        assert!(found[1].message.contains("instability 0.67"));
+        assert!(metrics(&limits("max_fan_out: 2, max_instability: 0.7"), &edges).is_empty());
+    }
+
+    #[test]
+    fn orphans_only_in_strict_mode() {
+        let yaml = |strict: bool| -> Config {
+            serde_norway::from_str(&format!(
+                "version: 1\ncomponents:\n  a: {{ in: a }}\nstrict: {strict}\n"
+            ))
+            .unwrap()
+        };
+        let files = ["a/x.go".to_string(), "b/y.go".to_string()];
+        let strict = yaml(true);
+        let map = ComponentMap::new(&strict).unwrap();
+        let found = orphans(&strict, &map, &files);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].file, "b/y.go");
+        assert!(orphans(&yaml(false), &map, &files).is_empty());
     }
 
     #[test]

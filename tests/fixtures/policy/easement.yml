@@ -1,0 +1,20 @@
+version: 1
+
+components:
+  web: { in: src/web }
+  core: { in: src/core }
+  data: { in: src/data }
+  shared: { in: src/shared }
+
+common: [shared]
+layers: [web, core, data]
+strict: true
+
+rules:
+  web:
+    must_not_depend_on: [data]
+    forbid_external: [moment]
+    because: pages go through core
+  core:
+    may_use_external: [lodash]
+    max_fan_out: 1

@@ -1,0 +1,48 @@
+name: easement
+description: Architecture quality gate. Fails the build when imports cross component boundaries that easement.yml does not allow.
+author: mokevnin
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: easement version to install, such as 0.2.0. The latest release by default.
+    default: latest
+  config:
+    description: Path of the config file.
+    default: easement.yml
+  working-directory:
+    description: Directory to run in, for a package of a monorepo.
+    default: .
+  diff:
+    description: Revision to compare with, such as origin/main. Judges only imports added since then; the checkout needs fetch-depth 0.
+    default: ""
+  format:
+    description: Report format, one of text, json, sarif, github, junit. `github` annotates the changed files.
+    default: github
+
+runs:
+  using: composite
+  steps:
+    - name: Install easement
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        bindir="$RUNNER_TEMP/easement-bin"
+        sh "$GITHUB_ACTION_PATH/install.sh" -b "$bindir" -v "$VERSION"
+        echo "$bindir" >> "$GITHUB_PATH"
+    - name: Check the architecture
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        DIFF: ${{ inputs.diff }}
+        FORMAT: ${{ inputs.format }}
+      run: |
+        args=(check --config "$CONFIG" --format "$FORMAT")
+        if [ -n "$DIFF" ]; then
+          args+=(--diff "$DIFF")
+        fi
+        easement "${args[@]}"

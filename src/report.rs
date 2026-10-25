@@ -1,7 +1,8 @@
 use serde::Serialize;
+use serde_json::json;
 
 use crate::baseline::Verdict;
-use crate::check::{Key, Stats, Violation};
+use crate::check::{Key, RuleId, Stats, Violation};
 use crate::diff::Changes;
 
 #[derive(Serialize)]
@@ -63,13 +64,7 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
         }
         out.push_str("Stale baseline entries (fixed, run `easement baseline` to shrink it):\n");
         for k in &verdict.stale {
-            let what = match k.rule {
-                crate::check::RuleId::Cycle => format!("cycle among {}", k.from),
-                crate::check::RuleId::Dependency | crate::check::RuleId::Privacy => {
-                    format!("{}: {} -> {} ({})", k.file, k.from, k.to, k.target)
-                }
-                _ => format!("{}: {}", k.file, k.target),
-            };
+            let what = stale_description(k);
             out.push_str(&format!("  [{}] {what}\n", k.rule.as_str()));
         }
     }
@@ -88,6 +83,12 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     if stats.suppressed > 0 {
         out.push_str(&format!(", {} suppressed", stats.suppressed));
     }
+    if !stats.dynamic.is_empty() {
+        out.push_str(&format!(
+            ", {} dynamic imports not analysed",
+            stats.dynamic.len()
+        ));
+    }
     if stats.unresolved_deps > 0 {
         out.push_str(&format!(", {} unresolved", stats.unresolved_deps));
     }
@@ -99,4 +100,245 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     }
     out.push('\n');
     out
+}
+
+fn stale_description(k: &Key) -> String {
+    match k.rule {
+        RuleId::Cycle => format!("cycle among {}", k.from),
+        RuleId::Metric => format!("{} exceeds {}", k.from, k.target),
+        RuleId::External => format!("{}: {} -> external {}", k.file, k.from, k.target),
+        RuleId::Dependency | RuleId::Privacy => {
+            format!("{}: {} -> {} ({})", k.file, k.from, k.to, k.target)
+        }
+        _ => format!("{}: {}", k.file, k.target),
+    }
+}
+
+fn stale_message(k: &Key) -> String {
+    format!(
+        "stale baseline entry, fixed debt: {} (run `easement baseline` to shrink it)",
+        stale_description(k)
+    )
+}
+
+/// SARIF 2.1.0, the format GitHub Code Scanning ingests.
+pub fn sarif(verdict: &Verdict) -> String {
+    let mut ids: Vec<&str> = verdict.new.iter().map(|v| v.rule.as_str()).collect();
+    if !verdict.stale.is_empty() {
+        ids.push(STALE);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    let rules: Vec<_> = ids
+        .iter()
+        .map(|id| json!({ "id": id, "shortDescription": { "text": format!("easement {id}") } }))
+        .collect();
+    let mut results: Vec<_> = verdict
+        .new
+        .iter()
+        .map(|v| {
+            let text = match &v.because {
+                Some(because) => format!("{} (because: {because})", v.message),
+                None => v.message.clone(),
+            };
+            json!({
+                "ruleId": v.rule.as_str(),
+                "level": "error",
+                "message": { "text": text },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": v.file },
+                        "region": { "startLine": v.line },
+                    },
+                }],
+            })
+        })
+        .collect();
+    results.extend(verdict.stale.iter().map(|k| {
+        json!({
+            "ruleId": STALE,
+            "level": "error",
+            "message": { "text": stale_message(k) },
+        })
+    }));
+    let report = json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": { "driver": {
+                "name": "easement",
+                "version": env!("CARGO_PKG_VERSION"),
+                "informationUri": env!("CARGO_PKG_HOMEPAGE"),
+                "rules": rules,
+            } },
+            "results": results,
+        }],
+    });
+    serde_json::to_string_pretty(&report).expect("report serializes")
+}
+
+fn escape_command(text: &str) -> String {
+    text.replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
+fn escape_property(text: &str) -> String {
+    escape_command(text).replace(':', "%3A").replace(',', "%2C")
+}
+
+/// GitHub Actions workflow commands: annotations on the changed files.
+pub fn github(verdict: &Verdict, stats: &Stats) -> String {
+    let mut out = String::new();
+    for v in &verdict.new {
+        let text = match &v.because {
+            Some(because) => format!("{} (because: {because})", v.message),
+            None => v.message.clone(),
+        };
+        out.push_str(&format!(
+            "::error file={},line={},title={}::{}\n",
+            escape_property(&v.file),
+            v.line,
+            escape_property(&format!("easement {}", v.rule.as_str())),
+            escape_command(&text)
+        ));
+    }
+    for k in &verdict.stale {
+        out.push_str(&format!(
+            "::error title={}::{}\n",
+            escape_property(&format!("easement {STALE}")),
+            escape_command(&stale_message(k))
+        ));
+    }
+    out.push_str(
+        &text(verdict, stats, None)
+            .lines()
+            .last()
+            .map_or_else(String::new, |l| format!("{l}\n")),
+    );
+    out
+}
+
+fn escape_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// JUnit XML: one failed test case per violation, so CI shows them as test failures.
+pub fn junit(verdict: &Verdict) -> String {
+    let failures = verdict.new.len() + verdict.stale.len();
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str(&format!(
+        "<testsuite name=\"easement\" tests=\"{}\" failures=\"{failures}\">\n",
+        failures.max(1)
+    ));
+    if failures == 0 {
+        out.push_str("  <testcase classname=\"easement\" name=\"architecture\"/>\n");
+    }
+    for v in &verdict.new {
+        let name = format!("{}:{}", v.file, v.line);
+        let mut body = v.message.clone();
+        if let Some(because) = &v.because {
+            body.push_str(&format!("\nbecause: {because}"));
+        }
+        out.push_str(&format!(
+            "  <testcase classname=\"easement.{}\" name=\"{}\"><failure message=\"{}\" type=\"{}\">{}</failure></testcase>\n",
+            v.rule.as_str(),
+            escape_xml(&name),
+            escape_xml(&v.message),
+            v.rule.as_str(),
+            escape_xml(&body)
+        ));
+    }
+    for k in &verdict.stale {
+        let message = stale_message(k);
+        out.push_str(&format!(
+            "  <testcase classname=\"easement.{STALE}\" name=\"{}\"><failure message=\"{}\" type=\"{STALE}\">{}</failure></testcase>\n",
+            escape_xml(&stale_description(k)),
+            escape_xml(&message),
+            escape_xml(&message)
+        ));
+    }
+    out.push_str("</testsuite>\n");
+    out
+}
+
+const STALE: &str = "stale-baseline";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::baseline::Verdict;
+
+    fn verdict() -> Verdict {
+        Verdict {
+            new: vec![Violation {
+                rule: RuleId::Dependency,
+                file: "src/a.ts".into(),
+                line: 3,
+                message: "a -> b is not allowed <x> 100%".into(),
+                because: Some("layers".into()),
+                from: "a".into(),
+                to: "b".into(),
+                target: "src/b.ts".into(),
+                specifier: "../b".into(),
+                evidence: Vec::new(),
+            }],
+            stale: vec![Key {
+                rule: RuleId::Metric,
+                file: "f".into(),
+                target: "max_fan_out".into(),
+                from: "core".into(),
+                to: String::new(),
+            }],
+            legalized: 0,
+        }
+    }
+
+    #[test]
+    fn sarif_has_located_results() {
+        let report: serde_json::Value = serde_json::from_str(&sarif(&verdict())).unwrap();
+        assert_eq!(report["version"], "2.1.0");
+        let results = report["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["ruleId"], "dependency");
+        assert_eq!(
+            results[0]["locations"][0]["physicalLocation"]["region"]["startLine"],
+            3
+        );
+        assert_eq!(results[1]["ruleId"], "stale-baseline");
+        assert_eq!(
+            report["runs"][0]["tool"]["driver"]["rules"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn github_annotations_are_escaped() {
+        let out = github(&verdict(), &Stats::default());
+        assert!(out.starts_with(
+            "::error file=src/a.ts,line=3,title=easement dependency::a -> b is not allowed <x> 100%25 (because: layers)\n"
+        ));
+        assert!(out.contains("::error title=easement stale-baseline::"));
+        assert!(out.contains("easement failed"));
+    }
+
+    #[test]
+    fn junit_counts_failures_and_escapes() {
+        let xml = junit(&verdict());
+        assert!(xml.contains("tests=\"2\" failures=\"2\""));
+        assert!(xml.contains("&lt;x&gt;"));
+        let clean = junit(&Verdict {
+            new: vec![],
+            stale: vec![],
+            legalized: 0,
+        });
+        assert!(clean.contains("tests=\"1\" failures=\"0\""));
+        assert!(clean.contains("name=\"architecture\"/>"));
+    }
 }

@@ -1,0 +1,16 @@
+# Hooks for https://pre-commit.com. The check reads the whole project, so it runs on every commit.
+- id: easement
+  name: easement
+  description: Architecture quality gate, built from source with cargo.
+  entry: easement check
+  language: rust
+  pass_filenames: false
+  always_run: true
+
+- id: easement-system
+  name: easement
+  description: Architecture quality gate, using the easement already on the PATH.
+  entry: easement check
+  language: system
+  pass_filenames: false
+  always_run: true

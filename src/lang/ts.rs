@@ -4,7 +4,7 @@ use anyhow::Result;
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, query_imports, relative};
+use super::{Adapter, Import, Target, dynamic_calls, query_imports, relative};
 
 /// `import … from`, `export … from`, `import x = require()`, `require()`, `import()`.
 const QUERY: &str = r#"
@@ -20,16 +20,26 @@ const QUERY: &str = r#"
   arguments: (arguments . (string) @spec))
 "#;
 
+/// `require(x)` and `import(x)` with their first argument.
+const DYNAMIC_QUERY: &str = r#"
+(call_expression
+  function: [(identifier) (import)] @fn
+  arguments: (arguments . (_) @arg))
+"#;
+
 const TS_EXTENSIONS: &[&str] = &["ts", "mts", "cts"];
 const TSX_EXTENSIONS: &[&str] = &["tsx", "js", "jsx", "mjs", "cjs"];
+
+/// A tree-sitter language with the query for static imports and the one for dynamic ones.
+type Grammar = (Language, Query, Query);
 
 /// TypeScript and JavaScript. Resolution follows Node/bundler rules via
 /// `oxc_resolver`: relative paths, `tsconfig` paths, package `exports`,
 /// workspaces. Anything that lands in `node_modules` or outside the project is external.
 pub struct TypeScript {
     root: PathBuf,
-    ts: (Language, Query),
-    tsx: (Language, Query),
+    ts: Grammar,
+    tsx: Grammar,
     resolver: Resolver,
     /// Same options without tsconfig: used when a tsconfig cannot be loaded,
     /// e.g. it `extends` a package that is not installed.
@@ -38,9 +48,10 @@ pub struct TypeScript {
 
 impl TypeScript {
     pub fn new(root: &Path) -> Result<Self> {
-        let grammar = |language: Language| -> Result<(Language, Query)> {
+        let grammar = |language: Language| -> Result<Grammar> {
             let query = Query::new(&language, QUERY)?;
-            Ok((language, query))
+            let dynamic = Query::new(&language, DYNAMIC_QUERY)?;
+            Ok((language, query, dynamic))
         };
         let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let options = ResolveOptions {
@@ -70,7 +81,7 @@ impl TypeScript {
         })
     }
 
-    fn grammar_for(&self, path: &Path) -> Option<&(Language, Query)> {
+    fn grammar_for(&self, path: &Path) -> Option<&Grammar> {
         let ext = path.extension()?.to_str()?;
         if path.to_str().is_some_and(|p| p.ends_with(".d.ts")) {
             return None;
@@ -100,9 +111,18 @@ impl Adapter for TypeScript {
 
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>> {
         match self.grammar_for(path) {
-            Some((language, query)) => query_imports(language, query, path, source),
+            Some((language, query, _)) => query_imports(language, query, path, source),
             None => Ok(Vec::new()),
         }
+    }
+
+    fn dynamic_imports(&self, path: &Path, source: &str) -> Result<Vec<usize>> {
+        let Some((language, _, query)) = self.grammar_for(path) else {
+            return Ok(Vec::new());
+        };
+        dynamic_calls(language, query, path, source, |callee, arg| {
+            (callee == "require" || callee == "import") && arg.kind() != "string"
+        })
     }
 
     fn resolve(&self, file: &Path, specifier: &str) -> Target {
@@ -150,6 +170,14 @@ const h = notRequire("./h");
             .map(|i| i.specifier)
             .collect();
         assert_eq!(got, ["./a", "./b", "./c", "./d", "./e", "./f", "./g"]);
+    }
+
+    #[test]
+    fn finds_dynamic_imports() {
+        let ts = TypeScript::new(Path::new("/nonexistent")).unwrap();
+        let src = "const a = require('./a');\nconst b = require(name);\nawait import(`./x/${n}`);\nawait import('./y');\nrequireX(z);\n";
+        let got = ts.dynamic_imports(Path::new("x.ts"), src).unwrap();
+        assert_eq!(got, [2, 3]);
     }
 
     #[test]

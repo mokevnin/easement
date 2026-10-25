@@ -9,7 +9,7 @@ homepage = "https://github.com/mokevnin/easement"
 readme = "README.md"
 keywords = ["architecture", "linter", "dependencies", "quality-gate", "boundaries"]
 categories = ["command-line-utilities", "development-tools"]
-include = ["/src/**/*.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+include = ["/src/**/*.rs", "/easement.schema.json", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -23,9 +23,14 @@ serde_json = "1.0.154"
 serde_norway = "0.9.42"
 streaming-iterator = "0.1.9"
 tree-sitter = "0.27.1"
+tree-sitter-c-sharp = "0.23.5"
 tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-php = "0.25.1"
 tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-swift = "0.7.4"
 tree-sitter-typescript = "0.23.2"
 
 [package.metadata.deb]
