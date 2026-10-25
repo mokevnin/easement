@@ -217,6 +217,10 @@ fn violations(root: &Path) -> (Vec<(String, String)>, serde_json::Value) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "scip-python 0.6.8 crashes on Windows: new RegExp(path.sep, 'g') in its PythonEnvironment.ts"
+)]
 fn python_resolves_absolute_relative_and_from_imports() {
     let (_tmp, root) = fixture("python");
     let (pairs, stats) = violations(&root);

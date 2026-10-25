@@ -27,6 +27,8 @@ pub struct Language {
     /// Arguments that write the index to the given file.
     args: fn(&Path) -> Vec<String>,
     install: &'static str,
+    /// Why the indexer cannot run on Windows, if it cannot.
+    not_on_windows: Option<&'static str>,
 }
 
 pub const LANGUAGES: &[Language] = &[
@@ -39,6 +41,7 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["go"],
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
+        not_on_windows: None,
     },
     Language {
         name: "typescript",
@@ -56,6 +59,7 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
+        not_on_windows: None,
     },
     Language {
         name: "python",
@@ -83,6 +87,9 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-python",
+        not_on_windows: Some(
+            "scip-python 0.6.8 crashes there (`new RegExp(path.sep, 'g')` in its PythonEnvironment.ts)",
+        ),
     },
     Language {
         name: "rust",
@@ -100,6 +107,7 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "rustup component add rust-analyzer",
+        not_on_windows: None,
     },
 ];
 
@@ -156,6 +164,14 @@ pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
         let roots = language.roots(files);
         if roots.is_empty() {
             continue;
+        }
+        if cfg!(windows)
+            && let Some(why) = language.not_on_windows
+        {
+            bail!(
+                "easement cannot index {} files on Windows: {why}; add them to `exclude` to check the rest",
+                language.name
+            );
         }
         for dir in roots {
             parts.push(index_dir(language, root, &dir)?);
