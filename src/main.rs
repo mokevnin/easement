@@ -2,6 +2,7 @@ mod baseline;
 mod check;
 mod components;
 mod config;
+mod diff;
 mod lang;
 mod report;
 mod scan;
@@ -36,6 +37,10 @@ enum Command {
         /// Ignore the baseline and report every violation.
         #[arg(long)]
         no_baseline: bool,
+        /// Judge only imports on lines added since the merge-base with this
+        /// revision (e.g. `origin/main`), including uncommitted changes.
+        #[arg(long, value_name = "BASE")]
+        diff: Option<String>,
     },
     /// Record current violations as legalized debt in the baseline file.
     Baseline {
@@ -91,24 +96,38 @@ fn run(cli: Cli) -> Result<bool> {
             config,
             format,
             no_baseline,
+            diff,
         } => {
             let project = Project::open(&config)?;
             let (violations, stats) = project.violations()?;
+            let current = violations.iter().map(check::Violation::key).collect();
+            let changes = diff
+                .map(|base| diff::Changes::collect(&project.root, &base))
+                .transpose()?;
+            let judged = match &changes {
+                Some(changes) => violations
+                    .into_iter()
+                    .filter(|v| changes.contains(&v.file, v.line))
+                    .collect(),
+                None => violations,
+            };
             let baseline = if no_baseline {
                 None
             } else {
                 Baseline::load(&project.baseline_path())?
             };
-            let verdict = Verdict::judge(violations, baseline.as_ref());
+            let verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
+            let changes = changes.as_ref();
             match format {
-                Format::Text => print!("{}", report::text(&verdict, &stats)),
-                Format::Json => println!("{}", report::json(&verdict, &stats)),
+                Format::Text => print!("{}", report::text(&verdict, &stats, changes)),
+                Format::Json => println!("{}", report::json(&verdict, &stats, changes)),
             }
             Ok(verdict.passed())
         }
         Command::Baseline { config } => {
             let project = Project::open(&config)?;
             let (violations, _) = project.violations()?;
+            let violations = check::dedupe(violations);
             let path = project.baseline_path();
             Baseline::from_violations(&violations).save(&path)?;
             println!(

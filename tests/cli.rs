@@ -229,3 +229,82 @@ fn java_resolves_by_package_declaration() {
     assert_eq!(stats["internal_deps"], 3);
     assert_eq!(stats["external_deps"], 1);
 }
+
+fn git(root: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .current_dir(root)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn diff_mode_judges_only_changed_lines() {
+    let (_tmp, root) = fixture("ts");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "base"]);
+    git(&root, &["checkout", "-q", "-b", "feature"]);
+
+    // Legacy violations exist on main, but this change touches nothing.
+    easement(&root, &["check"]).code(1);
+    easement(&root, &["check", "--diff", "main"])
+        .success()
+        .stdout(contains("Checking lines changed since main"));
+
+    // A committed new violation in an existing file.
+    let checkout = root.join("src/app/checkout.ts");
+    let text = fs::read_to_string(&checkout).unwrap();
+    fs::write(
+        &checkout,
+        format!("import * as ui from \"../ui/page\";\n{text}"),
+    )
+    .unwrap();
+    git(&root, &["commit", "-q", "-am", "leak"]);
+    // An uncommitted, untracked file with another one.
+    fs::write(
+        root.join("src/domain/leak.ts"),
+        "import { save } from \"../infra/db\";\n",
+    )
+    .unwrap();
+
+    let out = easement(&root, &["check", "--diff", "main", "--format", "json"])
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let found: Vec<(String, u64)> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["file"].as_str().unwrap().into(),
+                v["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    // checkout.ts -> infra moved to line 4 but is untouched, so it is not reported.
+    assert_eq!(
+        found,
+        vec![
+            ("src/app/checkout.ts".to_string(), 1),
+            ("src/domain/leak.ts".to_string(), 1),
+        ]
+    );
+    assert_eq!(report["diff"]["base"], "main");
+
+    easement(&root, &["check", "--diff", "no-such-branch"])
+        .code(2)
+        .stderr(contains("merge-base"));
+}

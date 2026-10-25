@@ -15,6 +15,7 @@ Early. Go, TypeScript/JavaScript, Python and Java work.
 ```sh
 easement check                 # exit 0: passed, 1: violations, 2: error
 easement check --format json   # machine-readable report
+easement check --diff origin/main  # only imports added in this change
 easement baseline              # legalize current violations
 ```
 
@@ -60,6 +61,12 @@ easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps
 - a baseline entry that no longer occurs also fails, so fixed debt has to be removed from the file with `easement baseline`. The baseline can only shrink.
 
 Entries are keyed by file, target and components, not by line, so unrelated edits do not invalidate them.
+
+## Diff mode: judging a pull request
+
+`easement check --diff <base>` reports only violations whose import line was added or changed since the merge-base with `<base>`, including uncommitted and untracked files. Old violations elsewhere do not fail the change, so the gate can be turned on without a baseline. In CI fetch the base branch (`actions/checkout` with `fetch-depth: 0`).
+
+The baseline still applies, and stale entries are still reported. A rule change in `easement.yml` does not touch the importing lines, so it shows up only in a full `easement check`; run both on pull requests if the config changes often.
 
 ## Languages
 

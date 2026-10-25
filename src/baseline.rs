@@ -49,7 +49,14 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    pub fn judge(violations: Vec<Violation>, baseline: Option<&Baseline>) -> Self {
+    /// `violations` are the ones being judged (all of them, or only those in a
+    /// diff); `current` are the keys of every violation in the project, which
+    /// decide whether a baseline entry is stale.
+    pub fn judge(
+        violations: Vec<Violation>,
+        current: &BTreeSet<Key>,
+        baseline: Option<&Baseline>,
+    ) -> Self {
         let Some(baseline) = baseline else {
             return Self {
                 new: violations,
@@ -57,8 +64,7 @@ impl Verdict {
                 legalized: 0,
             };
         };
-        let current: BTreeSet<Key> = violations.iter().map(Violation::key).collect();
-        let stale = baseline.violations.difference(&current).cloned().collect();
+        let stale = baseline.violations.difference(current).cloned().collect();
         let (legal, new): (Vec<_>, Vec<_>) = violations
             .into_iter()
             .partition(|v| baseline.violations.contains(&v.key()));
@@ -92,7 +98,9 @@ mod tests {
     #[test]
     fn ratchet_fails_on_new_and_stale() {
         let baseline = Baseline::from_violations(&[v("f1", "b"), v("f2", "b")]);
-        let verdict = Verdict::judge(vec![v("f1", "b"), v("f3", "c")], Some(&baseline));
+        let found = vec![v("f1", "b"), v("f3", "c")];
+        let current = found.iter().map(Violation::key).collect();
+        let verdict = Verdict::judge(found, &current, Some(&baseline));
         assert_eq!(verdict.legalized, 1);
         assert_eq!(verdict.new.len(), 1);
         assert_eq!(verdict.new[0].file, "f3");

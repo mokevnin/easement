@@ -50,11 +50,11 @@ pub struct Stats {
     pub unresolved: Vec<String>,
 }
 
-/// Evaluates every internal dependency against the rules.
-/// Violations are unique per (file, target); the first line wins.
+/// Evaluates every internal dependency against the rules. Every violating
+/// import is returned, one per line; see [`dedupe`].
 pub fn evaluate(config: &Config, map: &ComponentMap, deps: &[Dep]) -> (Vec<Violation>, Stats) {
     let mut stats = Stats::default();
-    let mut found: BTreeMap<Key, Violation> = BTreeMap::new();
+    let mut found = Vec::new();
     let mut unmapped = std::collections::BTreeSet::new();
     for dep in deps {
         let target = match &dep.target {
@@ -94,8 +94,22 @@ pub fn evaluate(config: &Config, map: &ComponentMap, deps: &[Dep]) -> (Vec<Viola
             target,
             specifier: dep.specifier.clone(),
         };
-        found.entry(violation.key()).or_insert(violation);
+        found.push(violation);
     }
     stats.unmapped_files = unmapped.len();
-    (found.into_values().collect(), stats)
+    (found, stats)
+}
+
+/// One violation per (file, target), the earliest line, sorted by key.
+pub fn dedupe(violations: Vec<Violation>) -> Vec<Violation> {
+    let mut unique: BTreeMap<Key, Violation> = BTreeMap::new();
+    for v in violations {
+        match unique.get(&v.key()) {
+            Some(seen) if seen.line <= v.line => {}
+            _ => {
+                unique.insert(v.key(), v);
+            }
+        }
+    }
+    unique.into_values().collect()
 }
