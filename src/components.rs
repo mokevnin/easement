@@ -8,9 +8,14 @@ use crate::config::Config;
 /// A pattern names a module, whether it is a directory or a file: `P` matches
 /// `P` itself, everything below it (`P/**`) and a file `P.<ext>`. So
 /// `src/app/cli` covers both `cli.py` and the `cli/` package. When several
-/// components match, the longest pattern wins.
+/// components match, the higher `priority` wins, then the longest pattern. A
+/// component skips the files its `except` patterns match.
 pub struct ComponentMap {
     entries: Vec<Entry>,
+    /// Component -> matchers of the paths it gives up, for components with `except`.
+    except: std::collections::HashMap<String, Vec<[GlobMatcher; 3]>>,
+    /// Files that may belong to no component in strict mode.
+    unowned: GlobSet,
     /// Component -> matchers of its public paths, for components that declare them.
     public: std::collections::HashMap<String, Vec<[GlobMatcher; 3]>>,
     /// Component -> what it may do with external modules, for components that restrict it.
@@ -21,9 +26,22 @@ struct Externals {
     /// `None`: any external module may be used.
     allowed: Option<GlobSet>,
     forbidden: GlobSet,
+    /// The reason given with each forbidden pattern, in the order of `forbidden`.
+    reasons: Vec<Option<String>>,
 }
 
-fn glob_set(component: &str, key: &str, patterns: &[String]) -> Result<GlobSet> {
+/// Why a component may not use an external module: what is wrong, and the
+/// reason attached to the forbidden pattern, if it has one.
+pub struct ExternalProblem<'a> {
+    pub what: &'static str,
+    pub because: Option<&'a str>,
+}
+
+fn glob_set<'a>(
+    component: &str,
+    key: &str,
+    patterns: impl IntoIterator<Item = &'a str>,
+) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         builder.add(
@@ -65,6 +83,10 @@ struct Entry {
     component: String,
     pattern: String,
     pattern_len: usize,
+    /// Number of `/`-separated parts of the pattern: where an instance of an isolated component ends.
+    parts: usize,
+    priority: i32,
+    isolated: bool,
     matchers: [GlobMatcher; 3],
 }
 
@@ -81,21 +103,45 @@ impl ComponentMap {
                         allowed: rule
                             .may_use_external
                             .as_deref()
-                            .map(|p| glob_set(name, "may_use_external", p))
+                            .map(|p| {
+                                glob_set(name, "may_use_external", p.iter().map(String::as_str))
+                            })
                             .transpose()?,
-                        forbidden: glob_set(name, "forbid_external", &rule.forbid_external)?,
+                        forbidden: glob_set(
+                            name,
+                            "forbid_external",
+                            rule.forbid_external.iter().map(|l| l.name()),
+                        )?,
+                        reasons: rule
+                            .forbid_external
+                            .iter()
+                            .map(|l| l.because().map(str::to_string))
+                            .collect(),
                     },
                 );
             }
         }
+        let mut except = std::collections::HashMap::new();
         for (name, component) in &config.components {
             for pattern in component.patterns.as_vec() {
+                let trimmed = pattern.trim_end_matches('/');
                 entries.push(Entry {
                     component: name.clone(),
-                    pattern: pattern.trim_end_matches('/').to_string(),
-                    pattern_len: pattern.trim_end_matches('/').len(),
+                    pattern: trimmed.to_string(),
+                    pattern_len: trimmed.len(),
+                    parts: trimmed.split('/').count(),
+                    priority: component.priority,
+                    isolated: component.isolated,
                     matchers: module_matchers(name, pattern)?,
                 });
+            }
+            if let Some(patterns) = &component.except {
+                let matchers = patterns
+                    .as_vec()
+                    .into_iter()
+                    .map(|p| module_matchers(name, p))
+                    .collect::<Result<Vec<_>>>()?;
+                except.insert(name.clone(), matchers);
             }
             if let Some(patterns) = &component.public {
                 let matchers = patterns
@@ -106,22 +152,65 @@ impl ComponentMap {
                 public.insert(name.clone(), matchers);
             }
         }
+        let mut unowned = GlobSetBuilder::new();
+        for pattern in &config.unowned {
+            let pattern = pattern.trim_end_matches('/');
+            for glob in [pattern.to_string(), format!("{pattern}/**")] {
+                unowned.add(
+                    Glob::new(&glob).with_context(|| format!("bad unowned pattern `{pattern}`"))?,
+                );
+            }
+        }
         Ok(Self {
             entries,
+            except,
+            unowned: unowned.build()?,
             public,
             externals,
         })
     }
 
+    /// Whether any of the external modules matches the pattern, which covers
+    /// submodules the way `forbid_external` does.
+    pub fn external_matches<'a>(
+        pattern: &str,
+        modules: impl IntoIterator<Item = &'a String>,
+    ) -> bool {
+        let Ok(glob) = Glob::new(pattern) else {
+            return false;
+        };
+        let matcher = glob.compile_matcher();
+        modules
+            .into_iter()
+            .any(|module| prefixes(module).any(|p| matcher.is_match(p)))
+    }
+
+    /// Whether strict mode lets `rel_path` belong to no component.
+    pub fn is_unowned(&self, rel_path: &str) -> bool {
+        self.unowned.is_match(rel_path)
+    }
+
     /// Why `component` may not use the external module `specifier`, if it may not.
-    pub fn external_problem(&self, component: &str, specifier: &str) -> Option<&'static str> {
+    pub fn external_problem(
+        &self,
+        component: &str,
+        specifier: &str,
+    ) -> Option<ExternalProblem<'_>> {
         let rules = self.externals.get(component)?;
-        if prefixes(specifier).any(|p| rules.forbidden.is_match(p)) {
-            return Some("is forbidden");
+        if let Some(index) =
+            prefixes(specifier).find_map(|p| rules.forbidden.matches(p).first().copied())
+        {
+            return Some(ExternalProblem {
+                what: "is forbidden",
+                because: rules.reasons[index].as_deref(),
+            });
         }
         match &rules.allowed {
             Some(allowed) if !prefixes(specifier).any(|p| allowed.is_match(p)) => {
-                Some("is not in may_use_external")
+                Some(ExternalProblem {
+                    what: "is not in may_use_external",
+                    because: None,
+                })
             }
             _ => None,
         }
@@ -151,7 +240,32 @@ impl ComponentMap {
         self.entries
             .iter()
             .filter(|e| e.matchers.iter().any(|m| m.is_match(rel_path)))
-            .max_by_key(|e| e.pattern_len)
+            .filter(|e| {
+                !self
+                    .except
+                    .get(&e.component)
+                    .is_some_and(|ms| ms.iter().any(|ms| ms.iter().any(|m| m.is_match(rel_path))))
+            })
+            .max_by_key(|e| (e.priority, e.pattern_len))
+    }
+
+    /// For a path in an isolated component: the instance it belongs to, such
+    /// as `src/pages/contacts` for `src/pages/*`. A file `contacts.tsx` and a
+    /// directory `contacts/` are the same instance.
+    pub fn instance_of(&self, rel_path: &str) -> Option<String> {
+        let entry = self.matching(rel_path).filter(|e| e.isolated)?;
+        let segments: Vec<&str> = rel_path.split('/').collect();
+        let n = entry.parts.min(segments.len());
+        let instance = segments[..n].join("/");
+        if segments.len() == n
+            && let Some((stem, ext)) = instance.rsplit_once('.')
+            && !stem.ends_with('/')
+            && !ext.is_empty()
+            && ext.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            return Some(stem.to_string());
+        }
+        Some(instance)
     }
 }
 
@@ -230,6 +344,69 @@ rules:
                 "Illuminate\\Support\\Str"
             ]
         );
+    }
+
+    #[test]
+    fn priority_beats_length_and_except_hands_files_on() {
+        let m = map("version: 1
+components:
+  feature: { in: src/deep/feature, except: '**/*.stories.tsx' }
+  src: { in: src }
+  tests: { in: '**/*.test.ts', priority: 1 }
+  long: { in: src/deep/feature/long/path }
+");
+        // `feature` gives its stories up, so the shorter `src` gets them.
+        assert_eq!(m.component_of("src/deep/feature/a.ts"), Some("feature"));
+        assert_eq!(
+            m.component_of("src/deep/feature/a.stories.tsx"),
+            Some("src")
+        );
+        // A priority outranks a longer pattern.
+        assert_eq!(
+            m.component_of("src/deep/feature/long/path/x.ts"),
+            Some("long")
+        );
+        assert_eq!(
+            m.component_of("src/deep/feature/long/path/x.test.ts"),
+            Some("tests")
+        );
+    }
+
+    #[test]
+    fn instances_of_isolated_components() {
+        let m = map("version: 1
+components:
+  pages: { in: 'src/pages/*', isolated: true }
+  plain: { in: src/plain }
+");
+        let instance = |p: &str| m.instance_of(p);
+        assert_eq!(
+            instance("src/pages/contacts/index.ts").as_deref(),
+            Some("src/pages/contacts")
+        );
+        assert_eq!(
+            instance("src/pages/contacts").as_deref(),
+            Some("src/pages/contacts")
+        );
+        // A file and a directory of the same name are one instance.
+        assert_eq!(
+            instance("src/pages/contacts.tsx").as_deref(),
+            Some("src/pages/contacts")
+        );
+        assert_eq!(instance("src/plain/a.ts"), None);
+        assert_eq!(instance("src/elsewhere/a.ts"), None);
+    }
+
+    #[test]
+    fn unowned_covers_directories() {
+        let m = map("version: 1
+components:
+  a: { in: a }
+unowned: [gen, 'tools/*.ts']
+");
+        assert!(m.is_unowned("gen/x/y.ts"));
+        assert!(m.is_unowned("tools/x.ts"));
+        assert!(!m.is_unowned("other/x.ts"));
     }
 
     #[test]

@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::components::ComponentMap;
-use crate::config::Config;
+use crate::config::{Config, Listed};
 use crate::lang::Target;
 use crate::scan::{Dep, slash};
+use crate::scope::Scope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -22,6 +23,10 @@ pub enum RuleId {
     Metric,
     /// A file that belongs to no component, in strict mode.
     Orphan,
+    /// An import between instances of an isolated component.
+    Isolation,
+    /// A directory of a component lacks an import or a file the rules require.
+    Required,
     /// An inline suppression that matches no violation.
     UnusedSuppression,
     /// An inline suppression without a reason.
@@ -37,13 +42,20 @@ impl RuleId {
             RuleId::External => "external",
             RuleId::Metric => "metric",
             RuleId::Orphan => "orphan",
+            RuleId::Isolation => "isolation",
+            RuleId::Required => "required",
             RuleId::UnusedSuppression => "unused-suppression",
             RuleId::SuppressionReason => "suppression-reason",
         }
     }
 
     /// Rules that an inline comment can suppress.
-    pub const SUPPRESSIBLE: [RuleId; 3] = [RuleId::Dependency, RuleId::Privacy, RuleId::External];
+    pub const SUPPRESSIBLE: [RuleId; 4] = [
+        RuleId::Dependency,
+        RuleId::Privacy,
+        RuleId::External,
+        RuleId::Isolation,
+    ];
 
     pub fn suppressible(s: &str) -> Option<Self> {
         Self::SUPPRESSIBLE.into_iter().find(|r| r.as_str() == s)
@@ -124,6 +136,7 @@ pub struct Edge {
 pub fn evaluate(
     config: &Config,
     map: &ComponentMap,
+    scope: &Scope,
     deps: &[Dep],
 ) -> (Vec<Violation>, Vec<Edge>, Stats) {
     let mut stats = Stats::default();
@@ -131,11 +144,13 @@ pub fn evaluate(
     let mut edges = Vec::new();
     let mut unmapped = BTreeSet::new();
     for dep in deps {
+        let file = slash(&dep.file);
+        // Violations and edges come from the whole project; the counters follow the scope.
+        let counted = scope.contains(map, &file);
         let target = match &dep.target {
             Target::Internal(path) => slash(path),
             Target::External(module) => {
-                stats.external_deps += 1;
-                let file = slash(&dep.file);
+                stats.external_deps += usize::from(counted);
                 if let Some(from) = map.component_of(&file)
                     && let Some(problem) = map.external_problem(from, module)
                 {
@@ -144,8 +159,11 @@ pub fn evaluate(
                         evidence: vec![(file.clone(), dep.line)],
                         file,
                         line: dep.line,
-                        message: format!("{from} -> external {module} {problem}"),
-                        because: config.reason(from).map(str::to_string),
+                        message: format!("{from} -> external {module} {}", problem.what),
+                        because: problem
+                            .because
+                            .or_else(|| config.reason(from))
+                            .map(str::to_string),
                         from: from.to_string(),
                         to: String::new(),
                         target: module.clone(),
@@ -155,26 +173,48 @@ pub fn evaluate(
                 continue;
             }
             Target::Unresolved => {
-                stats.unresolved_deps += 1;
-                stats.unresolved.push(format!(
-                    "{}:{}: {}",
-                    slash(&dep.file),
-                    dep.line,
-                    dep.specifier
-                ));
+                if counted {
+                    stats.unresolved_deps += 1;
+                    stats
+                        .unresolved
+                        .push(format!("{file}:{}: {}", dep.line, dep.specifier));
+                }
                 continue;
             }
         };
-        stats.internal_deps += 1;
-        let file = slash(&dep.file);
+        stats.internal_deps += usize::from(counted);
         let Some(from) = map.component_of(&file) else {
-            unmapped.insert(file);
+            if counted {
+                unmapped.insert(file);
+            }
             continue;
         };
         let Some(to) = map.component_of(&target) else {
             continue;
         };
         if from == to {
+            if let (Some(here), Some(there)) = (map.instance_of(&file), map.instance_of(&target))
+                && here != there
+            {
+                found.push(Violation {
+                    rule: RuleId::Isolation,
+                    evidence: vec![(file.clone(), dep.line)],
+                    file,
+                    line: dep.line,
+                    message: format!(
+                        "{here} -> {there}: instances of {from} must not import each other (imports {})",
+                        dep.specifier
+                    ),
+                    because: config.components[from]
+                        .because
+                        .clone()
+                        .or_else(|| config.reason(from).map(str::to_string)),
+                    from: from.to_string(),
+                    to: to.to_string(),
+                    target,
+                    specifier: dep.specifier.clone(),
+                });
+            }
             continue;
         }
         edges.push(Edge {
@@ -183,6 +223,7 @@ pub fn evaluate(
             file: file.clone(),
             line: dep.line,
         });
+        let importers = config.components[to].allow_importers.as_deref();
         let (rule, message, because) = if !config.allows(from, to) {
             let how = if config.forbids(from, to) {
                 "is forbidden"
@@ -192,7 +233,19 @@ pub fn evaluate(
             (
                 RuleId::Dependency,
                 format!("{from} -> {to} {how} (imports {})", dep.specifier),
-                config.reason(from),
+                config
+                    .forbid_reason(from, to)
+                    .or_else(|| config.reason(from)),
+            )
+        } else if importers.is_some_and(|list| !list.iter().any(|c| c == from)) {
+            (
+                RuleId::Dependency,
+                format!(
+                    "{from} -> {to}: {to} may be imported only from {} (imports {})",
+                    importers.unwrap_or_default().join(", "),
+                    dep.specifier
+                ),
+                config.components[to].because.as_deref(),
             )
         } else if !map.is_public(to, &target) {
             (
@@ -429,6 +482,135 @@ pub fn metrics(config: &Config, edges: &[Edge]) -> Vec<Violation> {
     found
 }
 
+/// What a directory of a component imports and holds.
+#[derive(Default)]
+struct Unit {
+    /// Checked files, sorted; the first one carries the violations.
+    files: BTreeSet<String>,
+    components: BTreeSet<String>,
+    external: BTreeSet<String>,
+}
+
+/// `must_depend_on`, `must_use_external` and `requires_file`: every directory
+/// that holds checked files of a component must import what the rule lists and
+/// contain the files it names. One violation per directory and missing item.
+pub fn required(
+    config: &Config,
+    map: &ComponentMap,
+    deps: &[Dep],
+    paths: &[String],
+    all_files: &[String],
+) -> Vec<Violation> {
+    let parent = |file: &str| file.rsplit_once('/').map_or("", |(dir, _)| dir).to_string();
+    let wanted = |from: &str| {
+        config.rules.get(from).is_some_and(|r| {
+            !(r.must_depend_on.is_empty()
+                && r.must_use_external.is_empty()
+                && r.requires_file.is_empty())
+        })
+    };
+    let mut units: BTreeMap<(String, String), Unit> = BTreeMap::new();
+    for file in paths {
+        if let Some(component) = map.component_of(file).filter(|c| wanted(c)) {
+            units
+                .entry((component.to_string(), parent(file)))
+                .or_default()
+                .files
+                .insert(file.clone());
+        }
+    }
+    for dep in deps {
+        let file = slash(&dep.file);
+        let Some(component) = map.component_of(&file) else {
+            continue;
+        };
+        let Some(unit) = units.get_mut(&(component.to_string(), parent(&file))) else {
+            continue;
+        };
+        match &dep.target {
+            Target::Internal(target) => {
+                if let Some(to) = map.component_of(&slash(target)) {
+                    unit.components.insert(to.to_string());
+                }
+            }
+            Target::External(module) => {
+                unit.external.insert(module.clone());
+            }
+            Target::Unresolved => {}
+        }
+    }
+    let mut dir_files: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for file in all_files {
+        let (dir, name) = file.rsplit_once('/').unwrap_or(("", file));
+        dir_files.entry(dir).or_default().push(name);
+    }
+    let mut found = Vec::new();
+    for ((component, dir), unit) in &units {
+        let rule = &config.rules[component];
+        let first = unit.files.first().expect("a unit has files").clone();
+        let shown = if dir.is_empty() { "." } else { dir };
+        let mut missing = |target: String, message: String, wanted: &Listed| {
+            found.push(Violation {
+                rule: RuleId::Required,
+                file: first.clone(),
+                line: 1,
+                message,
+                because: wanted
+                    .because()
+                    .or(rule.because.as_deref())
+                    .map(str::to_string),
+                from: component.clone(),
+                to: String::new(),
+                target,
+                specifier: String::new(),
+                evidence: vec![(first.clone(), 1)],
+            });
+        };
+        for wanted in &rule.must_depend_on {
+            if !unit.components.contains(wanted.name()) {
+                missing(
+                    format!("import {}", wanted.name()),
+                    format!(
+                        "{shown} ({component}) must import {}, and no file in it does",
+                        wanted.name()
+                    ),
+                    wanted,
+                );
+            }
+        }
+        for wanted in &rule.must_use_external {
+            let used = ComponentMap::external_matches(wanted.name(), unit.external.iter());
+            if !used {
+                missing(
+                    format!("external {}", wanted.name()),
+                    format!(
+                        "{shown} ({component}) must use the external module {}, and no file in it does",
+                        wanted.name()
+                    ),
+                    wanted,
+                );
+            }
+        }
+        for wanted in &rule.requires_file {
+            let names = dir_files.get(dir.as_str()).map_or(&[][..], Vec::as_slice);
+            let present = globset::Glob::new(wanted.name())
+                .map(|g| g.compile_matcher())
+                .is_ok_and(|m| names.iter().any(|n| m.is_match(n)));
+            if !present {
+                missing(
+                    format!("file {}", wanted.name()),
+                    format!(
+                        "{shown} ({component}) must contain a file {}",
+                        wanted.name()
+                    ),
+                    wanted,
+                );
+            }
+        }
+    }
+    found
+}
+
 /// In strict mode, every checked file must belong to a component.
 pub fn orphans(config: &Config, map: &ComponentMap, files: &[String]) -> Vec<Violation> {
     if !config.strict {
@@ -436,7 +618,7 @@ pub fn orphans(config: &Config, map: &ComponentMap, files: &[String]) -> Vec<Vio
     }
     files
         .iter()
-        .filter(|f| map.component_of(f).is_none())
+        .filter(|f| map.component_of(f).is_none() && !map.is_unowned(f))
         .map(|file| Violation {
             rule: RuleId::Orphan,
             file: file.clone(),
