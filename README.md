@@ -342,6 +342,35 @@ Languages whose dependencies are not visible from imports (Ruby, Elixir) are out
 3. Map both ends to components and check each edge against the rules.
 4. Compare violations with the baseline and report.
 
+## Comparison with other tools
+
+Most architecture checkers are tied to one language. `easement` is not a replacement for them where they go deeper; it is for projects that want one model across several languages.
+
+| Tool | Languages | Level of analysis | Rules are written as |
+| --- | --- | --- | --- |
+| `easement` | Go, TypeScript/JavaScript, Python, Java, Rust, C#, Kotlin, PHP, Swift | imports between files and packages | one YAML file |
+| [ArchUnit](https://www.archunit.org/) | Java (and other JVM languages through bytecode) | classes, methods, annotations, inheritance | JUnit tests in code |
+| [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | JavaScript, TypeScript | imports between modules | JS or JSON config |
+| [import-linter](https://github.com/seddonym/import-linter) | Python | imports between modules | INI or TOML contracts |
+| [Deptrac](https://github.com/deptrac/deptrac) | PHP | classes, collected into layers | YAML |
+| [arch-go](https://github.com/arch-go/arch-go) | Go | packages, functions, naming | YAML |
+| [depguard](https://github.com/OpenPeeDeeP/depguard) | Go | import allow and deny lists | `golangci-lint` config |
+
+Where `easement` differs:
+
+- **One config, one baseline, one report.** A repository with a Go backend and a TypeScript frontend gets the same component model, the same suppressions and the same CI output (`sarif`, `github`, `junit`) for both.
+- **No build step.** Files are parsed with tree-sitter, so nothing has to compile and no dependencies have to be installed. ArchUnit, for one, works on compiled classes.
+- **Adoption and review features built in.** A baseline for existing violations, `--diff` to judge only what a pull request adds, `--scope` for a part of the project, and `extends` for shared policy in a monorepo.
+- **One static binary.** No runtime to install in CI.
+
+Where the others are stronger:
+
+- **Depth.** `easement` sees imports, not types. Rules about classes, methods, annotations, naming or call chains (ArchUnit, arch-go), and symbol-level rules in general, are out of its reach.
+- **Resolution.** A tool built for one ecosystem knows its build system better than a general adapter does: dependency-cruiser and its TypeScript options, import-linter and Python packaging, ArchUnit and the classpath.
+- **Maturity.** The tools above have years of use behind them. `easement` is early.
+
+Using both is reasonable: keep a language-specific tool for the deep rules of one codebase and let `easement` hold the boundaries between components and languages.
+
 ## Inspired by
 
 `easement` builds on ideas from these tools, each of which covers one language or ecosystem:
