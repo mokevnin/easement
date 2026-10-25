@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "minimumReleaseAge": "7 days",
+  "ignorePaths": [".github/workflows/release.yml"],
+  "packageRules": [
+    {
+      "description": "One weekly pull request for the dev tools in mise.toml and package.json",
+      "matchManagers": ["mise", "npm"],
+      "groupName": "dev tools",
+      "schedule": ["before 6am on monday"]
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+amends "package://github.com/jdx/hk/releases/download/v2.8.1/hk@2.8.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.8.1/hk@2.8.1#/Builtins.pkl"
+
+local fast = new Mapping<String, Step> {
+    ["cargo_fmt"] = Builtins.cargo_fmt
+    ["typos"] = Builtins.typos
+    ["rumdl"] = Builtins.rumdl
+    ["jactionlint"] = Builtins.jactionlint
+    ["betterleaks"] = Builtins.betterleaks
+}
+
+local all = (fast) {
+    // The builtin does not deny warnings.
+    ["cargo_clippy"] = (Builtins.cargo_clippy) {
+        check = "cargo clippy --all-targets --quiet -- -D warnings"
+    }
+    ["cargo_deny"] = Builtins.cargo_deny
+    ["cargo_machete"] {
+        glob = List("Cargo.toml", "**/*.rs")
+        check = "cargo machete"
+    }
+    ["lychee"] {
+        glob = List("**/*.md")
+        check = "lychee --config lychee.toml --no-progress {{ files }}"
+    }
+}
+
+hooks {
+    ["commit-msg"] {
+        steps {
+            ["commitlint"] {
+                check = "pnpm exec commitlint --edit {{commit_msg_file}}"
+            }
+        }
+    }
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = fast
+    }
+    ["pre-push"] {
+        steps = all
+    }
+    ["check"] {
+        steps = all
+    }
+    ["fix"] {
+        fix = true
+        steps = all
+    }
+}
