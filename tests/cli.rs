@@ -771,11 +771,13 @@ fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
     }
     if name == "php" {
         // scip-php reads the autoloader, so the (empty) dependencies have to be installed.
-        let status = std::process::Command::new("composer")
+        // `which` finds composer.bat on Windows, which `Command` alone does not.
+        let composer = which::which("composer").expect("composer is needed for the PHP indexer");
+        let status = std::process::Command::new(composer)
             .args(["install", "--no-interaction", "--quiet"])
             .current_dir(&root)
             .status()
-            .expect("composer is needed for the PHP indexer");
+            .expect("composer runs");
         assert!(status.success(), "composer install");
     }
     let (found, stats) = violations(&root);
