@@ -127,6 +127,9 @@ pub struct Stats {
     pub unresolved: Vec<String>,
     /// `file:line` of imports whose target is computed at run time and so is not checked.
     pub dynamic: Vec<String>,
+    /// Source files of an indexed language that its indexer did not cover.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub uncovered: Vec<String>,
     /// In diff mode: `a -> b` for component dependencies that exist only
     /// because of the changed lines.
     #[serde(skip_serializing_if = "Vec::is_empty")]

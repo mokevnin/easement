@@ -8,7 +8,9 @@ use ignore::WalkBuilder;
 
 use crate::check::SymbolRef;
 use crate::config::Config;
-use crate::lang::{self, Import, SymbolUse, Target};
+use crate::indexer;
+use crate::lang::{self, Import, Target};
+use crate::scip;
 use crate::suppress::{self, Suppression};
 
 /// A resolved dependency of one project file.
@@ -26,7 +28,6 @@ struct Parsed {
     len: u64,
     imports: Vec<Import>,
     dynamic: Vec<usize>,
-    symbols: Vec<SymbolUse>,
     suppressions: Vec<Suppression>,
 }
 
@@ -45,6 +46,9 @@ pub struct Scan {
     pub deps: Vec<Dep>,
     pub symbols: Vec<SymbolRef>,
     pub suppressions: Vec<Suppression>,
+    /// Source files of an indexed language that the indexer did not cover,
+    /// for example files outside every `tsconfig.json`.
+    pub uncovered: Vec<String>,
 }
 
 /// Project walker: honours .gitignore (even outside a git checkout) and
@@ -63,7 +67,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
     let mut deps = Vec::new();
-    let mut symbols = Vec::new();
     let mut dynamic = Vec::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
@@ -80,6 +83,9 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
             continue;
         }
         all_files.push(slash(&rel));
+        if indexer::LANGUAGES.iter().any(|l| l.covers(&slash(&rel))) {
+            continue; // read from the index below
+        }
         let Some(adapter) = adapters.iter().find(|a| a.handles(path)) else {
             continue;
         };
@@ -103,9 +109,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 dynamic: adapter.dynamic_imports(path, &source).with_context(|| {
                     format!("{} adapter failed on {}", adapter.name(), rel.display())
                 })?,
-                symbols: adapter.symbol_uses(path, &source).with_context(|| {
-                    format!("{} adapter failed on {}", adapter.name(), rel.display())
-                })?,
                 suppressions: suppress::parse(&slash(&rel), &source),
             };
             cache.0.insert(rel.clone(), parsed);
@@ -120,15 +123,6 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 .iter()
                 .map(|l| format!("{}:{l}", slash(&rel))),
         );
-        for used in &parsed.symbols {
-            symbols.push(SymbolRef {
-                file: rel.clone(),
-                line: used.line,
-                specifier: used.specifier.clone(),
-                name: used.name.clone(),
-                target: adapter.resolve(path, &used.specifier),
-            });
-        }
         for import in &parsed.imports {
             deps.push(Dep {
                 file: rel.clone(),
@@ -139,6 +133,25 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         }
     }
     cache.0.retain(|path, _| seen.contains(path));
+
+    let indexed = indexer::run(root, &all_files)?;
+    let project: HashSet<&str> = all_files.iter().map(String::as_str).collect();
+    let documents: Vec<scip::Document> = indexed
+        .documents
+        .0
+        .into_iter()
+        .filter(|d| project.contains(d.path.as_str()))
+        .collect();
+    for document in &documents {
+        paths.push(document.path.clone());
+        if let Ok(source) = std::fs::read_to_string(root.join(&document.path)) {
+            suppressions.extend(suppress::parse(&document.path, &source));
+        }
+    }
+    let facts = scip::facts(&documents, config.uses_symbols());
+    let in_project = |dep: &Dep| project.contains(slash(&dep.file).as_str());
+    deps.extend(facts.deps.into_iter().filter(in_project));
+    let symbols = facts.symbols;
     Ok(Scan {
         all_files,
         dynamic,
@@ -146,6 +159,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         deps,
         symbols,
         suppressions,
+        uncovered: indexed.uncovered,
     })
 }
 

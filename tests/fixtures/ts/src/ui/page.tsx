@@ -1,4 +1,3 @@
 import { checkout } from "../app/checkout";
-const db = require("../infra/db");
 
-export const Page = () => <button onClick={checkout}>{String(db)}</button>;
+export const Page = () => <button onClick={checkout}>x</button>;

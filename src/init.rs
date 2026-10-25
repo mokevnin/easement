@@ -146,9 +146,12 @@ pub fn run(root: &Path, force: bool) -> Result<String> {
         .build()
         .flatten()
         .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
-        .filter(|e| adapters.iter().any(|a| a.handles(e.path())))
         .filter_map(|e| lang::relative(root, e.path()))
         .map(|p| scan::slash(&p))
+        .filter(|p| {
+            crate::indexer::LANGUAGES.iter().any(|l| l.covers(p))
+                || adapters.iter().any(|a| a.handles(std::path::Path::new(p)))
+        })
         .collect();
     let found = discover(&files);
     if found.is_empty() {

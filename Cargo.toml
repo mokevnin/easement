@@ -17,22 +17,23 @@ clap = { version = "4.6.7", features = ["derive"] }
 dunce = "1.0.5"
 globset = "0.4.20"
 ignore = "0.4.33"
-oxc_resolver = "11.24.3"
+protobuf = "3"
 regex = "1.13.1"
+scip = "0.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_norway = "0.9.42"
 streaming-iterator = "0.1.9"
+tempfile = "3.27.0"
 tree-sitter = "0.27.1"
 tree-sitter-c-sharp = "0.23.5"
-tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-php = "0.25.1"
 tree-sitter-python = "0.25.0"
 tree-sitter-rust = "0.24.2"
 tree-sitter-swift = "0.7.4"
-tree-sitter-typescript = "0.23.2"
+which = "8.0.6"
 
 [package.metadata.deb]
 section = "devel"
@@ -53,7 +54,6 @@ assets = [
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
 serde_json = "1.0.154"
-tempfile = "3.27.0"
 
 # The profile that 'dist' will build with
 [profile.dist]
