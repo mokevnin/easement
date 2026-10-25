@@ -1,0 +1,10 @@
+version: 1
+
+components:
+  domain: { in: Sources/Domain }
+  infra: { in: Sources/Infra }
+  web: { in: Sources/Web }
+
+rules:
+  infra: { may_depend_on: [domain] }
+  web: { may_depend_on: [domain] }

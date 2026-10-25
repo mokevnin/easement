@@ -91,7 +91,10 @@ pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> (Vec<V
         } else if let Some(bad) = s.rules.iter().find(|r| RuleId::suppressible(r).is_none()) {
             Some((
                 RuleId::UnusedSuppression,
-                format!("`{bad}` is not a rule that can be suppressed (use dependency or privacy)"),
+                format!(
+                    "`{bad}` is not a rule that can be suppressed (use {})",
+                    RuleId::SUPPRESSIBLE.map(RuleId::as_str).join(", ")
+                ),
             ))
         } else if !used {
             Some((

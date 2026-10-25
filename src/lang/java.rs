@@ -4,9 +4,19 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, parse, relative};
+use super::{Adapter, Import, Target, captured_nodes, dynamic_calls, parse, relative};
 
 const QUERY: &str = "(import_declaration) @node";
+
+/// `Class.forName(x)`: the class is named at run time.
+const DYNAMIC_QUERY: &str = r#"
+(method_invocation
+  object: (identifier) @fn
+  name: (identifier) @name
+  arguments: (argument_list . (_) @arg)
+  (#eq? @fn "Class")
+  (#eq? @name "forName"))
+"#;
 
 /// Java. Internal classes are indexed by their `package` declaration, so source
 /// roots (`src/main/java`, multi-module builds) need no configuration.
@@ -17,6 +27,7 @@ const QUERY: &str = "(import_declaration) @node";
 pub struct Java {
     language: Language,
     query: Query,
+    dynamic: Query,
     /// Fully qualified top-level class name -> file, relative to the root.
     classes: BTreeMap<String, PathBuf>,
     /// Package -> directories holding it, relative to the root.
@@ -56,6 +67,7 @@ impl Java {
             classes.insert(fqn, rel);
         }
         Ok(Self {
+            dynamic: Query::new(&language, DYNAMIC_QUERY)?,
             language,
             query,
             classes,
@@ -107,6 +119,10 @@ impl Adapter for Java {
             .collect())
     }
 
+    fn dynamic_imports(&self, path: &Path, source: &str) -> Result<Vec<usize>> {
+        dynamic_calls(&self.language, &self.dynamic, path, source, |_, _| true)
+    }
+
     fn resolve(&self, _file: &Path, specifier: &str) -> Target {
         let name = specifier.trim_end_matches(".*");
         let parts: Vec<&str> = name.split('.').collect();
@@ -135,6 +151,14 @@ mod tests {
             Some("com.acme.shop")
         );
         assert_eq!(package_of("class A {}"), None);
+    }
+
+    #[test]
+    fn finds_class_for_name() {
+        let java = Java::new(Path::new("/nonexistent")).unwrap();
+        let src = "class A {\n  void f(String n) throws Exception {\n    Class.forName(n);\n    Other.forName(n);\n  }\n}\n";
+        let got = java.dynamic_imports(Path::new("A.java"), src).unwrap();
+        assert_eq!(got, [3]);
     }
 
     #[test]

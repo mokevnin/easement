@@ -3,13 +3,20 @@ mod check;
 mod components;
 mod config;
 mod diff;
+mod explain;
+mod graph;
+mod init;
 mod lang;
 mod report;
 mod scan;
 mod suppress;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -42,18 +49,51 @@ enum Command {
         /// revision (e.g. `origin/main`), including uncommitted changes.
         #[arg(long, value_name = "BASE")]
         diff: Option<String>,
+        /// Check again whenever a file changes, re-reading only what changed.
+        #[arg(long)]
+        watch: bool,
     },
     /// Record current violations as legalized debt in the baseline file.
     Baseline {
         #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
         config: PathBuf,
     },
+    /// Write a starting easement.yml from the layout and imports of the project.
+    Init {
+        /// Overwrite an existing easement.yml.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show which component a file belongs to and what that component may do.
+    Explain {
+        /// File or directory, relative to the working directory or to the config.
+        path: PathBuf,
+        #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
+        config: PathBuf,
+    },
+    /// Draw the components and the dependencies between them.
+    Graph {
+        #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
+        config: PathBuf,
+        #[arg(long, value_enum, default_value_t = graph::GraphFormat::Mermaid)]
+        format: graph::GraphFormat,
+    },
+    /// Print the JSON Schema of easement.yml.
+    Schema,
 }
+
+const SCHEMA: &str = include_str!("../easement.schema.json");
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Format {
     Text,
     Json,
+    /// SARIF 2.1.0, for GitHub Code Scanning.
+    Sarif,
+    /// GitHub Actions annotations.
+    Github,
+    /// JUnit XML.
+    Junit,
 }
 
 struct Project {
@@ -82,15 +122,119 @@ impl Project {
         self.root.join(rel)
     }
 
-    fn violations(&self) -> Result<(Vec<check::Violation>, check::Stats)> {
-        let scan = scan::scan(&self.root, &self.config)?;
+    fn analyze(&self, cache: &mut scan::Cache) -> Result<Analysis> {
+        let scan = scan::scan(&self.root, &self.config, cache)?;
         let map = ComponentMap::new(&self.config)?;
         let (violations, edges, mut stats) = check::evaluate(&self.config, &map, &scan.deps);
         let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
         violations.extend(check::cycles(&self.config, &edges));
+        violations.extend(check::metrics(&self.config, &edges));
+        violations.extend(check::orphans(&self.config, &map, &scan.paths));
         stats.files = scan.files;
         stats.suppressed = suppressed;
-        Ok((violations, stats))
+        stats.dynamic = scan.dynamic;
+        Ok(Analysis {
+            violations,
+            edges,
+            stats,
+        })
+    }
+
+    /// Everything that changes the verdict: the files of the project, the
+    /// config and the baseline, as a hash of their names, sizes and times.
+    fn fingerprint(&self, config_path: &Path) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let mut files: Vec<PathBuf> = scan::walker(&self.root)
+            .build()
+            .flatten()
+            .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+            .map(|e| e.into_path())
+            .collect();
+        files.push(config_path.to_path_buf());
+        files.push(self.baseline_path());
+        files.sort();
+        files.dedup();
+        for file in files {
+            if let Ok(meta) = std::fs::metadata(&file) {
+                (&file, meta.len(), meta.modified().ok()).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+}
+
+struct Analysis {
+    violations: Vec<check::Violation>,
+    edges: Vec<check::Edge>,
+    stats: check::Stats,
+}
+
+struct CheckOptions {
+    config: PathBuf,
+    format: Format,
+    no_baseline: bool,
+    diff: Option<String>,
+}
+
+fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
+    let project = Project::open(&options.config)?;
+    let Analysis {
+        violations, stats, ..
+    } = project.analyze(cache)?;
+    let current = violations.iter().map(check::Violation::key).collect();
+    let changes = options
+        .diff
+        .as_ref()
+        .map(|base| diff::Changes::collect(&project.root, base))
+        .transpose()?;
+    let judged = match &changes {
+        Some(changes) => violations
+            .into_iter()
+            .filter(|v| v.evidence.iter().any(|(f, l)| changes.contains(f, *l)))
+            .collect(),
+        None => violations,
+    };
+    let baseline = if options.no_baseline {
+        None
+    } else {
+        Baseline::load(&project.baseline_path())?
+    };
+    let mut verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
+    verdict
+        .new
+        .sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
+    let changes = changes.as_ref();
+    match options.format {
+        Format::Text => print!("{}", report::text(&verdict, &stats, changes)),
+        Format::Json => println!("{}", report::json(&verdict, &stats, changes)),
+        Format::Sarif => println!("{}", report::sarif(&verdict)),
+        Format::Github => print!("{}", report::github(&verdict, &stats)),
+        Format::Junit => print!("{}", report::junit(&verdict)),
+    }
+    Ok(verdict.passed())
+}
+
+/// Runs the check, then again after every change of the project. Never returns
+/// on its own; errors (a broken config mid-edit) are shown and waited out.
+fn watch(options: &CheckOptions) -> Result<bool> {
+    let mut cache = scan::Cache::default();
+    let mut last = None;
+    loop {
+        let stamp = Project::open(&options.config)
+            .ok()
+            .map(|p| p.fingerprint(&options.config));
+        if last != Some(stamp) {
+            last = Some(stamp);
+            if std::io::stdout().is_terminal() {
+                print!("\x1b[2J\x1b[H");
+            }
+            if let Err(err) = check(options, &mut cache) {
+                eprintln!("easement: error: {err:#}");
+            }
+            println!("easement: watching for changes, Ctrl-C to stop");
+            std::io::stdout().flush()?;
+        }
+        std::thread::sleep(Duration::from_millis(300));
     }
 }
 
@@ -101,40 +245,24 @@ fn run(cli: Cli) -> Result<bool> {
             format,
             no_baseline,
             diff,
+            watch: watching,
         } => {
-            let project = Project::open(&config)?;
-            let (violations, stats) = project.violations()?;
-            let current = violations.iter().map(check::Violation::key).collect();
-            let changes = diff
-                .map(|base| diff::Changes::collect(&project.root, &base))
-                .transpose()?;
-            let judged = match &changes {
-                Some(changes) => violations
-                    .into_iter()
-                    .filter(|v| v.evidence.iter().any(|(f, l)| changes.contains(f, *l)))
-                    .collect(),
-                None => violations,
+            let options = CheckOptions {
+                config,
+                format,
+                no_baseline,
+                diff,
             };
-            let baseline = if no_baseline {
-                None
+            if watching {
+                watch(&options)
             } else {
-                Baseline::load(&project.baseline_path())?
-            };
-            let mut verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
-            verdict
-                .new
-                .sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
-            let changes = changes.as_ref();
-            match format {
-                Format::Text => print!("{}", report::text(&verdict, &stats, changes)),
-                Format::Json => println!("{}", report::json(&verdict, &stats, changes)),
+                check(&options, &mut scan::Cache::default())
             }
-            Ok(verdict.passed())
         }
         Command::Baseline { config } => {
             let project = Project::open(&config)?;
-            let (violations, _) = project.violations()?;
-            let violations = check::dedupe(violations);
+            let violations =
+                check::dedupe(project.analyze(&mut scan::Cache::default())?.violations);
             let path = project.baseline_path();
             Baseline::from_violations(&violations).save(&path)?;
             println!(
@@ -142,6 +270,36 @@ fn run(cli: Cli) -> Result<bool> {
                 violations.len(),
                 path.display()
             );
+            Ok(true)
+        }
+        Command::Init { force } => {
+            let root = std::env::current_dir()?;
+            println!("{}", init::run(&root, force)?);
+            Ok(true)
+        }
+        Command::Explain { path, config } => {
+            let project = Project::open(&config)?;
+            let map = ComponentMap::new(&project.config)?;
+            let rel = explain::root_relative(&project.root, &path);
+            print!("{}", explain::explain(&project.config, &map, &rel)?);
+            Ok(true)
+        }
+        Command::Graph { config, format } => {
+            let project = Project::open(&config)?;
+            let analysis = project.analyze(&mut scan::Cache::default())?;
+            print!(
+                "{}",
+                graph::render(
+                    format,
+                    &project.config,
+                    &analysis.edges,
+                    &analysis.violations
+                )
+            );
+            Ok(true)
+        }
+        Command::Schema => {
+            print!("{SCHEMA}");
             Ok(true)
         }
     }

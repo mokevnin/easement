@@ -6,9 +6,14 @@ use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 
 use crate::config::Config;
 
+pub mod csharp;
 pub mod go;
 pub mod java;
+pub mod kotlin;
+pub mod php;
 pub mod python;
+pub mod rust;
+pub mod swift;
 pub mod ts;
 
 /// One dependency found in a source file.
@@ -40,6 +45,11 @@ pub trait Adapter {
     fn handles(&self, path: &Path) -> bool;
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>>;
     fn resolve(&self, file: &Path, specifier: &str) -> Target;
+    /// Lines of imports the adapter cannot analyse because the target is
+    /// computed at run time (`importlib.import_module(name)`, `require(path)`).
+    fn dynamic_imports(&self, _path: &Path, _source: &str) -> Result<Vec<usize>> {
+        Ok(Vec::new())
+    }
 }
 
 pub fn adapters(root: &Path, config: &Config) -> Result<Vec<Box<dyn Adapter>>> {
@@ -48,6 +58,11 @@ pub fn adapters(root: &Path, config: &Config) -> Result<Vec<Box<dyn Adapter>>> {
         Box::new(ts::TypeScript::new(root)?),
         Box::new(python::Python::new(root, &config.python.roots)?),
         Box::new(java::Java::new(root)?),
+        Box::new(rust::Rust::new(root)?),
+        Box::new(csharp::CSharp::new(root)?),
+        Box::new(kotlin::Kotlin::new(root)?),
+        Box::new(php::Php::new(root)?),
+        Box::new(swift::Swift::new(root)?),
     ])
 }
 
@@ -68,6 +83,37 @@ pub(crate) fn captured_nodes<'t>(query: &Query, tree: &'t Tree, source: &str) ->
         nodes.extend(m.captures().iter().map(|c| c.node));
     }
     nodes
+}
+
+/// Lines of the `@arg` captures of `query` that `is_dynamic` accepts, given the
+/// call's `@fn` text; the query matches calls and their first argument.
+pub(crate) fn dynamic_calls(
+    language: &Language,
+    query: &Query,
+    path: &Path,
+    source: &str,
+    is_dynamic: impl Fn(&str, Node) -> bool,
+) -> Result<Vec<usize>> {
+    let tree = parse(language, path, source)?;
+    let fn_index = query.capture_index_for_name("fn");
+    let arg_index = query
+        .capture_index_for_name("arg")
+        .context("query has no @arg capture")?;
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), source.as_bytes());
+    let mut lines = Vec::new();
+    while let Some(m) = matches.next() {
+        let callee = fn_index
+            .and_then(|i| m.captures().iter().find(|c| c.index == i))
+            .and_then(|c| c.node.utf8_text(source.as_bytes()).ok())
+            .unwrap_or_default();
+        for capture in m.captures().iter().filter(|c| c.index == arg_index) {
+            if is_dynamic(callee, capture.node) {
+                lines.push(capture.node.start_position().row + 1);
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// Runs a tree-sitter query and returns the text of every `@spec` capture.

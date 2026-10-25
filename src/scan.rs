@@ -1,11 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
 use crate::config::Config;
-use crate::lang::{self, Target};
+use crate::lang::{self, Import, Target};
 use crate::suppress::{self, Suppression};
 
 /// A resolved dependency of one project file.
@@ -17,8 +19,26 @@ pub struct Dep {
     pub target: Target,
 }
 
+/// What was read from a file, valid while its size and modification time stay the same.
+struct Parsed {
+    modified: Option<SystemTime>,
+    len: u64,
+    imports: Vec<Import>,
+    dynamic: Vec<usize>,
+    suppressions: Vec<Suppression>,
+}
+
+/// Parsed files kept between scans, so watch mode re-reads only what changed.
+/// Resolution is never cached: it depends on the other files.
+#[derive(Default)]
+pub struct Cache(HashMap<PathBuf, Parsed>);
+
 pub struct Scan {
     pub files: usize,
+    /// `file:line` of imports whose target is computed at run time.
+    pub dynamic: Vec<String>,
+    /// Every checked file, relative to the root with `/` separators.
+    pub paths: Vec<String>,
     pub deps: Vec<Dep>,
     pub suppressions: Vec<Suppression>,
 }
@@ -33,12 +53,14 @@ pub fn walker(root: &Path) -> WalkBuilder {
     builder
 }
 
-pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
+pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let exclude = exclude_set(&config.exclude)?;
     let adapters = lang::adapters(root, config)?;
-    let mut files = 0;
+    let mut paths = Vec::new();
     let mut deps = Vec::new();
+    let mut dynamic = Vec::new();
     let mut suppressions = Vec::new();
+    let mut seen = HashSet::new();
     for entry in walker(root).build() {
         let entry = entry?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
@@ -54,27 +76,54 @@ pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
         let Some(adapter) = adapters.iter().find(|a| a.handles(path)) else {
             continue;
         };
-        let source = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => continue, // binary or unreadable
-        };
-        files += 1;
-        suppressions.extend(suppress::parse(&slash(&rel), &source));
-        for import in adapter
-            .imports(path, &source)
-            .with_context(|| format!("{} adapter failed on {}", adapter.name(), rel.display()))?
-        {
-            let target = adapter.resolve(path, &import.specifier);
+        let meta = entry.metadata()?;
+        let modified = meta.modified().ok();
+        let fresh = cache
+            .0
+            .get(&rel)
+            .is_some_and(|p| p.len == meta.len() && p.modified == modified && modified.is_some());
+        if !fresh {
+            let source = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(_) => continue, // binary or unreadable
+            };
+            let parsed = Parsed {
+                modified,
+                len: meta.len(),
+                imports: adapter.imports(path, &source).with_context(|| {
+                    format!("{} adapter failed on {}", adapter.name(), rel.display())
+                })?,
+                dynamic: adapter.dynamic_imports(path, &source).with_context(|| {
+                    format!("{} adapter failed on {}", adapter.name(), rel.display())
+                })?,
+                suppressions: suppress::parse(&slash(&rel), &source),
+            };
+            cache.0.insert(rel.clone(), parsed);
+        }
+        let parsed = &cache.0[&rel];
+        seen.insert(rel.clone());
+        paths.push(slash(&rel));
+        suppressions.extend(parsed.suppressions.iter().cloned());
+        dynamic.extend(
+            parsed
+                .dynamic
+                .iter()
+                .map(|l| format!("{}:{l}", slash(&rel))),
+        );
+        for import in &parsed.imports {
             deps.push(Dep {
                 file: rel.clone(),
                 line: import.line,
-                specifier: import.specifier,
-                target,
+                specifier: import.specifier.clone(),
+                target: adapter.resolve(path, &import.specifier),
             });
         }
     }
+    cache.0.retain(|path, _| seen.contains(path));
     Ok(Scan {
-        files,
+        files: paths.len(),
+        dynamic,
+        paths,
         deps,
         suppressions,
     })

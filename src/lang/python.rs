@@ -3,9 +3,13 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Node, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, parse, relative};
+use super::{Adapter, Import, Target, captured_nodes, dynamic_calls, parse, relative};
 
 const QUERY: &str = "[(import_statement) (import_from_statement)] @node";
+
+/// Calls that load a module by name, with their first argument.
+const DYNAMIC_QUERY: &str = "(call function: (_) @fn arguments: (argument_list . (_) @arg))";
+const DYNAMIC_CALLS: &[&str] = &["importlib.import_module", "import_module", "__import__"];
 
 /// Python. `import a.b` and `from a import b` are resolved against the source
 /// roots (`sys.path` entries inside the project) to the longest dotted prefix
@@ -18,6 +22,7 @@ pub struct Python {
     roots: Vec<PathBuf>,
     language: Language,
     query: Query,
+    dynamic: Query,
 }
 
 impl Python {
@@ -32,6 +37,7 @@ impl Python {
         Ok(Self {
             root: root.to_path_buf(),
             roots,
+            dynamic: Query::new(&language, DYNAMIC_QUERY)?,
             language,
             query,
         })
@@ -57,6 +63,13 @@ fn imported_name<'a>(node: Node, source: &'a str) -> &'a str {
             .map_or("", |n| text(n, source)),
         _ => text(node, source),
     }
+}
+
+fn has_interpolation(string: Node) -> bool {
+    let mut cursor = string.walk();
+    string
+        .children(&mut cursor)
+        .any(|c| c.kind() == "interpolation")
 }
 
 fn join(module: &str, name: &str) -> String {
@@ -138,6 +151,19 @@ impl Adapter for Python {
         Ok(imports)
     }
 
+    fn dynamic_imports(&self, path: &Path, source: &str) -> Result<Vec<usize>> {
+        dynamic_calls(
+            &self.language,
+            &self.dynamic,
+            path,
+            source,
+            |callee, arg| {
+                DYNAMIC_CALLS.contains(&callee)
+                    && (arg.kind() != "string" || has_interpolation(arg))
+            },
+        )
+    }
+
     fn resolve(&self, file: &Path, specifier: &str) -> Target {
         let rest = specifier.trim_start_matches('.');
         let level = specifier.len() - rest.len();
@@ -171,6 +197,14 @@ impl Adapter for Python {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_dynamic_imports() {
+        let py = Python::new(Path::new("/nonexistent"), &[]).unwrap();
+        let src = "import importlib\nimportlib.import_module('a.b')\nimportlib.import_module(name)\n__import__(f'pkg.{x}')\nimport_module(\"c\" + d)\nprint(name)\n";
+        let got = py.dynamic_imports(Path::new("x.py"), src).unwrap();
+        assert_eq!(got, [3, 4, 5]);
+    }
 
     #[test]
     fn extracts_all_import_forms() {
