@@ -100,12 +100,20 @@ jobs:
         shell: bash
         run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # scip-php needs PHP 8.3 or newer and Composer; not every runner image has them.
+      - name: Setup PHP
+        uses: shivammathur/setup-php@4424c9aab975b57bd706ee5a39c6b4334d6e4f60 # v2.40.0
+        with:
+          php-version: "8.4"
+          tools: composer
+
       # The released scip-php (v0.0.2) cannot be installed: every protobuf it accepts has a
-      # security advisory. This is a commit of its main branch.
+      # security advisory. This is a commit of its main branch, taken from git because its
+      # zip has symlinks that Windows cannot extract.
       - name: Install the PHP indexer
         shell: bash
         run: |
-          composer global require "davidrjenni/scip-php:dev-main#71a5b117ec4c5dd2af302e363410e604e5df309e" --no-interaction
-          echo "$(composer global config bin-dir --absolute --quiet)" >> "$GITHUB_PATH"
+          composer global require "davidrjenni/scip-php:dev-main#71a5b117ec4c5dd2af302e363410e604e5df309e" --no-interaction --prefer-source
+          composer global config bin-dir --absolute --quiet >> "$GITHUB_PATH"
 
       - run: cargo test --locked
