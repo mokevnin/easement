@@ -27,8 +27,6 @@ pub struct Language {
     /// Arguments that write the index to the given file.
     args: fn(&Path) -> Vec<String>,
     install: &'static str,
-    /// Why the indexer cannot run on Windows, if it cannot.
-    not_on_windows: Option<&'static str>,
     /// Directories whose files belong to dependencies, not to the project.
     skip_dirs: &'static [&'static str],
     /// For an indexer that has no output option: the file it writes in its working directory.
@@ -51,7 +49,6 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["go"],
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
-        not_on_windows: None,
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -72,7 +69,6 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
-        not_on_windows: None,
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: require_installed,
@@ -103,9 +99,6 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-python",
-        not_on_windows: Some(
-            "scip-python 0.6.8 crashes there (`new RegExp(path.sep, 'g')` in its PythonEnvironment.ts)",
-        ),
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -119,9 +112,6 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["php"],
         args: |_| Vec::new(),
         install: "composer global require davidrjenni/scip-php",
-        not_on_windows: Some(
-            "scip-php wrote an empty index there in CI, for a reason that is not known yet",
-        ),
         skip_dirs: &["vendor"],
         writes_in_cwd: Some("index.scip"),
         needs: require_composer,
@@ -142,7 +132,6 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "rustup component add rust-analyzer",
-        not_on_windows: None,
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -203,14 +192,6 @@ pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
         let roots = language.roots(files);
         if roots.is_empty() {
             continue;
-        }
-        if cfg!(windows)
-            && let Some(why) = language.not_on_windows
-        {
-            bail!(
-                "easement cannot index {} files on Windows: {why}; add them to `exclude` to check the rest",
-                language.name
-            );
         }
         for dir in roots {
             parts.push(index_dir(language, root, &dir)?);

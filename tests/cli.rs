@@ -217,10 +217,6 @@ fn violations(root: &Path) -> (Vec<(String, String)>, serde_json::Value) {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "scip-python 0.6.8 crashes on Windows: new RegExp(path.sep, 'g') in its PythonEnvironment.ts"
-)]
 fn python_resolves_absolute_relative_and_from_imports() {
     let (_tmp, root) = fixture("python");
     let (pairs, stats) = violations(&root);
@@ -811,10 +807,6 @@ fn kotlin_resolves_packages_and_declarations() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "scip-php writes an empty index on Windows in CI, for a reason that is not known yet"
-)]
 fn php_resolves_psr4_names() {
     layered(
         "php",
