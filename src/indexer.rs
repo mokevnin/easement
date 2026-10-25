@@ -119,7 +119,9 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["php"],
         args: |_| Vec::new(),
         install: "composer global require davidrjenni/scip-php",
-        not_on_windows: None,
+        not_on_windows: Some(
+            "scip-php wrote an empty index there in CI, for a reason that is not known yet",
+        ),
         skip_dirs: &["vendor"],
         writes_in_cwd: Some("index.scip"),
         needs: require_composer,
