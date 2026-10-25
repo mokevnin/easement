@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/mokevnin/easement/compare/v0.1.1...v0.1.2) (2026-10-25)
+
+
+### Features
+
+* isolated instances, importer lists, priority, scopes and required imports ([#8](https://github.com/mokevnin/easement/issues/8)) ([afa3221](https://github.com/mokevnin/easement/commit/afa3221b22d11eeba075478ce286d4215f8b0a3b))
+
 ## [0.1.1](https://github.com/mokevnin/easement/compare/v0.1.0...v0.1.1) (2026-10-25)
 
 
