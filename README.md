@@ -6,18 +6,20 @@ Declare the components of your system and which of them may depend on which. `ea
 
 > **easement** — a legal right to cross someone else's land. In `easement`, every allowed dependency between components is an explicit easement; everything else is trespassing.
 
-## Status
-
-Early. Go, TypeScript/JavaScript, Python and Java work.
-
 ## Install
 
 ```sh
 brew install mokevnin/tap/easement
-cargo install easement
 ```
 
-Prebuilt binaries for macOS, Linux and Windows are attached to each [GitHub release](https://github.com/mokevnin/easement/releases), with shell and PowerShell installers.
+Homebrew works on macOS and Linux. Other options:
+
+- `cargo install easement`;
+- prebuilt binaries for macOS, Linux and Windows, with shell and PowerShell installers, on each [GitHub release](https://github.com/mokevnin/easement/releases).
+
+## Status
+
+Early. Go, TypeScript/JavaScript, Python and Java work.
 
 ## Usage
 
