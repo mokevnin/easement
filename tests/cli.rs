@@ -194,11 +194,14 @@ fn config_errors_exit_with_2() {
 }
 
 fn violations(root: &Path) -> (Vec<(String, String)>, serde_json::Value) {
-    let out = easement(root, &["check", "--format", "json"])
-        .get_output()
-        .stdout
-        .clone();
-    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let assert = easement(root, &["check", "--format", "json"]);
+    let output = assert.get_output();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+        panic!(
+            "no report ({err}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
     let pairs = report["violations"]
         .as_array()
         .unwrap()
@@ -233,7 +236,7 @@ fn python_resolves_absolute_relative_and_from_imports() {
     // handlers: shop.domain, shop.domain.order, shop.infra.db, .views; db: ..domain.order;
     // views: shop.infra
     assert_eq!(stats["internal_deps"], 6);
-    // dataclasses; `requests` is not installed here, so the indexer cannot see it.
+    // dataclasses
     assert_eq!(stats["external_deps"], 1);
 }
 
