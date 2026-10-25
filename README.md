@@ -153,6 +153,19 @@ Languages whose dependencies are not visible from imports (Ruby, Elixir) are out
 3. Map both ends to components and check each edge against the rules.
 4. Compare violations with the baseline and report.
 
+## Inspired by
+
+`easement` builds on ideas from these tools, each of which covers one language or ecosystem:
+
+- [ArchUnit](https://www.archunit.org/): architecture rules as tests for Java.
+- [dependency-cruiser](https://github.com/sverweij/dependency-cruiser): dependency rules for JavaScript and TypeScript.
+- [import-linter](https://github.com/seddonym/import-linter): import contracts between Python modules.
+- [Deptrac](https://github.com/deptrac/deptrac): layers and allowed dependencies for PHP.
+- [arch-go](https://github.com/arch-go/arch-go): architecture checks for Go.
+- [depguard](https://github.com/OpenPeeDeeP/depguard): import allow and deny lists for Go.
+
+`easement` puts one component model, one config and one baseline over all of them.
+
 [oxc_resolver]: https://github.com/oxc-project/oxc-resolver
 
 ## Development
