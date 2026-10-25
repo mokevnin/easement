@@ -60,7 +60,7 @@ mod tests {
     use super::*;
 
     fn map(yaml: &str) -> ComponentMap {
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_norway::from_str(yaml).unwrap();
         ComponentMap::new(&config).unwrap()
     }
 

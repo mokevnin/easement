@@ -21,7 +21,7 @@ impl Baseline {
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read baseline {}", path.display()))?;
-        let baseline = serde_yaml::from_str(&text)
+        let baseline = serde_norway::from_str(&text)
             .with_context(|| format!("invalid baseline {}", path.display()))?;
         Ok(Some(baseline))
     }
@@ -33,7 +33,7 @@ impl Baseline {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let body = serde_yaml::to_string(self)?;
+        let body = serde_norway::to_string(self)?;
         std::fs::write(path, format!("{HEADER}{body}"))
             .with_context(|| format!("cannot write baseline {}", path.display()))
     }

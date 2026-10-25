@@ -78,7 +78,7 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read config {}", path.display()))?;
-        let config: Config = serde_yaml::from_str(&text)
+        let config: Config = serde_norway::from_str(&text)
             .with_context(|| format!("invalid config {}", path.display()))?;
         config.validate()?;
         Ok(config)
@@ -130,7 +130,7 @@ mod tests {
     use super::*;
 
     fn parse(yaml: &str) -> Result<Config> {
-        let config: Config = serde_yaml::from_str(yaml)?;
+        let config: Config = serde_norway::from_str(yaml)?;
         config.validate()?;
         Ok(config)
     }
