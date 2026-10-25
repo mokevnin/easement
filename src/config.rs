@@ -22,6 +22,29 @@ pub struct Config {
     pub baseline: Option<PathBuf>,
     #[serde(default)]
     pub python: PythonConfig,
+    /// Fail on dependency cycles between components: `true` for all of them,
+    /// or a list to limit the check.
+    #[serde(default)]
+    pub no_cycles: NoCycles,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(untagged)]
+pub enum NoCycles {
+    #[default]
+    Off,
+    All(bool),
+    Among(Vec<String>),
+}
+
+impl NoCycles {
+    pub fn covers(&self, component: &str) -> bool {
+        match self {
+            NoCycles::Off => false,
+            NoCycles::All(on) => *on,
+            NoCycles::Among(list) => list.iter().any(|c| c == component),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +72,12 @@ fn default_python_roots() -> Vec<PathBuf> {
 pub struct Component {
     #[serde(rename = "in")]
     pub patterns: Patterns,
+    /// When set, other components may import only these paths of this component.
+    #[serde(default)]
+    pub public: Option<Patterns>,
+    /// Why the public API exists; shown with privacy violations.
+    #[serde(default)]
+    pub because: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +101,9 @@ impl Patterns {
 pub struct Rule {
     #[serde(default)]
     pub may_depend_on: Vec<String>,
+    /// Why the rule exists; shown with its violations.
+    #[serde(default)]
+    pub because: Option<String>,
 }
 
 impl Config {
@@ -111,8 +143,24 @@ impl Config {
             if component.patterns.as_vec().is_empty() {
                 bail!("component `{name}` has no `in` patterns");
             }
+            if component
+                .public
+                .as_ref()
+                .is_some_and(|p| p.as_vec().is_empty())
+            {
+                bail!("component `{name}` has an empty `public` list");
+            }
+        }
+        if let NoCycles::Among(list) = &self.no_cycles {
+            for name in list {
+                check(name, "no_cycles")?;
+            }
         }
         Ok(())
+    }
+
+    pub fn reason(&self, from: &str) -> Option<&str> {
+        self.rules.get(from).and_then(|r| r.because.as_deref())
     }
 
     pub fn allows(&self, from: &str, to: &str) -> bool {

@@ -43,23 +43,75 @@ common: [model]
 
 rules:
   handler: { may_depend_on: [service] }
-  service: { may_depend_on: [repository] }
+  service:
+    may_depend_on: [repository]
+    because: services never talk HTTP
 
 exclude: ["**/*_test.go"]
 ```
 
 - **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the longest pattern wins, so a single file can be carved out of a larger component.
-- **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else.
+- **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked; external packages are not checked yet.
 - **exclude**: globs to skip. `.gitignore` is honoured and `node_modules` is always skipped.
 - **python.roots**: `sys.path` entries inside the project, default `[".", "src"]`.
 
 ```text
 $ easement check
-internal/handlers/books.go:6: handler -> repository is not allowed (imports example.com/shop/internal/repository)
+internal/handlers/books.go:6: handler -> repository is not allowed (imports example.com/shop/internal/repository) [dependency]
 
 easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps
 ```
+
+## Rules
+
+Every violation carries a rule id, used in the JSON report, the baseline and suppressions.
+
+| Rule | Fails when |
+|---|---|
+| `dependency` | a component imports one that its `may_depend_on` does not list |
+| `privacy` | a component imports a path of another component outside that component's `public` API |
+| `cycle` | components covered by `no_cycles` depend on each other in a cycle |
+| `suppression-reason` | an inline suppression has no reason |
+| `unused-suppression` | an inline suppression matches no violation, or names a rule that cannot be suppressed |
+
+### Public API
+
+```yaml
+components:
+  billing:
+    in: src/billing
+    public: [src/billing/index, src/billing/api]
+    because: billing internals change without notice
+```
+
+Other components may import only the public paths (`src/billing/index.ts`, anything under `src/billing/api`); code inside `billing` reaches its own internals freely. A component without `public` is open.
+
+### Cycles
+
+```yaml
+no_cycles: true                  # or a list: [billing, orders, catalog]
+```
+
+A group of components that all reach each other is reported once, with the shortest cycle to break:
+
+```text
+src/billing/charge.ts:1: component dependency cycle among 3 components: billing, catalog, orders (shortest: billing -> orders -> billing) [cycle]
+```
+
+In diff mode a cycle is reported when any import inside it was added by the change.
+
+### Suppressions
+
+An exception for one import, in a comment of any language, always with a reason after `--`:
+
+```ts
+// easement:disable-next-line dependency -- legacy admin export, remove with #123
+import { exportAll } from "../admin/export";
+import { client } from "../billing/generated"; // easement:disable-line privacy -- generated client
+```
+
+A suppression without a reason does not suppress and fails as `suppression-reason`. One that no longer matches a violation fails as `unused-suppression`, so exceptions do not outlive the code they excused. Prefer the baseline for old debt; suppressions are for deliberate, reviewed exceptions.
 
 ## Baseline: adopting on an existing project
 
@@ -69,7 +121,7 @@ easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps
 - any new violation fails;
 - a baseline entry that no longer occurs also fails, so fixed debt has to be removed from the file with `easement baseline`. The baseline can only shrink.
 
-Entries are keyed by file, target and components, not by line, so unrelated edits do not invalidate them.
+Entries are keyed by rule, file, target and components, not by line, so unrelated edits do not invalidate them. A cycle is keyed by its components.
 
 ## Diff mode: judging a pull request
 

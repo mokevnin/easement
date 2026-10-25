@@ -308,3 +308,65 @@ fn diff_mode_judges_only_changed_lines() {
         .code(2)
         .stderr(contains("merge-base"));
 }
+
+#[test]
+fn public_api_cycles_reasons_and_suppressions() {
+    let (_tmp, root) = fixture("rules");
+    let out = easement(&root, &["check", "--format", "json"])
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let found: Vec<(String, u64, String)> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["file"].as_str().unwrap().to_string(),
+                v["line"].as_u64().unwrap(),
+                v["rule"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("src/billing/internal/charge.ts", 1, "cycle"),
+        ("src/orders/service.ts", 2, "privacy"),
+        ("src/ui/page.ts", 4, "dependency"),
+        ("src/ui/page.ts", 4, "suppression-reason"),
+        ("src/ui/page.ts", 5, "unused-suppression"),
+    ];
+    assert_eq!(
+        found,
+        expected
+            .iter()
+            .map(|(f, l, r)| (f.to_string(), *l, r.to_string()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(report["stats"]["suppressed"], 1);
+    let violations = report["violations"].as_array().unwrap();
+    assert_eq!(
+        violations[0]["message"],
+        "component dependency cycle: billing -> orders -> billing"
+    );
+    assert_eq!(
+        violations[1]["because"],
+        "billing internals change without notice"
+    );
+    assert_eq!(violations[2]["because"], "the UI talks to orders only");
+
+    // Text output carries the rule id and the reason.
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains(
+            "src/orders/service.ts:2: orders -> billing: src/billing/internal/charge.ts is not in the public API of billing",
+        ))
+        .stdout(contains("  because: billing internals change without notice"));
+
+    // Cycles and the other rules are baselined like dependency violations.
+    easement(&root, &["baseline"])
+        .success()
+        .stdout(contains("5 violation(s)"));
+    easement(&root, &["check"]).success();
+}

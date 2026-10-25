@@ -47,9 +47,15 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     }
     for v in &verdict.new {
         out.push_str(&format!(
-            "{}:{}: {} -> {} is not allowed (imports {})\n",
-            v.file, v.line, v.from, v.to, v.specifier
+            "{}:{}: {} [{}]\n",
+            v.file,
+            v.line,
+            v.message,
+            v.rule.as_str()
         ));
+        if let Some(because) = &v.because {
+            out.push_str(&format!("  because: {because}\n"));
+        }
     }
     if !verdict.stale.is_empty() {
         if !out.is_empty() {
@@ -57,10 +63,14 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
         }
         out.push_str("Stale baseline entries (fixed, run `easement baseline` to shrink it):\n");
         for k in &verdict.stale {
-            out.push_str(&format!(
-                "  {}: {} -> {} ({})\n",
-                k.file, k.from, k.to, k.target
-            ));
+            let what = match k.rule {
+                crate::check::RuleId::Cycle => format!("cycle among {}", k.from),
+                crate::check::RuleId::Dependency | crate::check::RuleId::Privacy => {
+                    format!("{}: {} -> {} ({})", k.file, k.from, k.to, k.target)
+                }
+                _ => format!("{}: {}", k.file, k.target),
+            };
+            out.push_str(&format!("  [{}] {what}\n", k.rule.as_str()));
         }
     }
     if !out.is_empty() {
@@ -75,6 +85,9 @@ pub fn text(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
         stats.files,
         stats.internal_deps,
     ));
+    if stats.suppressed > 0 {
+        out.push_str(&format!(", {} suppressed", stats.suppressed));
+    }
     if stats.unresolved_deps > 0 {
         out.push_str(&format!(", {} unresolved", stats.unresolved_deps));
     }

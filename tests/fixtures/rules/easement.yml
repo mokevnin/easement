@@ -1,0 +1,18 @@
+version: 1
+
+components:
+  billing:
+    in: src/billing
+    public: src/billing/index
+    because: billing internals change without notice
+  orders: { in: src/orders }
+  ui: { in: src/ui }
+
+rules:
+  billing: { may_depend_on: [orders] }
+  orders: { may_depend_on: [billing] }
+  ui:
+    may_depend_on: [orders]
+    because: the UI talks to orders only
+
+no_cycles: true

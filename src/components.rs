@@ -11,6 +11,24 @@ use crate::config::Config;
 /// components match, the longest pattern wins.
 pub struct ComponentMap {
     entries: Vec<Entry>,
+    /// Component -> matchers of its public paths, for components that declare them.
+    public: std::collections::HashMap<String, Vec<[GlobMatcher; 3]>>,
+}
+
+fn module_matchers(component: &str, pattern: &str) -> Result<[GlobMatcher; 3]> {
+    let pattern = pattern.trim_end_matches('/');
+    let compile = |p: &str| -> Result<GlobMatcher> {
+        Ok(GlobBuilder::new(p)
+            .literal_separator(true)
+            .build()
+            .with_context(|| format!("bad pattern `{p}` in component `{component}`"))?
+            .compile_matcher())
+    };
+    Ok([
+        compile(pattern)?,
+        compile(&format!("{pattern}/**"))?,
+        compile(&format!("{pattern}.*"))?,
+    ])
 }
 
 struct Entry {
@@ -22,28 +40,35 @@ struct Entry {
 impl ComponentMap {
     pub fn new(config: &Config) -> Result<Self> {
         let mut entries = Vec::new();
+        let mut public = std::collections::HashMap::new();
         for (name, component) in &config.components {
             for pattern in component.patterns.as_vec() {
-                let pattern = pattern.trim_end_matches('/');
-                let compile = |p: &str| -> Result<GlobMatcher> {
-                    Ok(GlobBuilder::new(p)
-                        .literal_separator(true)
-                        .build()
-                        .with_context(|| format!("bad pattern `{p}` in component `{name}`"))?
-                        .compile_matcher())
-                };
                 entries.push(Entry {
                     component: name.clone(),
-                    pattern_len: pattern.len(),
-                    matchers: [
-                        compile(pattern)?,
-                        compile(&format!("{pattern}/**"))?,
-                        compile(&format!("{pattern}.*"))?,
-                    ],
+                    pattern_len: pattern.trim_end_matches('/').len(),
+                    matchers: module_matchers(name, pattern)?,
                 });
             }
+            if let Some(patterns) = &component.public {
+                let matchers = patterns
+                    .as_vec()
+                    .into_iter()
+                    .map(|p| module_matchers(name, p))
+                    .collect::<Result<Vec<_>>>()?;
+                public.insert(name.clone(), matchers);
+            }
         }
-        Ok(Self { entries })
+        Ok(Self { entries, public })
+    }
+
+    /// Whether `rel_path` may be imported from outside `component`: always,
+    /// unless the component declares a public API that does not cover it.
+    pub fn is_public(&self, component: &str, rel_path: &str) -> bool {
+        self.public.get(component).is_none_or(|matchers| {
+            matchers
+                .iter()
+                .any(|ms| ms.iter().any(|m| m.is_match(rel_path)))
+        })
     }
 
     pub fn component_of(&self, rel_path: &str) -> Option<&str> {
@@ -98,5 +123,18 @@ components:
         assert_eq!(m.component_of("internal/domain.go"), Some("domain"));
         assert_eq!(m.component_of("internal/domainx/a.go"), None);
         assert_eq!(m.component_of("cmd/main.go"), None);
+    }
+
+    #[test]
+    fn public_api() {
+        let m = map("version: 1
+components:
+  billing: { in: src/billing, public: [src/billing/index, src/billing/api] }
+  shop: { in: src/shop }
+");
+        assert!(m.is_public("billing", "src/billing/index.ts"));
+        assert!(m.is_public("billing", "src/billing/api/types.ts"));
+        assert!(!m.is_public("billing", "src/billing/internal/db.ts"));
+        assert!(m.is_public("shop", "src/shop/anything.ts"));
     }
 }

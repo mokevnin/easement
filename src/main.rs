@@ -6,6 +6,7 @@ mod diff;
 mod lang;
 mod report;
 mod scan;
+mod suppress;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -84,8 +85,11 @@ impl Project {
     fn violations(&self) -> Result<(Vec<check::Violation>, check::Stats)> {
         let scan = scan::scan(&self.root, &self.config)?;
         let map = ComponentMap::new(&self.config)?;
-        let (violations, mut stats) = check::evaluate(&self.config, &map, &scan.deps);
+        let (violations, edges, mut stats) = check::evaluate(&self.config, &map, &scan.deps);
+        let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
+        violations.extend(check::cycles(&self.config, &edges));
         stats.files = scan.files;
+        stats.suppressed = suppressed;
         Ok((violations, stats))
     }
 }
@@ -107,7 +111,7 @@ fn run(cli: Cli) -> Result<bool> {
             let judged = match &changes {
                 Some(changes) => violations
                     .into_iter()
-                    .filter(|v| changes.contains(&v.file, v.line))
+                    .filter(|v| v.evidence.iter().any(|(f, l)| changes.contains(f, *l)))
                     .collect(),
                 None => violations,
             };
@@ -116,7 +120,10 @@ fn run(cli: Cli) -> Result<bool> {
             } else {
                 Baseline::load(&project.baseline_path())?
             };
-            let verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
+            let mut verdict = Verdict::judge(check::dedupe(judged), &current, baseline.as_ref());
+            verdict
+                .new
+                .sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
             let changes = changes.as_ref();
             match format {
                 Format::Text => print!("{}", report::text(&verdict, &stats, changes)),

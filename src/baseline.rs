@@ -86,12 +86,16 @@ mod tests {
 
     fn v(file: &str, to: &str) -> Violation {
         Violation {
+            rule: crate::check::RuleId::Dependency,
             file: file.into(),
             line: 1,
+            message: String::new(),
+            because: None,
             from: "a".into(),
             to: to.into(),
             target: format!("{to}/x"),
             specifier: String::new(),
+            evidence: Vec::new(),
         }
     }
 

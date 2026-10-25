@@ -6,6 +6,7 @@ use ignore::WalkBuilder;
 
 use crate::config::Config;
 use crate::lang::{self, Target};
+use crate::suppress::{self, Suppression};
 
 /// A resolved dependency of one project file.
 #[derive(Debug, Clone)]
@@ -19,6 +20,7 @@ pub struct Dep {
 pub struct Scan {
     pub files: usize,
     pub deps: Vec<Dep>,
+    pub suppressions: Vec<Suppression>,
 }
 
 /// Project walker: honours .gitignore (even outside a git checkout) and
@@ -36,6 +38,7 @@ pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
     let adapters = lang::adapters(root, config)?;
     let mut files = 0;
     let mut deps = Vec::new();
+    let mut suppressions = Vec::new();
     for entry in walker(root).build() {
         let entry = entry?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
@@ -56,6 +59,7 @@ pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
             Err(_) => continue, // binary or unreadable
         };
         files += 1;
+        suppressions.extend(suppress::parse(&slash(&rel), &source));
         for import in adapter
             .imports(path, &source)
             .with_context(|| format!("{} adapter failed on {}", adapter.name(), rel.display()))?
@@ -69,7 +73,11 @@ pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
             });
         }
     }
-    Ok(Scan { files, deps })
+    Ok(Scan {
+        files,
+        deps,
+        suppressions,
+    })
 }
 
 fn exclude_set(patterns: &[String]) -> Result<GlobSet> {
