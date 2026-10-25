@@ -102,6 +102,8 @@ fn line_of(occurrence: &Occurrence) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Namespace,
+    /// A class, interface or other type: `Name#`.
+    Type,
     Other,
 }
 
@@ -170,7 +172,11 @@ fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
                 at += 1;
                 Kind::Namespace
             }
-            '#' | '.' | ':' | '!' => {
+            '#' => {
+                at += 1;
+                Kind::Type
+            }
+            '.' | ':' | '!' => {
                 at += 1;
                 Kind::Other
             }
@@ -214,10 +220,19 @@ impl Parsed<'_> {
         {
             return Referent::Module;
         }
+        // PHP, Java and C# have no module symbols: a class is what an import names.
+        if matches!(self.scheme, "scip-php" | "scip-java" | "scip-dotnet")
+            && matches!(self.descriptors.last(), Some((_, Kind::Type)))
+            && self.descriptors[..self.descriptors.len() - 1]
+                .iter()
+                .all(|(_, kind)| *kind == Kind::Namespace)
+        {
+            return Referent::Module;
+        }
         match self
             .descriptors
             .iter()
-            .find(|(_, kind)| *kind == Kind::Other)
+            .find(|(_, kind)| *kind != Kind::Namespace)
         {
             Some((name, _)) => Referent::Member(name.clone()),
             None => Referent::Module,
@@ -235,6 +250,15 @@ impl Parsed<'_> {
             .join(separator)
     }
 
+    /// All the descriptor names joined: the fully qualified name of a class.
+    fn qualified(&self, separator: &str) -> String {
+        self.descriptors
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(separator)
+    }
+
     /// The package that owns the symbol, with the scheme: what tells the
     /// project's own symbols from those of its dependencies.
     fn owner(&self) -> String {
@@ -247,6 +271,10 @@ impl Parsed<'_> {
         match self.scheme {
             // Go: the package path (`fmt`, `net/http`, `github.com/lib/pq`).
             "scip-go" => self.namespace("/"),
+            // PHP: the class by its qualified name (`Illuminate\\Support\\Str`).
+            "scip-php" => self.qualified("\\"),
+            // Java and C#: the class by its qualified name (`java.util.List`).
+            "scip-java" | "scip-dotnet" => self.qualified("."),
             // Python: the dotted module (`os.path`, `requests`).
             "scip-python" => self.namespace("."),
             // Rust: the crate and the module path; the standard library is
@@ -300,6 +328,8 @@ impl Parsed<'_> {
         match (self.scheme, internal) {
             ("scip-go", _) => self.namespace("/"),
             ("scip-python", _) => self.namespace("."),
+            ("scip-php", _) => self.namespace("\\"),
+            ("scip-java" | "scip-dotnet", _) => self.namespace("."),
             ("rust-analyzer", _) => self.external_module(),
             (_, Some(path)) => path
                 .rsplit_once('.')
@@ -513,7 +543,8 @@ mod tests {
         let names: Vec<_> = d.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["src", "lib", "index.ts", "Client", "Query"]);
         assert_eq!(d[2].1, Kind::Namespace);
-        assert_eq!(d[3].1, Kind::Other);
+        assert_eq!(d[3].1, Kind::Type);
+        assert_eq!(d[4].1, Kind::Other);
         let go = split("scip-go gomod example.com/app . `example.com/app/internal/db`/Scoped().")
             .unwrap();
         assert_eq!(go.namespace("/"), "example.com/app/internal/db");
@@ -582,6 +613,38 @@ mod tests {
         );
         assert_eq!(uses[1].target, Target::External("fmt".into()));
         assert!(facts(&documents, false).symbols.is_empty());
+    }
+
+    #[test]
+    fn a_class_is_the_module_in_php() {
+        let documents = vec![
+            doc(
+                "src/Domain/Order.php",
+                &["scip-php composer __root__ 1.0 App/Domain/Order#"],
+                &[],
+            ),
+            doc(
+                "src/Web/C.php",
+                &[],
+                &[
+                    (4, "scip-php composer __root__ 1.0 App/Domain/Order#"),
+                    (
+                        5,
+                        "scip-php composer illuminate/support 10.0 Illuminate/Support/Str#",
+                    ),
+                    (7, "scip-php composer __root__ 1.0 App/Domain/Order#id()."),
+                ],
+            ),
+        ];
+        let deps = facts(&documents, false).deps;
+        let got: Vec<_> = deps.iter().map(|d| (d.line, d.target.clone())).collect();
+        assert_eq!(
+            got,
+            vec![
+                (5, Target::External("Illuminate\\Support\\Str".into())),
+                (4, Target::Internal(PathBuf::from("src/Domain/Order.php"))),
+            ]
+        );
     }
 
     #[test]

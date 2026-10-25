@@ -7,7 +7,6 @@ use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 pub mod csharp;
 pub mod java;
 pub mod kotlin;
-pub mod php;
 pub mod swift;
 
 /// One dependency found in a source file.
@@ -49,7 +48,6 @@ pub fn adapters(root: &Path) -> Result<Vec<Box<dyn Adapter>>> {
         Box::new(java::Java::new(root)?),
         Box::new(csharp::CSharp::new(root)?),
         Box::new(kotlin::Kotlin::new(root)?),
-        Box::new(php::Php::new(root)?),
         Box::new(swift::Swift::new(root)?),
     ])
 }

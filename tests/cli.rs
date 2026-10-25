@@ -217,10 +217,6 @@ fn violations(root: &Path) -> (Vec<(String, String)>, serde_json::Value) {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "scip-python 0.6.8 crashes on Windows: new RegExp(path.sep, 'g') in its PythonEnvironment.ts"
-)]
 fn python_resolves_absolute_relative_and_from_imports() {
     let (_tmp, root) = fixture("python");
     let (pairs, stats) = violations(&root);
@@ -768,6 +764,17 @@ fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
             "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .unwrap();
+    }
+    if name == "php" {
+        // scip-php reads the autoloader, so the (empty) dependencies have to be installed.
+        // `which` finds composer.bat on Windows, which `Command` alone does not.
+        let composer = which::which("composer").expect("composer is needed for the PHP indexer");
+        let status = std::process::Command::new(composer)
+            .args(["install", "--no-interaction", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .expect("composer runs");
+        assert!(status.success(), "composer install");
     }
     let (found, stats) = violations(&root);
     assert_eq!(

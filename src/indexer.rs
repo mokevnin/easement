@@ -27,8 +27,16 @@ pub struct Language {
     /// Arguments that write the index to the given file.
     args: fn(&Path) -> Vec<String>,
     install: &'static str,
-    /// Why the indexer cannot run on Windows, if it cannot.
-    not_on_windows: Option<&'static str>,
+    /// Directories whose files belong to dependencies, not to the project.
+    skip_dirs: &'static [&'static str],
+    /// For an indexer that has no output option: the file it writes in its working directory.
+    writes_in_cwd: Option<&'static str>,
+    /// What has to be in place before the indexer runs: (project root, directory, shown name).
+    needs: fn(&Path, &Path, &str) -> Result<()>,
+}
+
+fn nothing_needed(_: &Path, _: &Path, _: &str) -> Result<()> {
+    Ok(())
 }
 
 pub const LANGUAGES: &[Language] = &[
@@ -41,7 +49,9 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["go"],
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
-        not_on_windows: None,
+        skip_dirs: &[],
+        writes_in_cwd: None,
+        needs: nothing_needed,
     },
     Language {
         name: "typescript",
@@ -59,7 +69,9 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
-        not_on_windows: None,
+        skip_dirs: &[],
+        writes_in_cwd: None,
+        needs: require_installed,
     },
     Language {
         name: "python",
@@ -87,9 +99,22 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-python",
-        not_on_windows: Some(
-            "scip-python 0.6.8 crashes there (`new RegExp(path.sep, 'g')` in its PythonEnvironment.ts)",
-        ),
+        skip_dirs: &[],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
+        name: "php",
+        binary: "scip-php",
+        markers: &["composer.json"],
+        outermost: false,
+        fallback_root: false,
+        extensions: &["php"],
+        args: |_| Vec::new(),
+        install: "composer global require davidrjenni/scip-php",
+        skip_dirs: &["vendor"],
+        writes_in_cwd: Some("index.scip"),
+        needs: require_composer,
     },
     Language {
         name: "rust",
@@ -107,7 +132,9 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "rustup component add rust-analyzer",
-        not_on_windows: None,
+        skip_dirs: &[],
+        writes_in_cwd: None,
+        needs: nothing_needed,
     },
 ];
 
@@ -116,6 +143,7 @@ impl Language {
         file.rsplit_once('.')
             .is_some_and(|(_, ext)| self.extensions.contains(&ext))
             && !file.ends_with(".d.ts")
+            && !file.split('/').any(|part| self.skip_dirs.contains(&part))
     }
 
     fn roots(&self, files: &[String]) -> Vec<String> {
@@ -165,14 +193,6 @@ pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
         if roots.is_empty() {
             continue;
         }
-        if cfg!(windows)
-            && let Some(why) = language.not_on_windows
-        {
-            bail!(
-                "easement cannot index {} files on Windows: {why}; add them to `exclude` to check the rest",
-                language.name
-            );
-        }
         for dir in roots {
             parts.push(index_dir(language, root, &dir)?);
         }
@@ -201,11 +221,22 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         root.join(dir)
     };
     let shown = if dir.is_empty() { "." } else { dir };
-    if language.name == "typescript" {
-        require_installed(root, &cwd, shown)?;
-    }
+    (language.needs)(root, &cwd, shown)?;
     let out = tempfile::tempdir().context("cannot create a temporary directory")?;
-    let file = out.path().join("index.scip");
+    let file = match language.writes_in_cwd {
+        Some(name) => {
+            let written = cwd.join(name);
+            if written.exists() {
+                bail!(
+                    "{} would overwrite {}, which is in the way; move it",
+                    language.binary,
+                    written.display()
+                );
+            }
+            written
+        }
+        None => out.path().join("index.scip"),
+    };
     // `which` finds `scip-typescript.cmd` on Windows, which `Command` alone does not.
     let binary = which::which(language.binary).map_err(|_| {
         anyhow::anyhow!(
@@ -237,7 +268,11 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         );
     }
     let bytes = std::fs::read(&file)
-        .with_context(|| format!("{} wrote no index in {shown}", language.binary))?;
+        .with_context(|| format!("{} wrote no index in {shown}", language.binary));
+    if language.writes_in_cwd.is_some() {
+        let _ = std::fs::remove_file(&file);
+    }
+    let bytes = bytes?;
     let documents = scip::parse(&bytes, Path::new(dir))
         .with_context(|| format!("cannot read the index of {} in {shown}", language.binary))?;
     if documents.is_empty() {
@@ -247,6 +282,16 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         );
     }
     Ok(documents)
+}
+
+/// `scip-php` reads the dependencies' code from `vendor`, through the autoloader.
+fn require_composer(_root: &Path, dir: &Path, shown: &str) -> Result<()> {
+    if !dir.join("composer.lock").is_file() || !dir.join("vendor/autoload.php").is_file() {
+        bail!(
+            "dependencies are not installed in {shown}: run `composer install` (scip-php needs composer.lock and vendor/)"
+        );
+    }
+    Ok(())
 }
 
 /// Without `node_modules` the TypeScript indexer cannot see third-party
@@ -304,12 +349,12 @@ mod tests {
         assert_eq!(LANGUAGES[0].roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
         // A workspace root holds its members; Python falls back to the root.
-        assert_eq!(LANGUAGES[3].roots(&files), [""]);
+        assert_eq!(LANGUAGES[4].roots(&files), [""]);
         assert_eq!(LANGUAGES[2].roots(&files), [""]);
         let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
             .map(String::from)
             .to_vec();
-        assert_eq!(LANGUAGES[3].roots(&nested), ["a", "b"]);
+        assert_eq!(LANGUAGES[4].roots(&nested), ["a", "b"]);
     }
 
     #[test]
