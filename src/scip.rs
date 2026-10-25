@@ -53,8 +53,13 @@ pub fn parse(bytes: &[u8], base: &Path) -> Result<Vec<Document>> {
     let prefix = crate::scan::slash(base);
     let mut documents = Vec::new();
     for document in &index.documents {
-        let relative = document.relative_path.as_str();
-        if relative.starts_with("..") || relative.starts_with('/') || relative.contains(":\\") {
+        // Indexers on Windows may write `\` separators.
+        let normalized = document.relative_path.replace('\\', "/");
+        let relative = normalized.as_str();
+        if relative.starts_with("..")
+            || relative.starts_with('/')
+            || relative.as_bytes().get(1) == Some(&b':')
+        {
             continue;
         }
         let path = match prefix.as_str() {
@@ -540,7 +545,7 @@ mod tests {
     #[test]
     fn documents_outside_the_project_are_dropped_and_paths_rebased() {
         let mut index = Index::new();
-        for path in ["a.go", "../../go-build/x.go"] {
+        for path in ["a.go", "../../go-build/x.go", "C:\\cache\\y.go", "b\\c.go"] {
             let mut document = scip::types::Document::new();
             document.relative_path = path.to_string();
             let mut occurrence = Occurrence::new();
@@ -555,8 +560,8 @@ mod tests {
         }
         let bytes = index.write_to_bytes().unwrap();
         let documents = parse(&bytes, Path::new("services/api")).unwrap();
-        assert_eq!(documents.len(), 1);
-        assert_eq!(documents[0].path, "services/api/a.go");
+        let paths: Vec<_> = documents.iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(paths, ["services/api/a.go", "services/api/b/c.go"]);
         assert_eq!(documents[0].references[0].line, 5);
     }
 }
