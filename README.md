@@ -275,7 +275,27 @@ Inputs: `version`, `config`, `working-directory`, `diff` and `format` (`github` 
   with: { sarif_file: easement.sarif }
 ```
 
-For [pre-commit](https://pre-commit.com), `.pre-commit-hooks.yaml` offers `easement` (built from source with cargo) and `easement-system` (the `easement` on the `PATH`).
+For git hooks we recommend [mise](https://mise.jdx.dev) to install `easement` and [hk](https://hk.jdx.dev) to run it:
+
+```toml
+# mise.toml
+[tools]
+"github:mokevnin/easement" = "latest"
+hk = "latest"
+```
+
+```pkl
+// hk.pkl
+hooks {
+    ["pre-push"] {
+        steps {
+            ["easement"] { check = "easement check" }
+        }
+    }
+}
+```
+
+Run it on `pre-push` rather than `pre-commit`: the check reads the whole project.
 
 `easement schema` prints the JSON Schema of `easement.yml`; `easement init` adds it to the file for editors that read a `yaml-language-server` comment. `easement check --watch` runs again after every change and re-reads only the files that changed; the cache lives in memory, so every run of the command starts cold.
 
