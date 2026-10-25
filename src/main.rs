@@ -23,7 +23,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
 use baseline::{Baseline, Verdict};
 use components::ComponentMap;
@@ -34,6 +35,10 @@ use config::Config;
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
+    /// When to colour the output. `auto` colours a terminal and honours
+    /// NO_COLOR and CLICOLOR_FORCE.
+    #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
     #[command(subcommand)]
     command: Command,
 }
@@ -96,6 +101,8 @@ enum Command {
     },
     /// Print the JSON Schema of easement.yml.
     Schema,
+    /// Print a shell completion script, e.g. `easement completions zsh > _easement`.
+    Completions { shell: Shell },
 }
 
 const SCHEMA: &str = include_str!("../easement.schema.json");
@@ -268,7 +275,7 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
         .sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
     let changes = changes.as_ref();
     match options.format {
-        Format::Text => print!("{}", report::text(&verdict, &stats, changes)),
+        Format::Text => anstream::print!("{}", report::colored(&verdict, &stats, changes)),
         Format::Json => println!("{}", report::json(&verdict, &stats, changes)),
         Format::Sarif => println!("{}", report::sarif(&verdict)),
         Format::Github => print!("{}", report::github(&verdict, &stats)),
@@ -389,15 +396,31 @@ fn run(cli: Cli) -> Result<bool> {
             print!("{SCHEMA}");
             Ok(true)
         }
+        Command::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "easement",
+                &mut std::io::stdout(),
+            );
+            Ok(true)
+        }
     }
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    anstream::ColorChoice::write_global(match cli.color {
+        ColorChoice::Auto => anstream::ColorChoice::Auto,
+        ColorChoice::Always => anstream::ColorChoice::Always,
+        ColorChoice::Never => anstream::ColorChoice::Never,
+    });
+    match run(cli) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(err) => {
-            eprintln!("easement: error: {err:#}");
+            let red = anstyle::AnsiColor::Red.on_default().bold();
+            anstream::eprintln!("easement: {red}error{red:#}: {err:#}");
             ExitCode::from(2)
         }
     }

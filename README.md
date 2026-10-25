@@ -46,7 +46,10 @@ easement explain src/app/a.ts  # which component a file is in and what it may do
 easement graph                 # the components as a Mermaid diagram (--format dot)
 easement suggest               # what the real graph says about the config
 easement schema                # the JSON Schema of easement.yml
+easement completions zsh       # shell completions: bash, zsh, fish, powershell, elvish
 ```
+
+The text report is coloured on a terminal. `--color auto|always|never` overrides that, and `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`; the structured formats are never coloured. To install completions for zsh, write the script to a directory on your `fpath`: `easement completions zsh > ~/.zfunc/_easement`.
 
 `easement suggest` reads the real graph against the config and lists the `may_depend_on` entries no import uses, the imports that nothing allows, and the components whose instances never import each other and so could be `isolated`.
 
