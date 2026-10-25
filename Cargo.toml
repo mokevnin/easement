@@ -1,0 +1,9 @@
+[package]
+name = "easement"
+version = "0.1.0"
+edition = "2024"
+description = "Architecture quality gate for polyglot codebases"
+license = "MIT"
+repository = "https://github.com/mokevnin/easement"
+
+[dependencies]
