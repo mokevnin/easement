@@ -8,7 +8,7 @@ Declare the components of your system and which of them may depend on which. `ea
 
 ## Status
 
-Early. Go and TypeScript/JavaScript work; Python and Java are next.
+Early. Go, TypeScript/JavaScript, Python and Java work.
 
 ## Usage
 
@@ -38,10 +38,11 @@ rules:
 exclude: ["**/*_test.go"]
 ```
 
-- **components**: every `in` pattern (a glob or a list of globs) covers the path itself and everything below it. `*` stays within one directory, `**` crosses directories. When several components match a file, the longest pattern wins.
+- **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the longest pattern wins, so a single file can be carved out of a larger component.
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else.
 - Files outside every component are not checked; external packages are not checked yet.
 - **exclude**: globs to skip. `.gitignore` is honoured and `node_modules` is always skipped.
+- **python.roots**: `sys.path` entries inside the project, default `[".", "src"]`.
 
 ```
 $ easement check
@@ -66,6 +67,10 @@ Entries are keyed by file, target and components, not by line, so unrelated edit
 |---|---|---|
 | Go | `import` | module paths from every `go.mod` in the repo |
 | TypeScript / JavaScript | `import`, `export … from`, `import x = require()`, `require()`, `import()` | Node/bundler rules via [oxc_resolver]: relative paths, `tsconfig` `paths`, package `exports`, workspaces, `.js` → `.ts` |
+| Python | `import`, `from … import`, relative imports | longest existing module or package under the source roots; `from a import b` resolves to `a/b.py` if it exists, otherwise to `a` |
+| Java | `import`, `import static`, `import ….*` | classes indexed by their `package` declaration, so any source layout and multi-module builds work without configuration |
+
+Known limits: Java references by fully qualified name without an import are not seen; Python imports built from strings (`importlib`) are not seen.
 
 Adding a language means implementing one trait (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
 

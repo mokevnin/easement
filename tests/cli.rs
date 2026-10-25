@@ -155,3 +155,77 @@ fn config_errors_exit_with_2() {
         .stderr(contains("unknown component `ghost`"));
     easement(&root, &["check", "-c", "missing.yml"]).code(2);
 }
+
+fn violations(root: &Path) -> (Vec<(String, String)>, serde_json::Value) {
+    let out = easement(root, &["check", "--format", "json"])
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let pairs = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["file"].as_str().unwrap().to_string(),
+                v["target"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    (pairs, report["stats"].clone())
+}
+
+#[test]
+fn python_resolves_absolute_relative_and_from_imports() {
+    let (_tmp, root) = fixture("python");
+    let (pairs, stats) = violations(&root);
+    assert_eq!(
+        pairs,
+        vec![
+            (
+                "src/shop/api/handlers.py".to_string(),
+                "src/shop/infra/db.py".to_string()
+            ),
+            (
+                "src/shop/api/views.py".to_string(),
+                "src/shop/infra/__init__.py".to_string()
+            ),
+        ]
+    );
+    // handlers: shop.domain.order, shop.infra.db, .views; db: ..domain.order; views: shop.infra
+    assert_eq!(stats["internal_deps"], 5);
+    assert_eq!(stats["external_deps"], 2);
+    assert_eq!(stats["unresolved_deps"], 0);
+}
+
+#[test]
+fn python_roots_are_configurable() {
+    let (_tmp, root) = fixture("python");
+    let config = fs::read_to_string(root.join("easement.yml")).unwrap();
+    fs::write(
+        root.join("easement.yml"),
+        format!("{config}\npython:\n  roots: [lib]\n"),
+    )
+    .unwrap();
+    // With a wrong root absolute imports become external; relative ones still resolve.
+    let (pairs, stats) = violations(&root);
+    assert!(pairs.is_empty());
+    assert_eq!(stats["internal_deps"], 2);
+}
+
+#[test]
+fn java_resolves_by_package_declaration() {
+    let (_tmp, root) = fixture("java");
+    let (pairs, stats) = violations(&root);
+    assert_eq!(
+        pairs,
+        vec![(
+            "src/main/java/com/acme/shop/web/OrderController.java".to_string(),
+            "src/main/java/com/acme/shop/infra".to_string()
+        )]
+    );
+    // repository -> Order, controller -> Order (static), controller -> infra.*
+    assert_eq!(stats["internal_deps"], 3);
+    assert_eq!(stats["external_deps"], 1);
+}

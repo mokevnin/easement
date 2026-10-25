@@ -5,8 +5,9 @@ use crate::config::Config;
 
 /// Maps repository-relative paths (files or directories, `/`-separated) to components.
 ///
-/// Every `in` pattern `P` matches both `P` itself and everything below it (`P/**`),
-/// so `internal/models` covers the directory and all its files. When several
+/// A pattern names a module, whether it is a directory or a file: `P` matches
+/// `P` itself, everything below it (`P/**`) and a file `P.<ext>`. So
+/// `src/app/cli` covers both `cli.py` and the `cli/` package. When several
 /// components match, the longest pattern wins.
 pub struct ComponentMap {
     entries: Vec<Entry>,
@@ -15,8 +16,7 @@ pub struct ComponentMap {
 struct Entry {
     component: String,
     pattern_len: usize,
-    exact: GlobMatcher,
-    nested: GlobMatcher,
+    matchers: [GlobMatcher; 3],
 }
 
 impl ComponentMap {
@@ -35,8 +35,11 @@ impl ComponentMap {
                 entries.push(Entry {
                     component: name.clone(),
                     pattern_len: pattern.len(),
-                    exact: compile(pattern)?,
-                    nested: compile(&format!("{pattern}/**"))?,
+                    matchers: [
+                        compile(pattern)?,
+                        compile(&format!("{pattern}/**"))?,
+                        compile(&format!("{pattern}.*"))?,
+                    ],
                 });
             }
         }
@@ -46,7 +49,7 @@ impl ComponentMap {
     pub fn component_of(&self, rel_path: &str) -> Option<&str> {
         self.entries
             .iter()
-            .filter(|e| e.exact.is_match(rel_path) || e.nested.is_match(rel_path))
+            .filter(|e| e.matchers.iter().any(|m| m.is_match(rel_path)))
             .max_by_key(|e| e.pattern_len)
             .map(|e| e.component.as_str())
     }
@@ -92,6 +95,8 @@ components:
             m.component_of("internal/domain/books/repository/pg.go"),
             Some("repo")
         );
+        assert_eq!(m.component_of("internal/domain.go"), Some("domain"));
+        assert_eq!(m.component_of("internal/domainx/a.go"), None);
         assert_eq!(m.component_of("cmd/main.go"), None);
     }
 }

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
+use crate::config::Config;
 use crate::lang::{self, Target};
 
 /// A resolved dependency of one project file.
@@ -30,9 +31,9 @@ pub fn walker(root: &Path) -> WalkBuilder {
     builder
 }
 
-pub fn scan(root: &Path, exclude: &[String]) -> Result<Scan> {
-    let exclude = exclude_set(exclude)?;
-    let adapters = lang::adapters(root)?;
+pub fn scan(root: &Path, config: &Config) -> Result<Scan> {
+    let exclude = exclude_set(&config.exclude)?;
+    let adapters = lang::adapters(root, config)?;
     let mut files = 0;
     let mut deps = Vec::new();
     for entry in walker(root).build() {

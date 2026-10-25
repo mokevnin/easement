@@ -1,0 +1,10 @@
+version: 1
+
+components:
+  domain: { in: "src/main/java/com/acme/shop/domain" }
+  infra:  { in: "src/main/java/com/acme/shop/infra" }
+  web:    { in: "src/main/java/com/acme/shop/web" }
+
+rules:
+  infra: { may_depend_on: [domain] }
+  web:   { may_depend_on: [domain] }

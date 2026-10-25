@@ -1,0 +1,10 @@
+version: 1
+
+components:
+  domain: { in: src/shop/domain }
+  infra:  { in: src/shop/infra }
+  api:    { in: src/shop/api }
+
+rules:
+  infra: { may_depend_on: [domain] }
+  api:   { may_depend_on: [domain] }

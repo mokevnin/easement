@@ -77,7 +77,7 @@ impl Project {
     }
 
     fn violations(&self) -> Result<(Vec<check::Violation>, check::Stats)> {
-        let scan = scan::scan(&self.root, &self.config.exclude)?;
+        let scan = scan::scan(&self.root, &self.config)?;
         let map = ComponentMap::new(&self.config)?;
         let (violations, mut stats) = check::evaluate(&self.config, &map, &scan.deps);
         stats.files = scan.files;

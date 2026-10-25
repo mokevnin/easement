@@ -2,9 +2,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor};
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
+
+use crate::config::Config;
 
 pub mod go;
+pub mod java;
+pub mod python;
 pub mod ts;
 
 /// One dependency found in a source file.
@@ -38,11 +42,32 @@ pub trait Adapter {
     fn resolve(&self, file: &Path, specifier: &str) -> Target;
 }
 
-pub fn adapters(root: &Path) -> Result<Vec<Box<dyn Adapter>>> {
+pub fn adapters(root: &Path, config: &Config) -> Result<Vec<Box<dyn Adapter>>> {
     Ok(vec![
         Box::new(go::Go::new(root)?),
         Box::new(ts::TypeScript::new(root)?),
+        Box::new(python::Python::new(root, &config.python.roots)?),
+        Box::new(java::Java::new(root)?),
     ])
+}
+
+pub(crate) fn parse(language: &Language, path: &Path, source: &str) -> Result<Tree> {
+    let mut parser = Parser::new();
+    parser.set_language(language)?;
+    parser
+        .parse(source, None)
+        .with_context(|| format!("cannot parse {}", path.display()))
+}
+
+/// Every node captured as `@node` by `query`, in document order.
+pub(crate) fn captured_nodes<'t>(query: &Query, tree: &'t Tree, source: &str) -> Vec<Node<'t>> {
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), source.as_bytes());
+    let mut nodes = Vec::new();
+    while let Some(m) = matches.next() {
+        nodes.extend(m.captures().iter().map(|c| c.node));
+    }
+    nodes
 }
 
 /// Runs a tree-sitter query and returns the text of every `@spec` capture.
@@ -52,11 +77,7 @@ pub(crate) fn query_imports(
     path: &Path,
     source: &str,
 ) -> Result<Vec<Import>> {
-    let mut parser = Parser::new();
-    parser.set_language(language)?;
-    let tree = parser
-        .parse(source, None)
-        .with_context(|| format!("cannot parse {}", path.display()))?;
+    let tree = parse(language, path, source)?;
     let spec_index = query
         .capture_index_for_name("spec")
         .context("query has no @spec capture")?;
