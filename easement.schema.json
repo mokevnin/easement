@@ -83,19 +83,6 @@
       "description": "Path of the baseline file, default easement.baseline.yml.",
       "type": "string"
     },
-    "python": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "roots": {
-          "description": "Directories that act as sys.path entries, default [\".\", \"src\"].",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
     "unowned": {
       "description": "Globs of files and directories that may belong to no component in strict mode.",
       "type": "array",

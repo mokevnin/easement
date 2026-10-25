@@ -93,10 +93,10 @@ jobs:
 
       # From package.json and the lockfile: the npm backend of mise leaves
       # scip-typescript unable to find its modules on Windows.
-      - name: Install the TypeScript indexer
+      - name: Install the TypeScript and Python indexers
         run: pnpm install --frozen-lockfile
 
-      - name: Put the TypeScript indexer on the PATH
+      - name: Put the indexers on the PATH
         shell: bash
         run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 

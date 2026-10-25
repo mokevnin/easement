@@ -139,9 +139,7 @@ pub fn run(root: &Path, force: bool) -> Result<String> {
             path.display()
         );
     }
-    let probe: Config =
-        serde_norway::from_str("version: 1\ncomponents:\n  probe: { in: probe }\n")?;
-    let adapters = lang::adapters(root, &probe)?;
+    let adapters = lang::adapters(root)?;
     let files: Vec<String> = scan::walker(root)
         .build()
         .flatten()

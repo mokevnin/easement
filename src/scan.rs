@@ -63,7 +63,7 @@ pub fn walker(root: &Path) -> WalkBuilder {
 
 pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let exclude = exclude_set(&config.exclude)?;
-    let adapters = lang::adapters(root, config)?;
+    let adapters = lang::adapters(root)?;
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
     let mut deps = Vec::new();

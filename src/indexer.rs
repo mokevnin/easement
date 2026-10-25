@@ -16,8 +16,12 @@ use crate::scip::{self, Document, Documents};
 pub struct Language {
     pub name: &'static str,
     binary: &'static str,
-    /// The file that marks a directory the indexer runs in.
-    marker: &'static str,
+    /// Files that mark a directory the indexer runs in.
+    markers: &'static [&'static str],
+    /// Run only in the outermost marked directories: a Cargo workspace holds its members.
+    outermost: bool,
+    /// Run at the project root when no marker is found (Python projects often have none).
+    fallback_root: bool,
     /// Extensions of the source files the indexer covers.
     extensions: &'static [&'static str],
     /// Arguments that write the index to the given file.
@@ -29,7 +33,9 @@ pub const LANGUAGES: &[Language] = &[
     Language {
         name: "go",
         binary: "scip-go",
-        marker: "go.mod",
+        markers: &["go.mod"],
+        outermost: false,
+        fallback_root: false,
         extensions: &["go"],
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
@@ -37,7 +43,9 @@ pub const LANGUAGES: &[Language] = &[
     Language {
         name: "typescript",
         binary: "scip-typescript",
-        marker: "tsconfig.json",
+        markers: &["tsconfig.json"],
+        outermost: false,
+        fallback_root: false,
         extensions: &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
         args: |out| {
             vec![
@@ -49,6 +57,50 @@ pub const LANGUAGES: &[Language] = &[
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
     },
+    Language {
+        name: "python",
+        binary: "scip-python",
+        markers: &[
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "requirements.txt",
+        ],
+        outermost: false,
+        fallback_root: true,
+        extensions: &["py", "pyi"],
+        args: |out| {
+            vec![
+                "index".into(),
+                ".".into(),
+                "--quiet".into(),
+                "--project-name".into(),
+                "project".into(),
+                "--project-version".into(),
+                "0".into(),
+                "--output".into(),
+                out.display().to_string(),
+            ]
+        },
+        install: "mise use -g npm:@sourcegraph/scip-python",
+    },
+    Language {
+        name: "rust",
+        binary: "rust-analyzer",
+        markers: &["Cargo.toml"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["rs"],
+        args: |out| {
+            vec![
+                "scip".into(),
+                ".".into(),
+                "--output".into(),
+                out.display().to_string(),
+            ]
+        },
+        install: "rustup component add rust-analyzer",
+    },
 ];
 
 impl Language {
@@ -59,13 +111,26 @@ impl Language {
     }
 
     fn roots(&self, files: &[String]) -> Vec<String> {
-        files
+        let mut dirs: Vec<String> = files
             .iter()
             .filter_map(|f| {
                 let (dir, name) = f.rsplit_once('/').unwrap_or(("", f));
-                (name == self.marker).then(|| dir.to_string())
+                self.markers.contains(&name).then(|| dir.to_string())
             })
-            .collect()
+            .collect();
+        dirs.sort();
+        dirs.dedup();
+        if self.outermost {
+            let all = dirs.clone();
+            dirs.retain(|d| {
+                !all.iter()
+                    .any(|p| p != d && (p.is_empty() || d.starts_with(&format!("{p}/"))))
+            });
+        }
+        if dirs.is_empty() && self.fallback_root {
+            dirs.push(String::new());
+        }
+        dirs
     }
 }
 
@@ -161,9 +226,8 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         .with_context(|| format!("cannot read the index of {} in {shown}", language.binary))?;
     if documents.is_empty() {
         bail!(
-            "{} indexed no files in {shown}; check the `include` of its {}",
-            language.binary,
-            language.marker
+            "{} indexed no files in {shown}; check what its project file includes",
+            language.binary
         );
     }
     Ok(documents)
@@ -209,11 +273,27 @@ mod tests {
         let ts = &LANGUAGES[1];
         assert!(ts.covers("src/a.tsx") && ts.covers("a.mjs"));
         assert!(!ts.covers("src/a.d.ts") && !ts.covers("main.go"));
-        let files: Vec<String> = ["go.mod", "svc/go.mod", "web/tsconfig.json", "a.go"]
-            .map(String::from)
-            .to_vec();
+        let files: Vec<String> = [
+            "go.mod",
+            "svc/go.mod",
+            "web/tsconfig.json",
+            "a.go",
+            "Cargo.toml",
+            "crates/x/Cargo.toml",
+            "tools/Cargo.toml",
+            "app.py",
+        ]
+        .map(String::from)
+        .to_vec();
         assert_eq!(LANGUAGES[0].roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
+        // A workspace root holds its members; Python falls back to the root.
+        assert_eq!(LANGUAGES[3].roots(&files), [""]);
+        assert_eq!(LANGUAGES[2].roots(&files), [""]);
+        let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(LANGUAGES[3].roots(&nested), ["a", "b"]);
     }
 
     #[test]

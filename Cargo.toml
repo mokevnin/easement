@@ -33,8 +33,6 @@ tree-sitter-c-sharp = "0.23.5"
 tree-sitter-java = "0.23.5"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-php = "0.25.1"
-tree-sitter-python = "0.25.0"
-tree-sitter-rust = "0.24.2"
 tree-sitter-swift = "0.7.4"
 which = "8.0.6"
 
