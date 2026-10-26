@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/mokevnin/easement/compare/v0.3.0...v0.3.1) (2026-10-26)
+
+
+### Features
+
+* key the index cache on content so other checkouts reuse it ([#30](https://github.com/mokevnin/easement/issues/30)) ([a3aa08a](https://github.com/mokevnin/easement/commit/a3aa08a0ef21647c577a6e691da42ebc1f4a7e44))
+* target_only keeps generated files in the graph as targets ([#32](https://github.com/mokevnin/easement/issues/32)) ([480896d](https://github.com/mokevnin/easement/commit/480896d106b680847aec82cb73a3864cc1e65590))
+* uncovered_ok takes a list of globs, suggest --check fails on unused allowances ([#29](https://github.com/mokevnin/easement/issues/29)) ([5998f7d](https://github.com/mokevnin/easement/commit/5998f7d73a857b08c09eee7258cb19f0befe6331))
+
 ## [0.3.0](https://github.com/mokevnin/easement/compare/v0.2.0...v0.3.0) (2026-10-26)
 
 
