@@ -155,7 +155,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     }
     cache.parsed.retain(|path, _| seen.contains(path));
 
-    let indexed = indexer::run(root, &all_files, !cache.no_index_cache)?;
+    let indexed = indexer::run(root, &all_files, !cache.no_index_cache, &config.go.tags)?;
     let project: HashSet<&str> = all_files.iter().map(String::as_str).collect();
     let documents: Vec<scip::Document> = indexed
         .documents

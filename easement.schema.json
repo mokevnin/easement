@@ -95,6 +95,20 @@
         "type": "string"
       }
     },
+    "go": {
+      "description": "How the Go indexer builds the project.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tags": {
+          "description": "Build tags to index with, for files behind `//go:build`. Files behind other tags are not built, so they count as not covered.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "uncovered_ok": {
       "description": "Source files that no indexer covers and that may stay that way (globs, each with the reason). Others are listed in the report as not covered, and the result is marked partial.",
       "type": "array",
