@@ -316,6 +316,20 @@ components:
 
 `components` and `rules` merge by name, and a definition in the extending file replaces the one it extends as a whole; `common` and `exclude` are joined; any other key is replaced. Patterns in the extended file stay relative to the config being loaded.
 
+The same part of a rule in several components is written once with a YAML anchor and merged with `<<`. A top-level key that starts with `x-` is only a place for such an anchor, easement ignores it:
+
+```yaml
+x-no-raw-client: &no-raw-client
+  forbid_symbol:
+    - { name: "ent.Client", because: use the scoped client }
+
+rules:
+  api-site: { <<: *no-raw-client, may_depend_on: [domain] }
+  api-external: { <<: *no-raw-client }
+```
+
+A key given next to `<<` wins over the merged one, and a list is replaced, not joined.
+
 ## In CI
 
 `--format` picks the report: `text` (default), `json`, `sarif` (GitHub Code Scanning), `github` (annotations on the changed files) and `junit` (a failed test case per violation).
