@@ -1136,6 +1136,32 @@ fn uncovered_ok_accepts_known_gaps() {
 }
 
 #[test]
+fn uncovered_ok_takes_a_list_of_globs_under_one_reason() {
+    let (_tmp, root) = fixture("uncovered");
+    let config = fs::read_to_string(root.join("easement.yml")).unwrap();
+    fs::write(
+        root.join("easement.yml"),
+        format!(
+            "{config}uncovered_ok:\n  - {{ name: ['tools/gen.go', 'tools/other.go'], because: build helpers }}\n"
+        ),
+    )
+    .unwrap();
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("not covered by an indexer").not());
+    // One glob of the list is not enough for the other file.
+    fs::write(
+        root.join("easement.yml"),
+        format!("{config}uncovered_ok:\n  - {{ name: ['tools/gen.go'] }}\n"),
+    )
+    .unwrap();
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("  tools/other.go"))
+        .stdout(contains("  tools/gen.go").not());
+}
+
+#[test]
 fn doctor_reports_the_indexer_of_each_language() {
     let (_tmp, root) = fixture("uncovered");
     easement(&root, &["doctor"])
@@ -1296,6 +1322,44 @@ rules:
         stdout_of(easement(&root, &["suggest", "--patch"]).success()),
         ""
     );
+}
+
+#[test]
+fn suggest_check_fails_on_unused_allowances_only() {
+    let config = |allow: &str| {
+        format!(
+            "version: 1
+components:
+  app: {{ in: src/app }}
+  lib: {{ in: src/lib }}
+  old: {{ in: src/old }}
+
+rules:
+  app:
+    may_depend_on: [{allow}]
+"
+        )
+    };
+    let files = |config: String| {
+        project(&[
+            ("easement.yml", &config),
+            (
+                "src/app/a.ts",
+                "import { l } from \"../lib/l\";\nexport const a = l;\n",
+            ),
+            ("src/lib/l.ts", "export const l = 1;\n"),
+            ("src/old/o.ts", "export const o = 1;\n"),
+        ])
+    };
+    let (_tmp, root) = files(config("lib, old"));
+    easement(&root, &["suggest", "--check"])
+        .code(1)
+        .stdout(contains("app -> old"));
+    // Without --check the same report is only informative.
+    easement(&root, &["suggest"]).success();
+    easement(&root, &["suggest", "--check", "--patch"]).code(2);
+    let (_tmp, root) = files(config("lib"));
+    easement(&root, &["suggest", "--check"]).success();
 }
 
 #[test]

@@ -113,7 +113,7 @@
       "description": "Source files that no indexer covers and that may stay that way (globs, each with the reason). Others are listed in the report as not covered, and the result is marked partial.",
       "type": "array",
       "items": {
-        "$ref": "#/definitions/listed"
+        "$ref": "#/definitions/accepted"
       }
     },
     "tests": {
@@ -275,6 +275,39 @@
           }
         }
       }
+    },
+    "accepted": {
+      "description": "A glob, or `name` with one glob or a list of them that share a reason.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "because": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     },
     "listed": {
       "description": "A name, or a name with a reason of its own that is shown instead of the reason of the whole rule.",

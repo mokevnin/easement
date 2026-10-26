@@ -108,6 +108,11 @@ enum Command {
         /// comments and reasons alone. Apply it with `git apply` or `patch -p1`.
         #[arg(long)]
         patch: bool,
+        /// Exit 1 when `may_depend_on` has entries no import uses (the ones `--patch` would
+        /// drop), so that CI keeps the allowances from piling up. Entries next to files no
+        /// indexer covered are only reported, never fail it.
+        #[arg(long, conflicts_with = "patch")]
+        check: bool,
     },
     /// Check that the indexers the project needs are installed and can run.
     Doctor {
@@ -404,7 +409,11 @@ fn run(cli: Cli) -> Result<bool> {
             );
             Ok(true)
         }
-        Command::Suggest { config, patch } => {
+        Command::Suggest {
+            config,
+            patch,
+            check,
+        } => {
             let project = Project::open(&config)?;
             let analysis =
                 project.analyze(&mut scan::Cache::default(), &scope::Scope::default())?;
@@ -436,7 +445,13 @@ fn run(cli: Cli) -> Result<bool> {
                     &analysis.stats.uncovered
                 )
             );
-            Ok(true)
+            let unused = suggest::removable(
+                &project.config,
+                &analysis.map,
+                &analysis.edges,
+                &analysis.stats.uncovered,
+            );
+            Ok(!check || unused.is_empty())
         }
         Command::Doctor { config, format } => {
             let project = Project::open(&config)?;

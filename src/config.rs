@@ -38,7 +38,7 @@ pub struct Config {
     /// Source files that no indexer covers and that may stay that way (globs,
     /// each with the reason): they are left out of the report of uncovered files.
     #[serde(default)]
-    pub uncovered_ok: Vec<Listed>,
+    pub uncovered_ok: Vec<Accepted>,
     /// How the Go indexer builds the project.
     #[serde(default)]
     pub go: GoSettings,
@@ -113,6 +113,43 @@ impl Listed {
         match self {
             Listed::Plain(_) => None,
             Listed::Reasoned(Reasoned { because, .. }) => because.as_deref(),
+        }
+    }
+}
+
+/// An `uncovered_ok` entry: a glob, or `name` with one glob or a list of them
+/// that share a reason.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Accepted {
+    Plain(String),
+    Reasoned(AcceptedGlobs),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptedGlobs {
+    name: OneOrMany,
+    /// Read by people, not by the check.
+    #[serde(default, rename = "because")]
+    _because: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Accepted {
+    pub fn patterns(&self) -> Vec<&str> {
+        match self {
+            Accepted::Plain(name) => vec![name],
+            Accepted::Reasoned(AcceptedGlobs { name, .. }) => match name {
+                OneOrMany::One(name) => vec![name],
+                OneOrMany::Many(names) => names.iter().map(String::as_str).collect(),
+            },
         }
     }
 }

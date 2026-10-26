@@ -583,7 +583,9 @@ fn require_installed(root: &Path, dir: &Path, shown: &str) -> Result<()> {
             .then(|| current.parent().map(Path::to_path_buf))
             .flatten();
     }
-    bail!("dependencies are not installed in {shown}: run `npm install` (or pnpm, yarn) first")
+    bail!(
+        "dependencies are not installed in {shown}: run `npm install` (or pnpm, yarn) first; `easement doctor` lists everything else that is missing"
+    )
 }
 
 #[cfg(test)]
@@ -632,6 +634,7 @@ mod tests {
         .unwrap();
         let err = require_installed(root, root, ".").unwrap_err();
         assert!(err.to_string().contains("not installed"));
+        assert!(err.to_string().contains("easement doctor"));
         std::fs::create_dir(root.join("node_modules")).unwrap();
         require_installed(root, root, ".").unwrap();
     }
