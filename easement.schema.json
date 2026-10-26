@@ -5,6 +5,11 @@
   "description": "Configuration of the easement architecture quality gate.",
   "type": "object",
   "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {
+      "description": "Free keys that only hold YAML anchors: `x-ban: &ban {...}`, then `<<: *ban` in a rule."
+    }
+  },
   "properties": {
     "extends": {
       "description": "Config files merged underneath this one, relative to this file. Patterns stay relative to the root of the config being loaded.",

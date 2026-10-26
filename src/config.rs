@@ -408,6 +408,7 @@ impl Config {
 ///
 /// `extends` is a path or a list of paths, relative to the file that names them.
 /// Patterns in every file stay relative to the root of the config being loaded.
+/// Keys that start with `x-` are dropped, so they can hold anchors for `<<`.
 /// `components` and `rules` merge by name, the later definition replacing the
 /// earlier one; `common` and `exclude` are concatenated; any other key is
 /// replaced by the extending file.
@@ -419,11 +420,17 @@ fn load_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<Value> {
     }
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read config {}", path.display()))?;
-    let Value::Mapping(mut own) = serde_norway::from_str::<Value>(&text)
-        .with_context(|| format!("invalid config {}", path.display()))?
-    else {
+    let mut value = serde_norway::from_str::<Value>(&text)
+        .with_context(|| format!("invalid config {}", path.display()))?;
+    // `<<: *anchor` shares a part of a rule between components.
+    value
+        .apply_merge()
+        .with_context(|| format!("invalid config {}", path.display()))?;
+    let Value::Mapping(mut own) = value else {
         bail!("config {} is not a mapping", path.display());
     };
+    // `x-` keys are only places to define anchors.
+    own.retain(|key, _| !key.as_str().is_some_and(|k| k.starts_with("x-")));
     let bases = match own.remove("extends") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::String(one)) => vec![one],
@@ -515,6 +522,37 @@ rules:
         write("loop.yml", "extends: loop.yml\nversion: 1\n");
         let err = Config::load(&dir.path().join("loop.yml")).unwrap_err();
         assert!(err.to_string().contains("extends itself"));
+    }
+
+    #[test]
+    fn merge_keys_share_a_part_of_several_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("easement.yml");
+        std::fs::write(
+            &path,
+            "version: 1
+components:
+  a: { in: a }
+  b: { in: b }
+  c: { in: c }
+x-ban: &ban
+  forbid_symbol:
+    - { name: \"d.T\", because: no raw clients }
+rules:
+  a: { <<: *ban, may_depend_on: [b] }
+  b: { <<: *ban }
+",
+        )
+        .unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.rules["a"].forbid_symbol.len(), 1);
+        assert_eq!(c.rules["b"].forbid_symbol[0].name(), "d.T");
+        assert_eq!(c.rules["a"].may_depend_on.len(), 1);
+        assert!(c.rules["b"].may_depend_on.is_empty());
+
+        // Only keys that start with `x-` are free; a typo is still an error.
+        std::fs::write(&path, "version: 1\ncomponents:\n  a: { in: a }\nban: {}\n").unwrap();
+        assert!(Config::load(&path).is_err());
     }
 
     fn parse(yaml: &str) -> Result<Config> {
