@@ -67,6 +67,9 @@ enum Command {
         /// Report only on files under this path (a glob, relative to the config); repeat for several.
         #[arg(long, value_name = "PATH")]
         scope: Vec<String>,
+        /// Run the indexers even when an index of the unchanged project is cached.
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Record current violations as legalized debt in the baseline file.
     Baseline {
@@ -170,6 +173,7 @@ impl Project {
             .filter(|f| scope.contains(&map, f))
             .count();
         stats.suppressed = suppressed;
+        (stats.indexed, stats.from_cache) = scan.indexed;
         stats.uncovered = scan
             .uncovered
             .into_iter()
@@ -224,6 +228,7 @@ struct CheckOptions {
     diff: Option<String>,
     components: Vec<String>,
     paths: Vec<String>,
+    no_cache: bool,
 }
 
 fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
@@ -282,7 +287,7 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
 /// Runs the check, then again after every change of the project. Never returns
 /// on its own; errors (a broken config mid-edit) are shown and waited out.
 fn watch(options: &CheckOptions) -> Result<bool> {
-    let mut cache = scan::Cache::default();
+    let mut cache = scan::Cache::new(options.no_cache);
     let mut last = None;
     loop {
         let stamp = Project::open(&options.config)
@@ -313,6 +318,7 @@ fn run(cli: Cli) -> Result<bool> {
             watch: watching,
             component,
             scope,
+            no_cache,
         } => {
             let options = CheckOptions {
                 config,
@@ -321,11 +327,12 @@ fn run(cli: Cli) -> Result<bool> {
                 diff,
                 components: component,
                 paths: scope,
+                no_cache,
             };
             if watching {
                 watch(&options)
             } else {
-                check(&options, &mut scan::Cache::default())
+                check(&options, &mut scan::Cache::new(options.no_cache))
             }
         }
         Command::Baseline { config } => {

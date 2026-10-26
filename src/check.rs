@@ -115,6 +115,10 @@ impl Violation {
     }
 }
 
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Stats {
     pub files: usize,
@@ -122,6 +126,11 @@ pub struct Stats {
     pub external_deps: usize,
     pub unmapped_files: usize,
     pub suppressed: usize,
+    /// Indexers that ran, and indexes taken from the cache instead.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub indexed: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub from_cache: usize,
     /// Source files of an indexed language that its indexer did not cover.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub uncovered: Vec<String>,

@@ -33,7 +33,21 @@ struct Parsed {
 /// Parsed files kept between scans, so watch mode re-reads only what changed.
 /// Resolution is never cached: it depends on the other files.
 #[derive(Default)]
-pub struct Cache(HashMap<PathBuf, Parsed>);
+pub struct Cache {
+    parsed: HashMap<PathBuf, Parsed>,
+    /// Run the indexers even when an index of the unchanged project is cached.
+    pub no_index_cache: bool,
+}
+
+impl Cache {
+    /// A cache that also keeps the indexers' output between runs unless `no_index_cache`.
+    pub fn new(no_index_cache: bool) -> Self {
+        Self {
+            no_index_cache,
+            ..Self::default()
+        }
+    }
+}
 
 pub struct Scan {
     /// Every file that is not excluded, source or not, relative to the root with `/` separators.
@@ -46,6 +60,8 @@ pub struct Scan {
     /// Source files of an indexed language that the indexer did not cover,
     /// for example files outside every `tsconfig.json`.
     pub uncovered: Vec<String>,
+    /// Indexers that ran, and indexes taken from the cache.
+    pub indexed: (usize, usize),
 }
 
 /// Project walker: honours .gitignore (even outside a git checkout) and
@@ -88,7 +104,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         let meta = entry.metadata()?;
         let modified = meta.modified().ok();
         let fresh = cache
-            .0
+            .parsed
             .get(&rel)
             .is_some_and(|p| p.len == meta.len() && p.modified == modified && modified.is_some());
         if !fresh {
@@ -104,9 +120,9 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
                 })?,
                 suppressions: suppress::parse(&slash(&rel), &source),
             };
-            cache.0.insert(rel.clone(), parsed);
+            cache.parsed.insert(rel.clone(), parsed);
         }
-        let parsed = &cache.0[&rel];
+        let parsed = &cache.parsed[&rel];
         seen.insert(rel.clone());
         paths.push(slash(&rel));
         suppressions.extend(parsed.suppressions.iter().cloned());
@@ -119,9 +135,9 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
             });
         }
     }
-    cache.0.retain(|path, _| seen.contains(path));
+    cache.parsed.retain(|path, _| seen.contains(path));
 
-    let indexed = indexer::run(root, &all_files)?;
+    let indexed = indexer::run(root, &all_files, !cache.no_index_cache)?;
     let project: HashSet<&str> = all_files.iter().map(String::as_str).collect();
     let documents: Vec<scip::Document> = indexed
         .documents
@@ -146,6 +162,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         symbols,
         suppressions,
         uncovered: indexed.uncovered,
+        indexed: (indexed.ran, indexed.cached),
     })
 }
 

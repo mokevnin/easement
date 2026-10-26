@@ -41,6 +41,7 @@ easement check                 # exit 0: passed, 1: violations, 2: error
 easement check --format json   # machine-readable report; also sarif, github, junit
 easement check --diff origin/main  # only imports added in this change
 easement check --watch         # check again on every change
+easement check --no-cache      # run the indexers even if their output is cached
 easement check --component web # report only on the files of one component (repeatable)
 easement check --scope src/api # report only on files under a path (repeatable)
 easement baseline              # legalize current violations
@@ -395,6 +396,10 @@ Go, TypeScript, Python and Rust come from a SCIP index, which is exact but has i
 Kotlin is still read with tree-sitter: `scip-java`'s Kotlin plugin fails with a `NoClassDefFoundError` on every Kotlin compiler from 1.9 to 2.3 that I tried, so there is no indexer to use yet. Known limits of the languages that tree-sitter reads: references by fully qualified name without an import (Kotlin) are not seen. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
 
 Adding a language to the indexed set means naming its indexer and the marker file it runs in (`src/indexer.rs`) and mapping its symbols to module names (`src/scip.rs`). A language that has no indexer can still be read with a tree-sitter adapter (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
+
+### Index cache
+
+Indexers are slow (a second or two for a small project, ten or more for a big one), so easement keeps what they write. The cache lives in the user's cache directory (`~/Library/Caches/easement` on macOS, `~/.cache/easement` on Linux; set `EASEMENT_CACHE_DIR` to move it) with one index per project directory and indexer. An index is reused while the indexer binary and the name, size and modification time of every project file under its directory (build output such as `target/` left out) stay the same; any change runs the indexer again. Dependencies that live outside the project (`node_modules`, `vendor/`, the Go module cache, the Python environment) are not looked at, so after changing them without touching a lock file run `easement check --no-cache`. `--format json` reports `stats.indexed` and `stats.from_cache`.
 
 ### Indexers
 
