@@ -1366,6 +1366,77 @@ fn readme_mentions_every_config_key_of_the_schema() {
     assert!(missing.is_empty(), "README never mentions: {missing:?}");
 }
 
+/// What a run says about the code, without how the indexes were obtained.
+fn verdict(root: &Path, cache: &Path) -> (serde_json::Value, serde_json::Value) {
+    let out = easement_cached(root, &["check", "--format", "json"], cache);
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.get_output().stdout).expect("a JSON report");
+    (report["violations"].clone(), report["stats"].clone())
+}
+
+#[test]
+fn another_checkout_of_the_same_code_reuses_the_indexes() {
+    let cache = TempDir::new().unwrap();
+    let checkout = |name: &str| {
+        let (tmp, root) = fixture(name);
+        if name == "rust" {
+            // Not stored in the fixture, see `layered`.
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .unwrap();
+        }
+        (tmp, root)
+    };
+    for name in ["go", "ts", "python", "rust", "java"] {
+        let (_first_tmp, first) = checkout(name);
+        let (violations, stats) = verdict(&first, cache.path());
+        assert!(
+            stats["indexed"].as_u64().unwrap_or(0) >= 1,
+            "{name}: {stats}"
+        );
+        // A copy is another path with other modification times.
+        let (_second_tmp, second) = checkout(name);
+        let (again, cached) = verdict(&second, cache.path());
+        assert!(cached.get("indexed").is_none(), "{name}: {cached}");
+        assert_eq!(cached["from_cache"], stats["indexed"], "{name}");
+        assert_eq!(again, violations, "{name}");
+        assert_eq!(cached["internal_deps"], stats["internal_deps"], "{name}");
+    }
+}
+
+#[test]
+fn a_touched_file_hits_the_cache_and_a_changed_file_above_the_project_misses_it() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  pkg: { in: pkg }\n",
+        ),
+        ("base.json", "{\"compilerOptions\": {}}\n"),
+        (
+            "pkg/tsconfig.json",
+            "{\"extends\": \"../base.json\", \"include\": [\"src\"]}\n",
+        ),
+        ("pkg/src/a.ts", "export const a = 1;\n"),
+    ]);
+    let cache = TempDir::new().unwrap();
+    let first = verdict(&root, cache.path()).1["indexed"].clone();
+    assert!(first.as_u64().unwrap_or(0) >= 1, "{first}");
+    // The same bytes with a new modification time: the content is what counts.
+    let file = root.join("pkg/src/a.ts");
+    fs::write(&file, fs::read(&file).unwrap()).unwrap();
+    assert_eq!(verdict(&root, cache.path()).1["from_cache"], first);
+    // The project's `tsconfig.json` extends a file that sits above it.
+    fs::write(
+        root.join("base.json"),
+        "{\"compilerOptions\": {\"strict\": true}}\n",
+    )
+    .unwrap();
+    let after = verdict(&root, cache.path()).1;
+    assert!(after["indexed"].as_u64().unwrap_or(0) >= 1, "{after}");
+}
+
 #[test]
 fn indexes_are_cached_until_the_project_changes() {
     let (_tmp, root) = fixture("go");

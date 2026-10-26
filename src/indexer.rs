@@ -315,9 +315,13 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// Everything that decides what an indexer would write: the indexer itself and
-/// the name, size and modification time of every project file under `dir`
-/// except its build output. Dependencies outside the project are not covered;
-/// `--no-cache` is for when they change without a lock file.
+/// the name and content of every project file under `dir` except its build
+/// output, plus the files that sit directly in the directories above `dir`
+/// (`tsconfig.base.json`, `go.work`, a root `package.json`), which the project
+/// files extend. Nothing about the checkout (its path, the modification times)
+/// is in the key, so a worktree of the same code reuses the index. Dependencies
+/// outside the project are not covered; `--no-cache` is for when they change
+/// without a lock file.
 fn fingerprint(
     language: &Language,
     binary: &Path,
@@ -338,12 +342,21 @@ fn fingerprint(
     } else {
         format!("{dir}/")
     };
-    let mut seen: Vec<(&str, u64, Option<std::time::SystemTime>)> = files
+    let above = |f: &str| {
+        let parent = f.rsplit_once('/').map_or("", |(parent, _)| parent);
+        parent.len() < dir.len() && (parent.is_empty() || dir.starts_with(&format!("{parent}/")))
+    };
+    let mut seen: Vec<(&str, Option<u64>)> = files
         .iter()
-        .filter(|f| f.starts_with(&prefix) && !language.in_skip_dir(f))
-        .filter_map(|f| {
-            let meta = std::fs::metadata(root.join(f)).ok()?;
-            Some((f.as_str(), meta.len(), meta.modified().ok()))
+        .filter(|f| (f.starts_with(&prefix) && !language.in_skip_dir(f)) || above(f))
+        .map(|f| {
+            // An unreadable file is a different state from every readable one.
+            let content = std::fs::read(root.join(f)).ok().map(|bytes| {
+                let mut h = DefaultHasher::new();
+                bytes.hash(&mut h);
+                h.finish()
+            });
+            (f.as_str(), content)
         })
         .collect();
     seen.sort();
@@ -352,10 +365,11 @@ fn fingerprint(
 }
 
 /// The file the index of `dir` is kept in; the name carries the fingerprint, so a
-/// changed project misses it, and `prefix` finds the stale ones to remove.
-fn cache_file(root: &Path, language: &Language, dir: &str, key: u64) -> Option<(PathBuf, String)> {
+/// changed project misses it, and `prefix` finds the entries of the same directory
+/// and indexer, which are pruned to the most recently used few.
+fn cache_file(language: &Language, dir: &str, key: u64) -> Option<(PathBuf, String)> {
     let mut hasher = DefaultHasher::new();
-    (root, language.name, dir).hash(&mut hasher);
+    (language.name, dir).hash(&mut hasher);
     let prefix = format!("{:016x}-", hasher.finish());
     Some((
         cache_dir()?.join(format!("{prefix}{key:016x}.scip")),
@@ -457,14 +471,16 @@ fn index_dir(
         )
     })?;
     let key = fingerprint(language, &binary, root, dir, files, &env);
-    let cached = use_cache
-        .then(|| cache_file(root, language, dir, key))
-        .flatten();
+    let cached = use_cache.then(|| cache_file(language, dir, key)).flatten();
     if let Some((path, _)) = &cached
         && let Ok(bytes) = std::fs::read(path)
         && let Ok(documents) = scip::parse(&bytes, Path::new(dir))
         && !documents.is_empty()
     {
+        // Recency decides what pruning keeps: best effort, a failure only ages the entry.
+        if let Ok(file) = std::fs::File::options().write(true).open(path) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
         return Ok((documents, true));
     }
     let out = tempfile::tempdir().context("cannot create a temporary directory")?;
@@ -533,16 +549,35 @@ fn index_dir(
     {
         // Best effort: a cache that cannot be written only costs the next run its speed.
         let _ = std::fs::create_dir_all(parent);
-        if let Ok(entries) = std::fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-        let _ = std::fs::write(&path, &bytes);
+        // Written to a temporary file first, so that a run in another checkout never
+        // reads half an index: a cut at a message boundary would parse as fewer files.
+        let _ = tempfile::NamedTempFile::new_in(parent).and_then(|mut file| {
+            std::io::Write::write_all(&mut file, &bytes)?;
+            file.persist(&path).map_err(|e| e.error)
+        });
+        prune(parent, &prefix);
     }
     Ok((documents, false))
+}
+
+/// Entries of one directory and indexer that are kept: checkouts of the same
+/// project share them, so a new entry must not remove those of the others.
+const KEPT_PER_DIR: usize = 32;
+
+/// Removes all but the `KEPT_PER_DIR` most recently used entries with `prefix`.
+fn prune(parent: &Path, prefix: &str) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let mut mine: Vec<_> = entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    mine.sort_by(|a, b| b.cmp(a));
+    for (_, path) in mine.into_iter().skip(KEPT_PER_DIR) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// `scip-php` reads the dependencies' code from `vendor`, through the autoloader.
@@ -634,5 +669,37 @@ mod tests {
         assert!(err.to_string().contains("not installed"));
         std::fs::create_dir(root.join("node_modules")).unwrap();
         require_installed(root, root, ".").unwrap();
+    }
+
+    #[test]
+    fn pruning_keeps_the_most_recently_used_entries_of_one_directory_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = std::time::SystemTime::now();
+        let write = |name: String, age: u64| {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+        };
+        for i in 0..KEPT_PER_DIR + 3 {
+            write(format!("aaaa-{i:016x}.scip"), 100 + i as u64);
+        }
+        write("bbbb-0.scip".into(), 10_000);
+        prune(dir.path(), "aaaa-");
+        let left = |prefix: &str| {
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+                .count()
+        };
+        assert_eq!(left("aaaa-"), KEPT_PER_DIR);
+        assert_eq!(left("bbbb-"), 1);
+        // The newest ones stay, the oldest go.
+        assert!(dir.path().join(format!("aaaa-{:016x}.scip", 0)).exists());
+        assert!(
+            !dir.path()
+                .join(format!("aaaa-{:016x}.scip", KEPT_PER_DIR + 2))
+                .exists()
+        );
     }
 }
