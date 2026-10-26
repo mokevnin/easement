@@ -9,6 +9,7 @@ mod graph;
 mod indexer;
 mod init;
 mod lang;
+mod patch;
 mod report;
 mod scan;
 mod scip;
@@ -102,6 +103,11 @@ enum Command {
     Suggest {
         #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
         config: PathBuf,
+        /// Print a patch for the config instead: it drops the `may_depend_on` entries no
+        /// import uses (never one next to files no indexer covered), and leaves
+        /// comments and reasons alone. Apply it with `git apply` or `patch -p1`.
+        #[arg(long)]
+        patch: bool,
     },
     /// Check that the indexers the project needs are installed and can run.
     Doctor {
@@ -398,10 +404,27 @@ fn run(cli: Cli) -> Result<bool> {
             );
             Ok(true)
         }
-        Command::Suggest { config } => {
+        Command::Suggest { config, patch } => {
             let project = Project::open(&config)?;
             let analysis =
                 project.analyze(&mut scan::Cache::default(), &scope::Scope::default())?;
+            if patch {
+                let text = std::fs::read_to_string(&config)
+                    .with_context(|| format!("cannot read {}", config.display()))?;
+                let gone = suggest::removable(
+                    &project.config,
+                    &analysis.map,
+                    &analysis.edges,
+                    &analysis.stats.uncovered,
+                );
+                let (new, skipped) = patch::remove_allowances(&text, &gone);
+                for note in skipped {
+                    eprintln!("easement: {note}");
+                }
+                let name = config.to_string_lossy().replace('\\', "/");
+                print!("{}", patch::unified_diff(&name, &text, &new));
+                return Ok(true);
+            }
             print!(
                 "{}",
                 suggest::suggest(
