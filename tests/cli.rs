@@ -1122,6 +1122,68 @@ fn uncovered_ok_accepts_known_gaps() {
 }
 
 #[test]
+fn doctor_reports_the_indexer_of_each_language() {
+    let (_tmp, root) = fixture("uncovered");
+    easement(&root, &["doctor"])
+        .success()
+        .stdout(contains("go: scip-go"))
+        .stdout(contains("ok"));
+    let report: serde_json::Value = serde_json::from_str(&stdout_of(
+        easement(&root, &["doctor", "--format", "json"]).success(),
+    ))
+    .unwrap();
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["languages"][0]["language"], "go");
+    assert_eq!(report["languages"][0]["binary"], "scip-go");
+    assert_eq!(report["languages"][0]["found"], true);
+}
+
+#[test]
+fn doctor_names_a_missing_indexer_and_how_to_install_it() {
+    let (_tmp, root) = fixture("uncovered");
+    let run = |args: &[&str]| {
+        Command::cargo_bin("easement")
+            .unwrap()
+            .current_dir(&root)
+            .env("PATH", "")
+            .args(args)
+            .assert()
+    };
+    run(&["doctor"])
+        .code(1)
+        .stdout(contains("go: scip-go not found"))
+        .stdout(contains(
+            "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
+        ))
+        .stdout(contains("[tools]"))
+        .stdout(contains(
+            "\"go:github.com/scip-code/scip-go/cmd/scip-go\" = \"latest\"",
+        ));
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout_of(run(&["doctor", "--format", "json"]).code(1))).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["languages"][0]["found"], false);
+}
+
+#[test]
+fn doctor_says_when_dependencies_are_not_installed() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src }\n",
+        ),
+        (
+            "package.json",
+            r#"{ "dependencies": { "left-pad": "1.0.0" } }"#,
+        ),
+        ("src/a.ts", "export const a = 1;\n"),
+    ]);
+    easement(&root, &["doctor"])
+        .code(1)
+        .stdout(contains("dependencies are not installed"));
+}
+
+#[test]
 fn suggest_reports_what_the_graph_says_about_the_config() {
     let (_tmp, root) = fixture("ts");
     easement(&root, &["suggest"])
