@@ -14,7 +14,15 @@ pub fn suggest(
     edges: &[Edge],
     deps: &[Dep],
     files: &[String],
+    uncovered: &[String],
 ) -> String {
+    // Files no indexer saw have no edges: a missing import next to them proves nothing.
+    let mut unindexed: BTreeMap<&str, usize> = BTreeMap::new();
+    for file in uncovered {
+        if let Some(component) = map.component_of(file) {
+            *unindexed.entry(component).or_default() += 1;
+        }
+    }
     let mut used: BTreeMap<(&str, &str), usize> = BTreeMap::new();
     for e in edges {
         *used.entry((&e.from, &e.to)).or_default() += 1;
@@ -23,10 +31,20 @@ pub fn suggest(
     let mut out = String::new();
 
     let mut unused = Vec::new();
+    let mut unreliable = Vec::new();
     for (from, rule) in &config.rules {
         for to in rule.may_depend_on.iter().map(|l| l.name()) {
-            if !used.contains_key(&(from.as_str(), to)) {
+            if used.contains_key(&(from.as_str(), to)) {
+                continue;
+            }
+            let gaps: Vec<String> = [from.as_str(), to]
+                .into_iter()
+                .filter_map(|c| Some(format!("{} file(s) of {c}", unindexed.get(c)?)))
+                .collect();
+            if gaps.is_empty() {
                 unused.push(format!("{from} -> {to}"));
+            } else {
+                unreliable.push(format!("{from} -> {to} (not indexed: {})", gaps.join(", ")));
             }
         }
     }
@@ -34,6 +52,11 @@ pub fn suggest(
         &mut out,
         "Allowed in may_depend_on but never imported (remove to tighten the rules):",
         unused,
+    );
+    section(
+        &mut out,
+        "Not imported among the indexed files, but some files were not indexed, so the import may be there (do not remove without checking):",
+        unreliable,
     );
 
     let mut missing: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -57,7 +80,7 @@ pub fn suggest(
     section(
         &mut out,
         "Instances that never import each other (candidates for `isolated: true`):",
-        isolation_candidates(config, map, deps, files),
+        isolation_candidates(config, map, deps, files, &unindexed),
     );
 
     if out.is_empty() {
@@ -87,6 +110,7 @@ fn isolation_candidates(
     map: &ComponentMap,
     deps: &[Dep],
     files: &[String],
+    unindexed: &BTreeMap<&str, usize>,
 ) -> Vec<String> {
     // (component, pattern) -> instances seen, and whether instances import each other
     let mut groups: BTreeMap<(String, String), (BTreeSet<String>, bool)> = BTreeMap::new();
@@ -96,7 +120,9 @@ fn isolation_candidates(
     };
     let locate = |file: &str| {
         let (component, pattern) = map.component_and_pattern(file)?;
-        if config.components[component].isolated || !pattern.contains('*') {
+        // `**` spans directory levels, so it cannot tell instances apart.
+        if config.components[component].isolated || !pattern.contains('*') || pattern.contains("**")
+        {
             return None;
         }
         Some((
@@ -134,7 +160,11 @@ fn isolation_candidates(
                 .iter()
                 .map(|i| i.rsplit('/').next().unwrap_or(i).to_string())
                 .collect();
-            format!("{component} (`{pattern}`): {}", names.join(", "))
+            let note = match unindexed.get(component.as_str()) {
+                Some(n) => format!(" [unreliable: {n} file(s) not indexed]"),
+                None => String::new(),
+            };
+            format!("{component} (`{pattern}`): {}{note}", names.join(", "))
         })
         .collect()
 }
@@ -189,13 +219,77 @@ rules:
             "src/pages/b/z.ts".to_string(),
             "src/pages/c/leaf.ts".to_string(),
         ];
-        let out = suggest(&config, &map, &edges, &deps, &files);
+        let out = suggest(&config, &map, &edges, &deps, &files, &[]);
         assert!(out.contains("  web -> data\n"), "{out}");
         assert!(!out.contains("web -> core"), "{out}");
         assert!(out.contains("  core: data (1 import(s))\n"), "{out}");
         assert!(out.contains("  pages (`src/pages/*`): a, b, c\n"), "{out}");
 
         let crossing = [dep("src/pages/a/x.ts", "src/pages/b/y.ts")];
-        assert!(!suggest(&config, &map, &edges, &crossing, &files).contains("pages"));
+        assert!(!suggest(&config, &map, &edges, &crossing, &files, &[]).contains("pages"));
+    }
+
+    #[test]
+    fn does_not_trust_a_missing_import_next_to_files_nothing_indexed() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  web: { in: src/web }
+  core: { in: src/core }
+  generated: { in: src/generated }
+rules:
+  web: { may_depend_on: [core, generated] }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let edges = [edge("web", "core")];
+        let uncovered = ["src/generated/index.ts".to_string()];
+        let out = suggest(&config, &map, &edges, &[], &[], &uncovered);
+        assert!(
+            out.contains("  web -> generated (not indexed: 1 file(s) of generated)\n"),
+            "{out}"
+        );
+        // It is not offered as a plain removal.
+        assert!(!out.contains("  web -> generated\n"), "{out}");
+        let clean = suggest(&config, &map, &edges, &[], &[], &[]);
+        assert!(clean.contains("  web -> generated\n"), "{clean}");
+    }
+
+    #[test]
+    fn a_double_star_pattern_is_never_an_isolation_candidate() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  routes: { in: 'src/routes/**' }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let files = [
+            "src/routes/a/x.ts".to_string(),
+            "src/routes/b/y.ts".to_string(),
+        ];
+        let out = suggest(&config, &map, &[], &[], &files, &[]);
+        assert!(!out.contains("isolated"), "{out}");
+    }
+
+    #[test]
+    fn isolation_candidates_with_unindexed_files_are_marked() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  pages: { in: 'src/pages/*' }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let files = [
+            "src/pages/a/x.ts".to_string(),
+            "src/pages/b/y.ts".to_string(),
+        ];
+        let uncovered = ["src/pages/c/z.ts".to_string()];
+        let out = suggest(&config, &map, &[], &[], &files, &uncovered);
+        assert!(out.contains("[unreliable: 1 file(s) not indexed]"), "{out}");
     }
 }

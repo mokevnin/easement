@@ -53,7 +53,7 @@ easement completions zsh       # shell completions: bash, zsh, fish, powershell,
 
 The text report is coloured on a terminal. `--color auto|always|never` overrides that, and `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`; the structured formats are never coloured. To install completions for zsh, write the script to a directory on your `fpath`: `easement completions zsh > ~/.zfunc/_easement`.
 
-`easement suggest` reads the real graph against the config and lists the `may_depend_on` entries no import uses, the imports that nothing allows, and the components whose instances never import each other and so could be `isolated`.
+`easement suggest` reads the real graph against the config and lists the `may_depend_on` entries no import uses, the imports that nothing allows, and the components whose instances never import each other and so could be `isolated` (only `*` patterns, never `**`). An entry next to files no indexer covered is listed apart as unreliable, because the import it would remove may be in a file that was never read: check those by hand before removing anything.
 
 `easement init` finds the components in the layout of the project (the subdirectories of `internal/`, `src/`, `app/`, … or the top-level directories) and allows every dependency it finds between them. The first `easement check` passes; remove the dependencies that should not exist, and add `because:` reasons.
 

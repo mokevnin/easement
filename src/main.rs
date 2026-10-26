@@ -382,7 +382,8 @@ fn run(cli: Cli) -> Result<bool> {
                     &analysis.map,
                     &analysis.edges,
                     &analysis.deps,
-                    &analysis.files
+                    &analysis.files,
+                    &analysis.stats.uncovered
                 )
             );
             Ok(true)

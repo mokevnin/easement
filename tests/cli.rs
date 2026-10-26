@@ -1041,6 +1041,32 @@ fn symbols_are_checked_through_imports() {
 }
 
 #[test]
+fn forbid_symbol_catches_every_way_to_use_a_type() {
+    let (_tmp, root) = fixture("symbol_uses");
+    // One file per way of using db.Client: the check reports a file once per symbol.
+    easement(&root, &["check"])
+        .code(1)
+        .stdout(contains(
+            "internal/handlers/field.go:6: handler must not use db.Client",
+        ))
+        .stdout(contains(
+            "internal/handlers/param.go:5: handler must not use db.Client",
+        ))
+        .stdout(contains(
+            "internal/handlers/local.go:6: handler must not use db.Client",
+        ))
+        // A method call on a value of the type, without the type being spelled out.
+        .stdout(contains(
+            "internal/handlers/chained.go:6: handler must not use db.Client",
+        ))
+        .stdout(contains(
+            "internal/handlers/held.go:7: handler must not use db.Client",
+        ))
+        .stdout(contains("allowed.go").not())
+        .stdout(contains("5 violation(s)"));
+}
+
+#[test]
 fn suggest_reports_what_the_graph_says_about_the_config() {
     let (_tmp, root) = fixture("ts");
     easement(&root, &["suggest"])
