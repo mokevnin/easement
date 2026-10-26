@@ -1502,6 +1502,62 @@ fn a_touched_file_hits_the_cache_and_a_changed_file_above_the_project_misses_it(
 }
 
 #[test]
+fn target_only_files_are_imported_but_never_checked_as_sources() {
+    let config = |key: &str| {
+        format!(
+            "version: 1
+components:
+  app: {{ in: src/app }}
+  generated: {{ in: src/generated }}
+rules:
+  app: {{ may_depend_on: [] }}
+  generated: {{ may_depend_on: [] }}
+{key}: ['**/*.gen.ts']
+"
+        )
+    };
+    let files = |config: String| {
+        project(&[
+            ("easement.yml", &config),
+            ("tsconfig.json", "{\"include\": [\"src\"]}\n"),
+            (
+                "src/app/a.ts",
+                "import { api } from \"../generated/api.gen\";\nexport const a = api;\n",
+            ),
+            (
+                "src/generated/api.gen.ts",
+                "import { a } from \"../app/a\";\nexport const api = 1;\nexport const b = a;\n",
+            ),
+        ])
+    };
+    let pairs = |root: &Path| -> Vec<(String, String)> {
+        let out = easement(root, &["check", "--format", "json"]);
+        let report: serde_json::Value =
+            serde_json::from_slice(&out.get_output().stdout).expect("a JSON report");
+        report["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v["file"].as_str().unwrap().to_string(),
+                    v["to"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    // The import of the generated file is seen and judged; its own import of the app is not.
+    let (_tmp, root) = files(config("target_only"));
+    assert_eq!(
+        pairs(&root),
+        [("src/app/a.ts".to_string(), "generated".to_string())]
+    );
+    // `exclude` hides the file altogether: nothing is seen.
+    let (_tmp, root) = files(config("exclude"));
+    assert!(pairs(&root).is_empty());
+}
+
+#[test]
 fn indexes_are_cached_until_the_project_changes() {
     let (_tmp, root) = fixture("go");
     let cache = TempDir::new().unwrap();

@@ -88,7 +88,8 @@ exclude: ["**/*_test.go"]
 - **components**: an `in` pattern (a glob or a list of globs) names a module, whether it is a directory or a file: `src/app/cli` covers the `cli/` directory with everything below it and a file `cli.py`. `*` stays within one directory, `**` crosses directories. When several components match a file, the one with the higher `priority` wins (default 0), then the longest pattern, so a single file can be carved out of a larger component. `except` lists patterns a component gives up: its files matching them belong to the next component that matches, if any.
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
-- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all. To hold tests to rules of their own, see [Tests](#tests).
+- **target_only**: globs of generated files that stay in the graph as targets but are never checked as sources. Components can own them (`web-generated: { in: src/generated }`), and rules can allow or forbid importing them (`must_not_depend_on: [web-generated]`); their own imports, symbol uses and directives are not checked. `exclude` wins when a file matches both.
+- **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all, and no import of them is seen. To hold tests to rules of their own, see [Tests](#tests).
 
 ```text
 $ easement check
@@ -316,7 +317,7 @@ components:
   api: { in: src }
 ```
 
-`components` and `rules` merge by name, and a definition in the extending file replaces the one it extends as a whole; `common` and `exclude` are joined; any other key is replaced. Patterns in the extended file stay relative to the config being loaded.
+`components` and `rules` merge by name, and a definition in the extending file replaces the one it extends as a whole; `common`, `exclude` and `target_only` are joined; any other key is replaced. Patterns in the extended file stay relative to the config being loaded.
 
 The same part of a rule in several components is written once with a YAML anchor and merged with `<<`. A top-level key that starts with `x-` is only a place for such an anchor, easement ignores it:
 
