@@ -100,6 +100,18 @@ mod tests {
     }
 
     #[test]
+    fn one_baseline_entry_legalizes_every_use_of_its_key() {
+        let mut second = v("f1", "b");
+        second.line = 9;
+        let baseline = Baseline::from_violations(&[v("f1", "b")]);
+        let found = vec![v("f1", "b"), second];
+        let current = found.iter().map(Violation::key).collect();
+        let verdict = Verdict::judge(found, &current, Some(&baseline));
+        assert_eq!(verdict.legalized, 2);
+        assert!(verdict.passed());
+    }
+
+    #[test]
     fn ratchet_fails_on_new_and_stale() {
         let baseline = Baseline::from_violations(&[v("f1", "b"), v("f2", "b")]);
         let found = vec![v("f1", "b"), v("f3", "c")];

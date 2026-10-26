@@ -1054,7 +1054,7 @@ fn symbols_are_checked_through_imports() {
 #[test]
 fn forbid_symbol_catches_every_way_to_use_a_type() {
     let (_tmp, root) = fixture("symbol_uses");
-    // One file per way of using db.Client: the check reports a file once per symbol.
+    // One file per way of using db.Client, and a file that uses it twice: every use is reported.
     easement(&root, &["check"])
         .code(1)
         .stdout(contains(
@@ -1073,8 +1073,14 @@ fn forbid_symbol_catches_every_way_to_use_a_type() {
         .stdout(contains(
             "internal/handlers/held.go:7: handler must not use db.Client",
         ))
+        .stdout(contains(
+            "internal/handlers/twice.go:6: handler must not use db.Client",
+        ))
+        .stdout(contains(
+            "internal/handlers/twice.go:7: handler must not use db.Client",
+        ))
         .stdout(contains("allowed.go").not())
-        .stdout(contains("5 violation(s)"));
+        .stdout(contains("7 violation(s)"));
 }
 
 #[test]
