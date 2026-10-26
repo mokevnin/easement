@@ -233,7 +233,20 @@ pub struct Indexed {
 
 /// Indexes every language that has source files among `files` (project files,
 /// `/`-separated, relative to `root`).
-pub fn run(root: &Path, files: &[String], use_cache: bool) -> Result<Indexed> {
+/// What an indexer is run with besides its arguments: the build tags of Go.
+fn environment(language: &Language, go_tags: &[String]) -> Vec<(&'static str, String)> {
+    if language.name != "go" || go_tags.is_empty() {
+        return Vec::new();
+    }
+    let mut flags = std::env::var("GOFLAGS").unwrap_or_default();
+    if !flags.is_empty() {
+        flags.push(' ');
+    }
+    flags.push_str(&format!("-tags={}", go_tags.join(",")));
+    vec![("GOFLAGS", flags)]
+}
+
+pub fn run(root: &Path, files: &[String], use_cache: bool, go_tags: &[String]) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
     let mut parts = Vec::new();
     let mut wanted: Vec<&String> = Vec::new();
@@ -249,7 +262,8 @@ pub fn run(root: &Path, files: &[String], use_cache: bool) -> Result<Indexed> {
             continue;
         }
         for dir in roots {
-            let (documents, from_cache) = index_dir(language, root, &dir, files, use_cache)?;
+            let (documents, from_cache) =
+                index_dir(language, root, &dir, files, use_cache, go_tags)?;
             parts.push(documents);
             if from_cache {
                 cached += 1;
@@ -310,9 +324,11 @@ fn fingerprint(
     root: &Path,
     dir: &str,
     files: &[String],
+    env: &[(&str, String)],
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     language.name.hash(&mut hasher);
+    env.hash(&mut hasher);
     (language.args)(Path::new("")).hash(&mut hasher);
     if let Ok(meta) = std::fs::metadata(binary) {
         (binary, meta.len(), meta.modified().ok()).hash(&mut hasher);
@@ -421,7 +437,9 @@ fn index_dir(
     dir: &str,
     files: &[String],
     use_cache: bool,
+    go_tags: &[String],
 ) -> Result<(Vec<Document>, bool)> {
+    let env = environment(language, go_tags);
     let cwd = if dir.is_empty() {
         root.to_path_buf()
     } else {
@@ -438,7 +456,7 @@ fn index_dir(
             language.install
         )
     })?;
-    let key = fingerprint(language, &binary, root, dir, files);
+    let key = fingerprint(language, &binary, root, dir, files, &env);
     let cached = use_cache
         .then(|| cache_file(root, language, dir, key))
         .flatten();
@@ -466,6 +484,7 @@ fn index_dir(
     };
     let output = Command::new(binary)
         .args((language.args)(&file))
+        .envs(env.iter().map(|(k, v)| (*k, v)))
         .current_dir(&cwd)
         .output()
         .with_context(|| format!("cannot run {}", language.binary))?;

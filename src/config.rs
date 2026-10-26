@@ -39,11 +39,23 @@ pub struct Config {
     /// each with the reason): they are left out of the report of uncovered files.
     #[serde(default)]
     pub uncovered_ok: Vec<Listed>,
+    /// How the Go indexer builds the project.
+    #[serde(default)]
+    pub go: GoSettings,
     /// `auto` puts the test files of every language into a component named
     /// `tests`, which `rules.tests` can restrict; without such a rule tests may
     /// import anything.
     #[serde(default)]
     pub tests: Option<TestsMode>,
+}
+
+/// Go files behind a build constraint (`//go:build race`) are indexed, and so
+/// seen, only for the tags the indexer builds with.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoSettings {
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -262,6 +274,15 @@ impl Config {
         }
         if self.components.is_empty() {
             bail!("config declares no components");
+        }
+        for tag in &self.go.tags {
+            if tag.is_empty()
+                || !tag
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            {
+                bail!("go.tags: `{tag}` is not a build tag (letters, digits, `_` and `.`)");
+            }
         }
         let known: BTreeSet<&str> = self.components.keys().map(String::as_str).collect();
         let check = |name: &str, place: &str| -> Result<()> {
@@ -553,6 +574,17 @@ rules:
         // Only keys that start with `x-` are free; a typo is still an error.
         std::fs::write(&path, "version: 1\ncomponents:\n  a: { in: a }\nban: {}\n").unwrap();
         assert!(Config::load(&path).is_err());
+    }
+
+    #[test]
+    fn go_tags_must_look_like_build_tags() {
+        let ok = parse("version: 1\ncomponents:\n  a: { in: a }\ngo: { tags: [race, e2e_1] }\n");
+        assert_eq!(ok.unwrap().go.tags, ["race", "e2e_1"]);
+        for bad in ["\"a b\"", "\"a,b\"", "\"\"", "\"-x\""] {
+            let yaml =
+                format!("version: 1\ncomponents:\n  a: {{ in: a }}\ngo: {{ tags: [{bad}] }}\n");
+            assert!(parse(&yaml).is_err(), "{bad}");
+        }
     }
 
     fn parse(yaml: &str) -> Result<Config> {
