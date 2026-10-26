@@ -4,11 +4,16 @@ rust = { version = "1.97.0", components = "rustfmt,clippy,rust-analyzer" }
 "aqua:axodotdev/cargo-dist" = "0.33.1"
 node = "24"
 go = "1.27.3"
-# The SCIP indexers easement runs (rust-analyzer is the Rust one); the tests need them.
+# The SCIP indexers easement runs (rust-analyzer is the Rust one) and what they build with;
+# the tests need them. scip-php and scip-dotnet are installed by composer and dotnet.
 "go:github.com/scip-code/scip-go/cmd/scip-go" = "0.2.9"
 # Keep the version in step with package.json, which CI installs it from.
 "npm:@sourcegraph/scip-typescript" = "0.5.2"
 "npm:@sourcegraph/scip-python" = "0.6.8"
+java = "temurin-21"
+maven = "3.9.16"
+dotnet = "9.0.319"
+"github:sourcegraph/scip-java" = "0.13.2"
 pnpm = "12.15.0"
 hk = "2.8.1"
 pkl = "0.32.2"

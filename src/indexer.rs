@@ -117,6 +117,32 @@ pub const LANGUAGES: &[Language] = &[
         needs: require_composer,
     },
     Language {
+        name: "java",
+        binary: "scip-java",
+        markers: &["pom.xml", "build.gradle", "build.gradle.kts"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["java"],
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "cs install scip-java (Coursier), see https://sourcegraph.github.io/scip-java",
+        skip_dirs: &["target", "build"],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
+        name: "csharp",
+        binary: "scip-dotnet",
+        markers: &["*.csproj", "*.sln", "*.slnx"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["cs"],
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "dotnet tool install --global scip-dotnet",
+        skip_dirs: &["bin", "obj"],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
         name: "rust",
         binary: "rust-analyzer",
         markers: &["Cargo.toml"],
@@ -146,12 +172,22 @@ impl Language {
             && !file.split('/').any(|part| self.skip_dirs.contains(&part))
     }
 
+    /// A marker is a file name, or `*.ext` for any file with that extension.
+    fn has_marker(&self, name: &str) -> bool {
+        self.markers
+            .iter()
+            .any(|marker| match marker.strip_prefix('*') {
+                Some(suffix) => name.ends_with(suffix),
+                None => *marker == name,
+            })
+    }
+
     fn roots(&self, files: &[String]) -> Vec<String> {
         let mut dirs: Vec<String> = files
             .iter()
             .filter_map(|f| {
                 let (dir, name) = f.rsplit_once('/').unwrap_or(("", f));
-                self.markers.contains(&name).then(|| dir.to_string())
+                self.has_marker(name).then(|| dir.to_string())
             })
             .collect();
         dirs.sort();
@@ -252,16 +288,26 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         .output()
         .with_context(|| format!("cannot run {}", language.binary))?;
     if !output.status.success() {
-        let text = String::from_utf8_lossy(&output.stderr);
-        let lines: Vec<&str> = text.lines().collect();
+        // Some indexers report on stdout (Maven), others on stderr.
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         // The first lines name the error, the last ones the place; keep both.
         let excerpt = if lines.len() > 14 {
             [&lines[..5], &["    …"][..], &lines[lines.len() - 8..]].concat()
         } else {
             lines
         };
+        let hint = if text.contains("LAUNCHER_ARGS[@]: unbound variable") {
+            "\nscip-java's wrapper needs bash 4.4 or newer; the bash of macOS is 3.2, put a newer one first on the PATH (`brew install bash`)"
+        } else {
+            ""
+        };
         bail!(
-            "{} failed in {shown} ({}); if that directory is not part of the project, add it to `exclude`:\n{}",
+            "{} failed in {shown} ({}); if that directory is not part of the project, add it to `exclude`:\n{}{hint}",
             language.binary,
             output.status,
             excerpt.join("\n")
@@ -349,12 +395,12 @@ mod tests {
         assert_eq!(LANGUAGES[0].roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
         // A workspace root holds its members; Python falls back to the root.
-        assert_eq!(LANGUAGES[4].roots(&files), [""]);
+        assert_eq!(LANGUAGES[6].roots(&files), [""]);
         assert_eq!(LANGUAGES[2].roots(&files), [""]);
         let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
             .map(String::from)
             .to_vec();
-        assert_eq!(LANGUAGES[4].roots(&nested), ["a", "b"]);
+        assert_eq!(LANGUAGES[6].roots(&nested), ["a", "b"]);
     }
 
     #[test]

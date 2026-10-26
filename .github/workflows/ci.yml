@@ -87,7 +87,7 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
-          install_args: rust go node pnpm go:github.com/scip-code/scip-go/cmd/scip-go
+          install_args: rust go node pnpm java maven dotnet go:github.com/scip-code/scip-go/cmd/scip-go github:sourcegraph/scip-java
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -115,5 +115,26 @@ jobs:
         run: |
           composer global require "davidrjenni/scip-php:dev-main#71a5b117ec4c5dd2af302e363410e604e5df309e" --no-interaction --prefer-source
           composer global config bin-dir --absolute --quiet >> "$GITHUB_PATH"
+
+      # The wrapper of scip-java needs bash 4.4 or newer; the bash of macOS is 3.2.
+      - name: Install a current bash
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      # scip-java wraps javac in a bash script that needs bash 4.4; macOS ships 3.2.
+      - name: Install a current bash
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install bash
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      - name: Install the C# indexer
+        shell: bash
+        run: |
+          dotnet tool install --global scip-dotnet --version 0.2.16
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       - run: cargo test --locked

@@ -175,11 +175,6 @@ impl Project {
             .into_iter()
             .filter(|f| scope.contains(&map, f))
             .collect();
-        stats.dynamic = scan
-            .dynamic
-            .into_iter()
-            .filter(|d| scope.contains(&map, d.rsplit_once(':').map_or(d, |(f, _)| f)))
-            .collect();
         Ok(Analysis {
             violations,
             edges,

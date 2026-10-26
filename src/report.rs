@@ -128,12 +128,6 @@ fn render(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>, color: bo
     if stats.suppressed > 0 {
         out.push_str(&format!(", {} suppressed", stats.suppressed));
     }
-    if !stats.dynamic.is_empty() {
-        out.push_str(&format!(
-            ", {} dynamic imports not analysed",
-            stats.dynamic.len()
-        ));
-    }
     if !stats.uncovered.is_empty() {
         out.push_str(&format!(
             ", {} files not covered by an indexer",
