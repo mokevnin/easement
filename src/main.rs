@@ -177,7 +177,7 @@ impl Project {
         stats.uncovered = scan
             .uncovered
             .into_iter()
-            .filter(|f| scope.contains(&map, f))
+            .filter(|f| scope.contains(&map, f) && !map.is_uncovered_ok(f))
             .collect();
         Ok(Analysis {
             violations,

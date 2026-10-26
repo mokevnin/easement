@@ -35,6 +35,10 @@ pub struct Config {
     /// Globs of files that may belong to no component in strict mode.
     #[serde(default)]
     pub unowned: Vec<String>,
+    /// Source files that no indexer covers and that may stay that way (globs,
+    /// each with the reason): they are left out of the report of uncovered files.
+    #[serde(default)]
+    pub uncovered_ok: Vec<Listed>,
     /// `auto` puts the test files of every language into a component named
     /// `tests`, which `rules.tests` can restrict; without such a rule tests may
     /// import anything.

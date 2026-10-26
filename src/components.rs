@@ -16,6 +16,8 @@ pub struct ComponentMap {
     except: std::collections::HashMap<String, Vec<[GlobMatcher; 3]>>,
     /// Files that may belong to no component in strict mode.
     unowned: GlobSet,
+    /// Source files that may stay uncovered by an indexer.
+    uncovered_ok: GlobSet,
     /// Component -> matchers of its public paths, for components that declare them.
     public: std::collections::HashMap<String, Vec<[GlobMatcher; 3]>>,
     /// Component -> what it may do with external modules, for components that restrict it.
@@ -159,10 +161,21 @@ impl ComponentMap {
                 );
             }
         }
+        let mut uncovered_ok = GlobSetBuilder::new();
+        for listed in &config.uncovered_ok {
+            let pattern = listed.name().trim_end_matches('/');
+            for glob in [pattern.to_string(), format!("{pattern}/**")] {
+                uncovered_ok.add(
+                    Glob::new(&glob)
+                        .with_context(|| format!("bad uncovered_ok pattern `{pattern}`"))?,
+                );
+            }
+        }
         Ok(Self {
             entries,
             except,
             unowned: unowned.build()?,
+            uncovered_ok: uncovered_ok.build()?,
             public,
             externals,
         })
@@ -186,6 +199,11 @@ impl ComponentMap {
     /// Whether strict mode lets `rel_path` belong to no component.
     pub fn is_unowned(&self, rel_path: &str) -> bool {
         self.unowned.is_match(rel_path)
+    }
+
+    /// Whether `uncovered_ok` accepts that no indexer covers `rel_path`.
+    pub fn is_uncovered_ok(&self, rel_path: &str) -> bool {
+        self.uncovered_ok.is_match(rel_path)
     }
 
     /// Why `component` may not use the external module `specifier`, if it may not.
