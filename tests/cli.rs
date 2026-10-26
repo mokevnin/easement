@@ -1078,6 +1078,50 @@ fn forbid_symbol_catches_every_way_to_use_a_type() {
 }
 
 #[test]
+fn uncovered_files_are_listed_and_the_verdict_says_it_is_partial() {
+    let (_tmp, root) = fixture("uncovered");
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("Not covered by an indexer"))
+        .stdout(contains("  tools/gen.go"))
+        .stdout(contains("  tools/other.go"))
+        .stdout(contains("2 files not covered by an indexer"));
+    let report: serde_json::Value = serde_json::from_str(&stdout_of(
+        easement(&root, &["check", "--format", "json"]).success(),
+    ))
+    .unwrap();
+    assert_eq!(report["passed"], true);
+    assert_eq!(report["confidence"], "partial");
+    assert_eq!(
+        report["confidence_reasons"][0],
+        "2 source files were not covered by an indexer, so imports in or of them were not checked"
+    );
+}
+
+#[test]
+fn uncovered_ok_accepts_known_gaps() {
+    let (_tmp, root) = fixture("uncovered");
+    let config = fs::read_to_string(root.join("easement.yml")).unwrap();
+    fs::write(
+        root.join("easement.yml"),
+        format!(
+            "{config}uncovered_ok:\n  - {{ name: 'tools/**', because: build helpers with no go.mod on purpose }}\n"
+        ),
+    )
+    .unwrap();
+    easement(&root, &["check"])
+        .success()
+        .stdout(contains("Not covered").not())
+        .stdout(contains("not covered by an indexer").not());
+    let report: serde_json::Value = serde_json::from_str(&stdout_of(
+        easement(&root, &["check", "--format", "json"]).success(),
+    ))
+    .unwrap();
+    assert_eq!(report["confidence"], "full");
+    assert!(report["confidence_reasons"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn suggest_reports_what_the_graph_says_about_the_config() {
     let (_tmp, root) = fixture("ts");
     easement(&root, &["suggest"])

@@ -12,6 +12,9 @@ struct JsonReport<'a> {
     violations: &'a [Violation],
     stale: &'a [Key],
     legalized: usize,
+    /// `full`, or `partial` when `passed` rests on code the check could not read.
+    confidence: &'static str,
+    confidence_reasons: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<DiffInfo<'a>>,
     stats: &'a Stats,
@@ -23,12 +26,31 @@ struct DiffInfo<'a> {
     merge_base: &'a str,
 }
 
+/// Why a verdict is only as good as the code the check could read.
+fn confidence_reasons(stats: &Stats) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if !stats.uncovered.is_empty() {
+        reasons.push(format!(
+            "{} source files were not covered by an indexer, so imports in or of them were not checked",
+            stats.uncovered.len()
+        ));
+    }
+    reasons
+}
+
 pub fn json(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> String {
+    let reasons = confidence_reasons(stats);
     let report = JsonReport {
         passed: verdict.passed(),
         violations: &verdict.new,
         stale: &verdict.stale,
         legalized: verdict.legalized,
+        confidence: if reasons.is_empty() {
+            "full"
+        } else {
+            "partial"
+        },
+        confidence_reasons: reasons,
         diff: changes.map(|c| DiffInfo {
             base: &c.base,
             merge_base: &c.merge_base,
@@ -37,6 +59,9 @@ pub fn json(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> Stri
     };
     serde_json::to_string_pretty(&report).expect("report serializes")
 }
+
+/// How many uncovered files the text report names before it counts the rest.
+const UNCOVERED_SHOWN: usize = 20;
 
 const BOLD: Style = Style::new().bold();
 const DIM: Style = Style::new().dimmed();
@@ -107,6 +132,26 @@ fn render(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>, color: bo
         out.push_str("New dependencies between components in this change:\n");
         for d in &stats.new_dependencies {
             out.push_str(&format!("  {d}\n"));
+        }
+    }
+    if !stats.uncovered.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&paint(
+            color,
+            YELLOW,
+            "Not covered by an indexer (imports in or of these files were not checked; add them to a project the indexer reads, `exclude` them, or accept them in `uncovered_ok`):",
+        ));
+        out.push('\n');
+        for file in stats.uncovered.iter().take(UNCOVERED_SHOWN) {
+            out.push_str(&format!("  {file}\n"));
+        }
+        if stats.uncovered.len() > UNCOVERED_SHOWN {
+            out.push_str(&format!(
+                "  … and {} more (all of them in `--format json`, `stats.uncovered`)\n",
+                stats.uncovered.len() - UNCOVERED_SHOWN
+            ));
         }
     }
     if !out.is_empty() {

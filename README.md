@@ -422,6 +422,13 @@ The released `scip-php` (v0.0.2) cannot be installed any more, because every pro
 
 `easement check` finds the `go.mod`, `tsconfig.json` and `Cargo.toml` files (Java: `pom.xml`, `build.gradle`; C#: `*.csproj`, `*.sln`; PHP: `composer.json`; Python projects: `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, or else the project root), runs the indexer in each of those directories and reads the result. A missing indexer, a failed run (add a directory that is not part of the project to `exclude`), or a `package.json` with dependencies but no `node_modules` is an error (exit code 2), never a quiet gap; source files that no `go.mod`, `tsconfig.json`, `Cargo.toml` or other project file covers are counted in the report as `files not covered by an indexer`: without installed packages the indexer cannot see third-party modules, so `forbid_external` would silently pass.
 
+Those files are named in the text report (the first twenty; all of them in `--format json`, `stats.uncovered`), and the JSON report says `"confidence": "partial"` with the reasons in `confidence_reasons`: a green verdict then covers only the code an indexer read, and whoever acts on it has to treat the rest as unchecked. Files that are meant to stay outside an indexer (build helpers, generated code) are accepted with `uncovered_ok`, each with the reason, and then no longer count:
+
+```yaml
+uncovered_ok:
+  - { name: "tools/**", because: build helpers with no go.mod on purpose }
+```
+
 Languages whose dependencies are not visible from imports (Ruby, Elixir) are out of scope.
 
 ## How it works
