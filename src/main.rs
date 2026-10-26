@@ -3,6 +3,7 @@ mod check;
 mod components;
 mod config;
 mod diff;
+mod doctor;
 mod explain;
 mod graph;
 mod indexer;
@@ -102,6 +103,13 @@ enum Command {
         #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
         config: PathBuf,
     },
+    /// Check that the indexers the project needs are installed and can run.
+    Doctor {
+        #[arg(long, short, default_value = config::DEFAULT_CONFIG)]
+        config: PathBuf,
+        #[arg(long, value_enum, default_value_t = DoctorFormat::Text)]
+        format: DoctorFormat,
+    },
     /// Print the JSON Schema of easement.yml.
     Schema,
     /// Print a shell completion script, e.g. `easement completions zsh > _easement`.
@@ -109,6 +117,12 @@ enum Command {
 }
 
 const SCHEMA: &str = include_str!("../easement.schema.json");
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DoctorFormat {
+    Text,
+    Json,
+}
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Format {
@@ -394,6 +408,19 @@ fn run(cli: Cli) -> Result<bool> {
                 )
             );
             Ok(true)
+        }
+        Command::Doctor { config, format } => {
+            let project = Project::open(&config)?;
+            let files = scan::project_files(&project.root, &project.config)?;
+            let diagnoses = indexer::diagnose(&project.root, &files);
+            print!(
+                "{}",
+                match format {
+                    DoctorFormat::Text => doctor::text(&diagnoses),
+                    DoctorFormat::Json => doctor::json(&diagnoses),
+                }
+            );
+            Ok(doctor::ok(&diagnoses))
         }
         Command::Schema => {
             print!("{SCHEMA}");

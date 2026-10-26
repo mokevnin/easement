@@ -74,6 +74,24 @@ pub fn walker(root: &Path) -> WalkBuilder {
     builder
 }
 
+/// The project's files (`/`-separated, relative to `root`) without the excluded ones.
+pub fn project_files(root: &Path, config: &Config) -> Result<Vec<String>> {
+    let exclude = exclude_set(&config.exclude)?;
+    let mut files = Vec::new();
+    for entry in walker(root).build() {
+        let entry = entry?;
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        if let Some(rel) = lang::relative(root, entry.path())
+            && !exclude.is_match(&rel)
+        {
+            files.push(slash(&rel));
+        }
+    }
+    Ok(files)
+}
+
 pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     let exclude = exclude_set(&config.exclude)?;
     let adapters = lang::adapters(root)?;

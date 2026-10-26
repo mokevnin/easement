@@ -28,6 +28,8 @@ pub struct Language {
     /// Arguments that write the index to the given file.
     args: fn(&Path) -> Vec<String>,
     install: &'static str,
+    /// The mise tool that installs the indexer, for the `[tools]` of a `mise.toml`.
+    mise: Option<&'static str>,
     /// Directories whose files belong to dependencies, not to the project.
     skip_dirs: &'static [&'static str],
     /// For an indexer that has no output option: the file it writes in its working directory.
@@ -50,6 +52,7 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["go"],
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
+        mise: Some("go:github.com/scip-code/scip-go/cmd/scip-go"),
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -70,6 +73,7 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
+        mise: Some("npm:@sourcegraph/scip-typescript"),
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: require_installed,
@@ -100,6 +104,7 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "mise use -g npm:@sourcegraph/scip-python",
+        mise: Some("npm:@sourcegraph/scip-python"),
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -113,6 +118,7 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["php"],
         args: |_| Vec::new(),
         install: "composer global require davidrjenni/scip-php",
+        mise: None,
         skip_dirs: &["vendor"],
         writes_in_cwd: Some("index.scip"),
         needs: require_composer,
@@ -125,7 +131,8 @@ pub const LANGUAGES: &[Language] = &[
         fallback_root: false,
         extensions: &["java"],
         args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
-        install: "cs install scip-java (Coursier), see https://sourcegraph.github.io/scip-java",
+        install: "mise use -g github:sourcegraph/scip-java",
+        mise: Some("github:sourcegraph/scip-java"),
         skip_dirs: &["target", "build"],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -139,6 +146,7 @@ pub const LANGUAGES: &[Language] = &[
         extensions: &["cs"],
         args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
         install: "dotnet tool install --global scip-dotnet",
+        mise: None,
         skip_dirs: &["bin", "obj"],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -159,6 +167,7 @@ pub const LANGUAGES: &[Language] = &[
             ]
         },
         install: "rustup component add rust-analyzer",
+        mise: None,
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
@@ -336,6 +345,74 @@ fn cache_file(root: &Path, language: &Language, dir: &str, key: u64) -> Option<(
         cache_dir()?.join(format!("{prefix}{key:016x}.scip")),
         prefix,
     ))
+}
+
+/// Whether the indexer of one language can run in a project.
+#[derive(Debug, serde::Serialize)]
+pub struct Diagnosis {
+    pub language: &'static str,
+    pub binary: &'static str,
+    pub found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub install: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mise: Option<&'static str>,
+    /// What is missing around the indexer: dependencies that are not installed.
+    pub problems: Vec<String>,
+}
+
+impl Diagnosis {
+    pub fn ok(&self) -> bool {
+        self.found && self.problems.is_empty()
+    }
+}
+
+/// For every language with source files among `files`: is its indexer on the
+/// `PATH`, which version, and is what it needs in place.
+pub fn diagnose(root: &Path, files: &[String]) -> Vec<Diagnosis> {
+    LANGUAGES
+        .iter()
+        .filter(|language| files.iter().any(|f| language.covers(f)))
+        .map(|language| {
+            let binary = which::which(language.binary).ok();
+            let version = binary.as_deref().and_then(version_of);
+            let problems = language
+                .roots(files)
+                .iter()
+                .filter_map(|dir| {
+                    let shown = if dir.is_empty() { "." } else { dir };
+                    (language.needs)(root, &root.join(dir), shown)
+                        .err()
+                        .map(|e| e.to_string())
+                })
+                .collect();
+            Diagnosis {
+                language: language.name,
+                binary: language.binary,
+                found: binary.is_some(),
+                path: binary.map(|p| p.display().to_string()),
+                version,
+                install: language.install,
+                mise: language.mise,
+                problems,
+            }
+        })
+        .collect()
+}
+
+/// The first line a tool prints for `--version`.
+fn version_of(binary: &Path) -> Option<String> {
+    let output = Command::new(binary).arg("--version").output().ok()?;
+    [output.stdout, output.stderr].iter().find_map(|bytes| {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn index_dir(
