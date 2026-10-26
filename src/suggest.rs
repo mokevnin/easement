@@ -30,33 +30,20 @@ pub fn suggest(
 
     let mut out = String::new();
 
-    let mut unused = Vec::new();
-    let mut unreliable = Vec::new();
-    for (from, rule) in &config.rules {
-        for to in rule.may_depend_on.iter().map(|l| l.name()) {
-            if used.contains_key(&(from.as_str(), to)) {
-                continue;
-            }
-            let gaps: Vec<String> = [from.as_str(), to]
-                .into_iter()
-                .filter_map(|c| Some(format!("{} file(s) of {c}", unindexed.get(c)?)))
-                .collect();
-            if gaps.is_empty() {
-                unused.push(format!("{from} -> {to}"));
-            } else {
-                unreliable.push(format!("{from} -> {to} (not indexed: {})", gaps.join(", ")));
-            }
-        }
-    }
+    let allowances = unused_allowances(config, &used, &unindexed);
     section(
         &mut out,
         "Allowed in may_depend_on but never imported (remove to tighten the rules):",
-        unused,
+        allowances
+            .removable
+            .iter()
+            .map(|(from, to)| format!("{from} -> {to}"))
+            .collect(),
     );
     section(
         &mut out,
         "Not imported among the indexed files, but some files were not indexed, so the import may be there (do not remove without checking):",
-        unreliable,
+        allowances.unreliable,
     );
 
     let mut missing: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -87,6 +74,65 @@ pub fn suggest(
         out.push_str("Nothing to suggest: the config matches the dependency graph.\n");
     }
     out
+}
+
+/// `may_depend_on` entries that no import uses.
+struct Allowances {
+    /// Safe to remove: both components were read in full.
+    removable: Vec<(String, String)>,
+    /// Not imported among the indexed files, but files of a side were not indexed.
+    unreliable: Vec<String>,
+}
+
+fn unused_allowances(
+    config: &Config,
+    used: &BTreeMap<(&str, &str), usize>,
+    unindexed: &BTreeMap<&str, usize>,
+) -> Allowances {
+    let mut found = Allowances {
+        removable: Vec::new(),
+        unreliable: Vec::new(),
+    };
+    for (from, rule) in &config.rules {
+        for to in rule.may_depend_on.iter().map(|l| l.name()) {
+            if used.contains_key(&(from.as_str(), to)) {
+                continue;
+            }
+            let gaps: Vec<String> = [from.as_str(), to]
+                .into_iter()
+                .filter_map(|c| Some(format!("{} file(s) of {c}", unindexed.get(c)?)))
+                .collect();
+            if gaps.is_empty() {
+                found.removable.push((from.clone(), to.to_string()));
+            } else {
+                found
+                    .unreliable
+                    .push(format!("{from} -> {to} (not indexed: {})", gaps.join(", ")));
+            }
+        }
+    }
+    found
+}
+
+/// The `may_depend_on` entries that can go: no import uses them, and every file of both
+/// components was read.
+pub fn removable(
+    config: &Config,
+    map: &ComponentMap,
+    edges: &[Edge],
+    uncovered: &[String],
+) -> Vec<(String, String)> {
+    let mut unindexed: BTreeMap<&str, usize> = BTreeMap::new();
+    for file in uncovered {
+        if let Some(component) = map.component_of(file) {
+            *unindexed.entry(component).or_default() += 1;
+        }
+    }
+    let mut used: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    for e in edges {
+        *used.entry((&e.from, &e.to)).or_default() += 1;
+    }
+    unused_allowances(config, &used, &unindexed).removable
 }
 
 fn section(out: &mut String, title: &str, items: Vec<String>) {

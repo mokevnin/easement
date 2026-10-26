@@ -1245,6 +1245,60 @@ fn a_narrowed_run_says_it_judged_only_a_part() {
 }
 
 #[test]
+fn suggest_patch_drops_unused_allowances_and_keeps_the_rest() {
+    let config = "version: 1
+# who may use whom
+components:
+  app: { in: src/app }
+  lib: { in: src/lib }
+  old: { in: src/old }
+
+rules:
+  app:
+    may_depend_on:
+      - lib # the only one used
+      - { name: old, because: was needed once }
+";
+    let (_tmp, root) = project(&[
+        ("easement.yml", config),
+        (
+            "src/app/a.ts",
+            "import { l } from \"../lib/l\";\nexport const a = l;\n",
+        ),
+        ("src/lib/l.ts", "export const l = 1;\n"),
+        ("src/old/o.ts", "export const o = 1;\n"),
+    ]);
+    let diff = stdout_of(easement(&root, &["suggest", "--patch"]).success());
+    assert!(
+        diff.contains("--- a/easement.yml\n+++ b/easement.yml\n"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("-      - { name: old, because: was needed once }"),
+        "{diff}"
+    );
+    assert!(!diff.contains("-      - lib"), "{diff}");
+
+    fs::write(root.join("fix.patch"), &diff).unwrap();
+    Command::new("git")
+        .args(["apply", "fix.patch"])
+        .current_dir(&root)
+        .assert()
+        .success();
+    let fixed = fs::read_to_string(root.join("easement.yml")).unwrap();
+    assert!(fixed.contains("# who may use whom") && fixed.contains("- lib # the only one used"));
+    assert!(!fixed.contains("old,"), "{fixed}");
+    easement(&root, &["suggest"])
+        .success()
+        .stdout(contains("never imported").not());
+    // Nothing left to remove: an empty patch.
+    assert_eq!(
+        stdout_of(easement(&root, &["suggest", "--patch"]).success()),
+        ""
+    );
+}
+
+#[test]
 fn suggest_reports_what_the_graph_says_about_the_config() {
     let (_tmp, root) = fixture("ts");
     easement(&root, &["suggest"])
