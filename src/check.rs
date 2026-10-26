@@ -160,7 +160,7 @@ pub struct Edge {
 }
 
 /// Checks every internal dependency against the dependency and privacy rules.
-/// Every violating import is returned, one per line; see [`dedupe`]. The edges
+/// Every violating import is returned, one per line, see [`dedupe`]. The edges
 /// between components feed [`cycles`].
 pub fn evaluate(
     config: &Config,
@@ -802,16 +802,12 @@ pub fn orphans(config: &Config, map: &ComponentMap, files: &[String]) -> Vec<Vio
         .collect()
 }
 
-/// One violation per key, the earliest line, sorted by key.
+/// One violation per use: the same key at the same line once, every other line
+/// kept, sorted by key and line. The baseline still matches by key alone.
 pub fn dedupe(violations: Vec<Violation>) -> Vec<Violation> {
-    let mut unique: BTreeMap<Key, Violation> = BTreeMap::new();
+    let mut unique: BTreeMap<(Key, usize), Violation> = BTreeMap::new();
     for v in violations {
-        match unique.get(&v.key()) {
-            Some(seen) if seen.line <= v.line => {}
-            _ => {
-                unique.insert(v.key(), v);
-            }
-        }
+        unique.entry((v.key(), v.line)).or_insert(v);
     }
     unique.into_values().collect()
 }
@@ -819,6 +815,27 @@ pub fn dedupe(violations: Vec<Violation>) -> Vec<Violation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dedupe_keeps_every_line_and_drops_repeats() {
+        let at = |line: usize| Violation {
+            rule: RuleId::Symbol,
+            file: "f".into(),
+            line,
+            message: String::new(),
+            because: None,
+            from: "a".into(),
+            to: String::new(),
+            target: "db.Client".into(),
+            specifier: String::new(),
+            evidence: Vec::new(),
+        };
+        let lines: Vec<usize> = dedupe(vec![at(9), at(3), at(9)])
+            .iter()
+            .map(|v| v.line)
+            .collect();
+        assert_eq!(lines, [3, 9]);
+    }
 
     fn edge(from: &str, to: &str) -> Edge {
         Edge {
