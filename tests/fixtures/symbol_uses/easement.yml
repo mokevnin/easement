@@ -1,0 +1,13 @@
+version: 1
+
+components:
+  handler:
+    in: internal/handlers
+  db:
+    in: internal/db
+
+rules:
+  handler:
+    may_depend_on: [db]
+    forbid_symbol:
+      - { name: "db.Client", because: use db.Scoped so every query is tenant-bound }
