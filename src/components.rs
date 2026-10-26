@@ -162,13 +162,15 @@ impl ComponentMap {
             }
         }
         let mut uncovered_ok = GlobSetBuilder::new();
-        for listed in &config.uncovered_ok {
-            let pattern = listed.name().trim_end_matches('/');
-            for glob in [pattern.to_string(), format!("{pattern}/**")] {
-                uncovered_ok.add(
-                    Glob::new(&glob)
-                        .with_context(|| format!("bad uncovered_ok pattern `{pattern}`"))?,
-                );
+        for accepted in &config.uncovered_ok {
+            for pattern in accepted.patterns() {
+                let pattern = pattern.trim_end_matches('/');
+                for glob in [pattern.to_string(), format!("{pattern}/**")] {
+                    uncovered_ok.add(
+                        Glob::new(&glob)
+                            .with_context(|| format!("bad uncovered_ok pattern `{pattern}`"))?,
+                    );
+                }
             }
         }
         Ok(Self {
