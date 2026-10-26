@@ -255,6 +255,12 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
         edges,
         ..
     } = project.analyze(cache, &scope)?;
+    stats.limited_to = options
+        .components
+        .iter()
+        .map(|c| format!("component {c}"))
+        .chain(options.paths.iter().map(|p| format!("path {p}")))
+        .collect();
     let current = violations.iter().map(check::Violation::key).collect();
     // Cycles and limits come from the whole project, so a violation belongs to
     // the scope when any file behind it does.
