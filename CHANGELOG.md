@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/mokevnin/easement/compare/v0.2.0...v0.3.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* report every use of a violation, not the first one per file ([#25](https://github.com/mokevnin/easement/issues/25))
+* Java and C# projects need scip-java (with a JDK and Maven or Gradle) and scip-dotnet (with the .NET SDK) installed. The `dynamic imports not analysed` count and `stats.dynamic` are gone. Violations name the target file rather than the package or namespace.
+* PHP projects need scip-php installed and `composer install` done. Functions and constants brought in with `use function` and `use const` are no longer dependencies. Violations name the target file rather than the specifier as written.
+
+### Features
+
+* easement doctor checks that the indexers can run ([#22](https://github.com/mokevnin/easement/issues/22)) ([b627c8e](https://github.com/mokevnin/easement/commit/b627c8e4cc66d6240da7534c14ac41cfa132d541))
+* easement suggest --patch drops unused allowances as a patch ([#27](https://github.com/mokevnin/easement/issues/27)) ([b85a532](https://github.com/mokevnin/easement/commit/b85a532b091dce27537261cc428e9b96cf75d56c))
+* index Go files behind build tags with go.tags ([#24](https://github.com/mokevnin/easement/issues/24)) ([a2e818d](https://github.com/mokevnin/easement/commit/a2e818dbbb37e9d8f50b649ed6827a01c0f1d0e1))
+* keep the indexers' output between runs ([#20](https://github.com/mokevnin/easement/issues/20)) ([1a82708](https://github.com/mokevnin/easement/commit/1a8270869f5b7e18f35bd0f72932733e66602b4d))
+* list the files no indexer covered and mark a partial verdict ([#21](https://github.com/mokevnin/easement/issues/21)) ([c1def55](https://github.com/mokevnin/easement/commit/c1def55eb0946620d5005d0560e8d0a68df9ac93))
+* mark a run that judges only a part as partial ([#26](https://github.com/mokevnin/easement/issues/26)) ([231ef3a](https://github.com/mokevnin/easement/commit/231ef3a669d2d44335dccb522e9e9546f0c838dd))
+* resolve Java and C# through SCIP indexers ([#18](https://github.com/mokevnin/easement/issues/18)) ([b38442f](https://github.com/mokevnin/easement/commit/b38442fa7c0a585356e77865f4682c688b1b26dd))
+* resolve PHP through the scip-php indexer ([#16](https://github.com/mokevnin/easement/issues/16)) ([bbbe3ef](https://github.com/mokevnin/easement/commit/bbbe3ef693738fd5bdb2d4067ea3df69c95a20d6))
+* share a part of a rule between components with YAML merge keys ([#23](https://github.com/mokevnin/easement/issues/23)) ([dcdfdcf](https://github.com/mokevnin/easement/commit/dcdfdcfbfb87d49836bfdead32ba4d6e5be7f52c))
+
+
+### Bug Fixes
+
+* report every use of a violation, not the first one per file ([#25](https://github.com/mokevnin/easement/issues/25)) ([e2e8b12](https://github.com/mokevnin/easement/commit/e2e8b125c7237e87ec37751eb8478cc2a6fb5fd4))
+* suggest does not trust a missing import next to unindexed files ([#19](https://github.com/mokevnin/easement/issues/19)) ([a24f93d](https://github.com/mokevnin/easement/commit/a24f93da3c451f49a8010087f0cc1c5720b704ac))
+
 ## [0.2.0](https://github.com/mokevnin/easement/compare/v0.1.2...v0.2.0) (2026-10-25)
 
 
