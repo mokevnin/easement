@@ -27,8 +27,20 @@ struct DiffInfo<'a> {
 }
 
 /// Why a verdict is only as good as the code the check could read.
-fn confidence_reasons(stats: &Stats) -> Vec<String> {
+fn confidence_reasons(stats: &Stats, changes: Option<&Changes>) -> Vec<String> {
     let mut reasons = Vec::new();
+    if let Some(changes) = changes {
+        reasons.push(format!(
+            "only violations on lines changed since {} were judged, the rest of the project was not",
+            changes.base
+        ));
+    }
+    if !stats.limited_to.is_empty() {
+        reasons.push(format!(
+            "the report is limited to {}, the rest of the project was not judged",
+            stats.limited_to.join(", ")
+        ));
+    }
     if !stats.uncovered.is_empty() {
         reasons.push(format!(
             "{} source files were not covered by an indexer, so imports in or of them were not checked",
@@ -39,7 +51,7 @@ fn confidence_reasons(stats: &Stats) -> Vec<String> {
 }
 
 pub fn json(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>) -> String {
-    let reasons = confidence_reasons(stats);
+    let reasons = confidence_reasons(stats, changes);
     let report = JsonReport {
         passed: verdict.passed(),
         violations: &verdict.new,
@@ -170,6 +182,9 @@ fn render(verdict: &Verdict, stats: &Stats, changes: Option<&Changes>, color: bo
         stats.files,
         stats.internal_deps,
     ));
+    if !stats.limited_to.is_empty() {
+        out.push_str(&format!(", limited to {}", stats.limited_to.join(", ")));
+    }
     if stats.suppressed > 0 {
         out.push_str(&format!(", {} suppressed", stats.suppressed));
     }

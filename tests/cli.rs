@@ -319,6 +319,14 @@ fn diff_mode_judges_only_changed_lines() {
         .stdout
         .clone();
     let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    // A verdict over the changed lines says nothing about the rest of the project.
+    assert_eq!(report["confidence"], "partial");
+    assert!(
+        report["confidence_reasons"][0]
+            .as_str()
+            .unwrap()
+            .contains("changed since main")
+    );
     let found: Vec<(String, u64)> = report["violations"]
         .as_array()
         .unwrap()
@@ -1207,6 +1215,33 @@ fn go_tags_bring_files_behind_a_build_constraint_into_the_index() {
     easement(&root, &["check"])
         .success()
         .stdout(contains("not covered").not());
+}
+
+#[test]
+fn a_narrowed_run_says_it_judged_only_a_part() {
+    let (_tmp, root) = fixture("symbol_uses");
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["check", "--format", "json"];
+        all.extend_from_slice(args);
+        let out = easement(&root, &all).get_output().stdout.clone();
+        serde_json::from_slice(&out).unwrap()
+    };
+    let whole = json(&[]);
+    assert_eq!(whole["confidence"], "full");
+    let scoped = json(&["--scope", "internal/db"]);
+    assert_eq!(scoped["confidence"], "partial");
+    assert_eq!(
+        scoped["confidence_reasons"][0],
+        "the report is limited to path internal/db, the rest of the project was not judged"
+    );
+    easement(&root, &["check", "--scope", "internal/db"])
+        .success()
+        .stdout(contains("limited to path internal/db"));
+    let by_component = json(&["--component", "db", "--scope", "internal"]);
+    assert_eq!(
+        by_component["confidence_reasons"][0],
+        "the report is limited to component db, path internal, the rest of the project was not judged"
+    );
 }
 
 #[test]

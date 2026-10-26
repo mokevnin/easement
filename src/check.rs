@@ -134,6 +134,9 @@ pub struct Stats {
     /// Source files of an indexed language that its indexer did not cover.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub uncovered: Vec<String>,
+    /// `--component` and `--scope` of the run, as `component web`, `path src/api`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub limited_to: Vec<String>,
     /// In diff mode: `a -> b` for component dependencies that exist only
     /// because of the changed lines.
     #[serde(skip_serializing_if = "Vec::is_empty")]

@@ -448,7 +448,7 @@ go:
 
 For TypeScript a file is covered when a `tsconfig.json` includes it, so generated code outside `include` is listed as not covered: add it to `include`. A `tsconfig.json` in a subdirectory is indexed as a project of its own, and an import from there into a file of another project is not seen, so prefer one `tsconfig.json` that includes what should be checked together.
 
-Those files are named in the text report (the first twenty; all of them in `--format json`, `stats.uncovered`), and the JSON report says `"confidence": "partial"` with the reasons in `confidence_reasons`: a green verdict then covers only the code an indexer read, and whoever acts on it has to treat the rest as unchecked. Files that are meant to stay outside an indexer (build helpers, generated code) are accepted with `uncovered_ok`, each with the reason, and then no longer count:
+Those files are named in the text report (the first twenty; all of them in `--format json`, `stats.uncovered`), and the JSON report says `"confidence": "partial"` with the reasons in `confidence_reasons`: a green verdict then covers only the code an indexer read, and whoever acts on it has to treat the rest as unchecked. The same field is `partial` for a run that judges a part by design (`--diff`, `--component`, `--scope`) and names the part: `passed` then says nothing about the rest of the project. Files that are meant to stay outside an indexer (build helpers, generated code) are accepted with `uncovered_ok`, each with the reason, and then no longer count:
 
 ```yaml
 uncovered_ok:
