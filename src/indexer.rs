@@ -5,6 +5,7 @@
 //! or missing dependencies is an error, never a quiet gap in the check.
 
 use std::collections::BTreeSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -169,7 +170,7 @@ impl Language {
         file.rsplit_once('.')
             .is_some_and(|(_, ext)| self.extensions.contains(&ext))
             && !file.ends_with(".d.ts")
-            && !file.split('/').any(|part| self.skip_dirs.contains(&part))
+            && !self.in_skip_dir(file)
     }
 
     /// A marker is a file name, or `*.ext` for any file with that extension.
@@ -180,6 +181,11 @@ impl Language {
                 Some(suffix) => name.ends_with(suffix),
                 None => *marker == name,
             })
+    }
+
+    /// Whether a file is in a directory of build output or dependencies.
+    fn in_skip_dir(&self, file: &str) -> bool {
+        file.split('/').any(|part| self.skip_dirs.contains(&part))
     }
 
     fn roots(&self, files: &[String]) -> Vec<String> {
@@ -209,13 +215,17 @@ impl Language {
 /// What the indexers found, and the source files they did not cover.
 pub struct Indexed {
     pub documents: Documents,
+    /// Indexers that ran, and indexes read from the cache instead.
+    pub ran: usize,
+    pub cached: usize,
     /// Source files of an indexed language that no index mentions.
     pub uncovered: Vec<String>,
 }
 
 /// Indexes every language that has source files among `files` (project files,
 /// `/`-separated, relative to `root`).
-pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
+pub fn run(root: &Path, files: &[String], use_cache: bool) -> Result<Indexed> {
+    let (mut ran, mut cached) = (0, 0);
     let mut parts = Vec::new();
     let mut wanted: Vec<&String> = Vec::new();
     for language in LANGUAGES {
@@ -230,7 +240,13 @@ pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
             continue;
         }
         for dir in roots {
-            parts.push(index_dir(language, root, &dir)?);
+            let (documents, from_cache) = index_dir(language, root, &dir, files, use_cache)?;
+            parts.push(documents);
+            if from_cache {
+                cached += 1;
+            } else {
+                ran += 1;
+            }
         }
     }
     let documents = if parts.is_empty() {
@@ -246,11 +262,89 @@ pub fn run(root: &Path, files: &[String]) -> Result<Indexed> {
         .collect();
     Ok(Indexed {
         documents,
+        ran,
+        cached,
         uncovered,
     })
 }
 
-fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document>> {
+/// Where indexes are kept between runs: `EASEMENT_CACHE_DIR`, else the user's cache directory.
+fn cache_dir() -> Option<PathBuf> {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let base = var("EASEMENT_CACHE_DIR");
+    if base.is_some() {
+        return base;
+    }
+    let user = var("XDG_CACHE_HOME").or_else(|| {
+        if cfg!(windows) {
+            var("LOCALAPPDATA")
+        } else if cfg!(target_os = "macos") {
+            var("HOME").map(|home| home.join("Library/Caches"))
+        } else {
+            var("HOME").map(|home| home.join(".cache"))
+        }
+    })?;
+    Some(user.join("easement"))
+}
+
+/// Everything that decides what an indexer would write: the indexer itself and
+/// the name, size and modification time of every project file under `dir`
+/// except its build output. Dependencies outside the project are not covered;
+/// `--no-cache` is for when they change without a lock file.
+fn fingerprint(
+    language: &Language,
+    binary: &Path,
+    root: &Path,
+    dir: &str,
+    files: &[String],
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    language.name.hash(&mut hasher);
+    (language.args)(Path::new("")).hash(&mut hasher);
+    if let Ok(meta) = std::fs::metadata(binary) {
+        (binary, meta.len(), meta.modified().ok()).hash(&mut hasher);
+    }
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut seen: Vec<(&str, u64, Option<std::time::SystemTime>)> = files
+        .iter()
+        .filter(|f| f.starts_with(&prefix) && !language.in_skip_dir(f))
+        .filter_map(|f| {
+            let meta = std::fs::metadata(root.join(f)).ok()?;
+            Some((f.as_str(), meta.len(), meta.modified().ok()))
+        })
+        .collect();
+    seen.sort();
+    seen.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The file the index of `dir` is kept in; the name carries the fingerprint, so a
+/// changed project misses it, and `prefix` finds the stale ones to remove.
+fn cache_file(root: &Path, language: &Language, dir: &str, key: u64) -> Option<(PathBuf, String)> {
+    let mut hasher = DefaultHasher::new();
+    (root, language.name, dir).hash(&mut hasher);
+    let prefix = format!("{:016x}-", hasher.finish());
+    Some((
+        cache_dir()?.join(format!("{prefix}{key:016x}.scip")),
+        prefix,
+    ))
+}
+
+fn index_dir(
+    language: &Language,
+    root: &Path,
+    dir: &str,
+    files: &[String],
+    use_cache: bool,
+) -> Result<(Vec<Document>, bool)> {
     let cwd = if dir.is_empty() {
         root.to_path_buf()
     } else {
@@ -258,6 +352,26 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
     };
     let shown = if dir.is_empty() { "." } else { dir };
     (language.needs)(root, &cwd, shown)?;
+    // `which` finds `scip-typescript.cmd` on Windows, which `Command` alone does not.
+    let binary = which::which(language.binary).map_err(|_| {
+        anyhow::anyhow!(
+            "`{}` is not installed, and easement needs it for {} files; install it with `{}`",
+            language.binary,
+            language.name,
+            language.install
+        )
+    })?;
+    let key = fingerprint(language, &binary, root, dir, files);
+    let cached = use_cache
+        .then(|| cache_file(root, language, dir, key))
+        .flatten();
+    if let Some((path, _)) = &cached
+        && let Ok(bytes) = std::fs::read(path)
+        && let Ok(documents) = scip::parse(&bytes, Path::new(dir))
+        && !documents.is_empty()
+    {
+        return Ok((documents, true));
+    }
     let out = tempfile::tempdir().context("cannot create a temporary directory")?;
     let file = match language.writes_in_cwd {
         Some(name) => {
@@ -273,15 +387,6 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
         }
         None => out.path().join("index.scip"),
     };
-    // `which` finds `scip-typescript.cmd` on Windows, which `Command` alone does not.
-    let binary = which::which(language.binary).map_err(|_| {
-        anyhow::anyhow!(
-            "`{}` is not installed, and easement needs it for {} files; install it with `{}`",
-            language.binary,
-            language.name,
-            language.install
-        )
-    })?;
     let output = Command::new(binary)
         .args((language.args)(&file))
         .current_dir(&cwd)
@@ -327,7 +432,21 @@ fn index_dir(language: &Language, root: &Path, dir: &str) -> Result<Vec<Document
             language.binary
         );
     }
-    Ok(documents)
+    if let Some((path, prefix)) = cached
+        && let Some(parent) = path.parent()
+    {
+        // Best effort: a cache that cannot be written only costs the next run its speed.
+        let _ = std::fs::create_dir_all(parent);
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = std::fs::write(&path, &bytes);
+    }
+    Ok((documents, false))
 }
 
 /// `scip-php` reads the dependencies' code from `vendor`, through the autoloader.

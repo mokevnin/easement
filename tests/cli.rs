@@ -67,10 +67,21 @@ fn fixture(name: &str) -> (TempDir, PathBuf) {
     (tmp, root)
 }
 
+/// Where the tests keep indexes, so they do not touch the cache of whoever runs them.
+fn test_cache() -> &'static Path {
+    static DIR: std::sync::OnceLock<TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| TempDir::new().unwrap()).path()
+}
+
 fn easement(root: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    easement_cached(root, args, test_cache())
+}
+
+fn easement_cached(root: &Path, args: &[&str], cache: &Path) -> assert_cmd::assert::Assert {
     Command::cargo_bin("easement")
         .unwrap()
         .current_dir(root)
+        .env("EASEMENT_CACHE_DIR", cache)
         .args(args)
         .assert()
 }
@@ -1132,4 +1143,36 @@ fn readme_mentions_every_config_key_of_the_schema() {
     keys(&schema["definitions"]["component"]);
     keys(&schema["definitions"]["rule"]);
     assert!(missing.is_empty(), "README never mentions: {missing:?}");
+}
+
+#[test]
+fn indexes_are_cached_until_the_project_changes() {
+    let (_tmp, root) = fixture("go");
+    let cache = TempDir::new().unwrap();
+    let stats = |extra: &[&str]| -> serde_json::Value {
+        let mut args = vec!["check", "--format", "json"];
+        args.extend_from_slice(extra);
+        let out = easement_cached(&root, &args, cache.path()).code(1);
+        let report: serde_json::Value = serde_json::from_str(&stdout_of(out)).unwrap();
+        report["stats"].clone()
+    };
+    let first = stats(&[]);
+    assert_eq!(first["indexed"], 1);
+    assert!(first.get("from_cache").is_none());
+
+    // Nothing changed: the index comes from the cache, and the verdict is the same.
+    let second = stats(&[]);
+    assert!(second.get("indexed").is_none());
+    assert_eq!(second["from_cache"], 1);
+    assert_eq!(second["internal_deps"], first["internal_deps"]);
+
+    // --no-cache runs the indexer again.
+    assert_eq!(stats(&["--no-cache"])["indexed"], 1);
+
+    // A changed file misses the cache.
+    let file = root.join("internal/models/book.go");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(&file, format!("{text}\n// changed\n")).unwrap();
+    assert_eq!(stats(&[])["indexed"], 1);
+    assert_eq!(stats(&[])["from_cache"], 1);
 }
