@@ -31,7 +31,7 @@ Windows binaries are built, but Windows is not tested and its support is not gua
 
 ## Status
 
-Early. Go, TypeScript/JavaScript, Python, Rust, PHP, Java and C# are resolved by [SCIP](https://scip-code.org/) indexers, so they need the [indexers](#indexers) installed; Kotlin and Swift are read with tree-sitter.
+Go, TypeScript/JavaScript, Python, Rust, PHP, Java and C# are resolved by [SCIP](https://scip-code.org/) indexers, so they need the [indexers](#indexers) installed; Kotlin and Swift are read with tree-sitter.
 
 ## Usage
 
@@ -237,7 +237,7 @@ rules:
 
 `forbid_symbol` names what a component must not use, as `package.Name` or `import/path.Name`. `public_symbols` is the other side: other components may use only these names from the component's packages (`only Scoped and Tx`). Both are `symbol` violations at the line of the use and can be suppressed inline.
 
-The indexer resolves every name to its definition, so `db.Client` is matched by what it is, not by how it is spelled: an import alias or a local variable that shadows the package name makes no difference, and a method call on a value of that type (`c.Query()`) counts as a use of `Client`. For Go the qualifier is the import path or its package name; for TypeScript it is the npm package (`lodash.debounce`) or the file without extension (`src/db/client.Client`). Symbol rules are read for the indexed languages (Go and TypeScript); in the others they say nothing.
+The indexer resolves every name to its definition, so `db.Client` is matched by what it is, not by how it is spelled: an import alias or a local variable that shadows the package name makes no difference, and a method call on a value of that type (`c.Query()`) counts as a use of `Client`. For Go the qualifier is the import path or its package name; for TypeScript it is the npm package (`lodash.debounce`) or the file without extension (`src/db/client.Client`). For Python the qualifier is the dotted module, for PHP the namespace with `\`, for Java and C# the namespace with `.`, for Rust the crate and module path. Symbol rules work for every language an indexer resolves; Kotlin and Swift, which are read with tree-sitter, say nothing.
 
 ### Tests
 
@@ -250,7 +250,7 @@ rules:
     because: tests reach the database only through testhelper
 ```
 
-`tests: auto` puts the test files of every language into a component named `tests` (`*_test.go`, `*.test.*` and `*.spec.*` for TypeScript and JavaScript, `test_*.py` and `*_test.py`, `*Test.java`, `*Tests.java`, `*Test.kt`, `*Test.cs`, `*Tests.cs`, `*Test.php`, `*Tests.swift`, `__tests__/`). It beats every other component for those files. Without a `tests` rule tests may import anything, which is the same as not checking them; with one, `may_depend_on` is their allow-list. Name the component `tests` yourself and `tests: auto` refuses to run.
+`tests: auto` puts the test files of every language into a component named `tests` (`*_test.go`, `*.test.*` and `*.spec.*` for TypeScript and JavaScript, `test_*.py` and `*_test.py`, `*Test.java`, `*Tests.java`, `*Test.kt`, `*Tests.kt`, `*Test.cs`, `*Tests.cs`, `*Test.php`, `*Tests.swift`, `__tests__/`). It beats every other component for those files. Without a `tests` rule tests may import anything, which is the same as not checking them; with one, `may_depend_on` is their allow-list. Name the component `tests` yourself and `tests: auto` refuses to run.
 
 ### Coupling limits
 
@@ -409,9 +409,9 @@ The baseline still applies, and stale entries are still reported. A rule change 
 | PHP | everything `scip-php` resolves: a class used in a `use` statement or by its qualified name | the Composer autoloader: PSR-4 and classmap, installed packages from `vendor/` |
 | Swift | `import` | modules in the SwiftPM layout: `Sources/<Module>` next to a `Package.swift` |
 
-Go, TypeScript, Python and Rust come from a SCIP index, which is exact but has its own limits: only files that a `tsconfig.json` includes are indexed, and easement says how many source files no index covered (`N files not covered by an indexer`); `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine); a violation names the target file (`imports src/db/d.ts`) rather than the specifier as written; `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen. Imports computed at run time are not reported at all. For Java and C# a method call or a constructor counts as a use of its class, and a package or namespace named on its own is not a dependency. In PHP only classes (and interfaces, traits, enums) count as dependencies: functions and constants brought in with `use function` or `use const` do not, and `scip-php` writes `index.scip` into the project directory for a moment, so easement refuses to run when one is already there. In Python third-party modules have to be installed in the environment the indexer sees, or their imports are not seen (there is no check for that yet, unlike `node_modules`), and a module reference is matched to its file by the end of its dotted name, so an import that two modules could satisfy is skipped. In Rust the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`).
+Every language but Kotlin and Swift comes from a SCIP index, which is exact but has its own limits: in TypeScript only files that a `tsconfig.json` includes are indexed, and easement says how many source files no index covered (`N files not covered by an indexer`); `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine); a violation names the target file (`imports src/db/d.ts`) rather than the specifier as written; `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen. Imports computed at run time are not reported at all. For Java and C# a method call or a constructor counts as a use of its class, and a package or namespace named on its own is not a dependency. In PHP only classes (and interfaces, traits, enums) count as dependencies: functions and constants brought in with `use function` or `use const` do not, and `scip-php` writes `index.scip` into the project directory for a moment, so easement refuses to run when one is already there. In Python third-party modules have to be installed in the environment the indexer sees, or their imports are not seen (there is no check for that yet, unlike `node_modules`), and a module reference is matched to its file by the end of its dotted name, so an import that two modules could satisfy is skipped. In Rust the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`).
 
-Kotlin is still read with tree-sitter: `scip-java`'s Kotlin plugin fails with a `NoClassDefFoundError` on every Kotlin compiler from 1.9 to 2.3 that I tried, so there is no indexer to use yet. Known limits of the languages that tree-sitter reads: references by fully qualified name without an import (Kotlin) are not seen. A C# namespace that spans several components resolves to the first of its directories, so keep a namespace in one component. Swift modules declared with a custom `path:` in `Package.swift` are not found.
+Kotlin is still read with tree-sitter: `scip-java`'s Kotlin plugin fails with a `NoClassDefFoundError` on every Kotlin compiler from 1.9 to 2.3 that I tried, so there is no indexer to use yet. Known limit of Kotlin: references by fully qualified name without an import are not seen. Swift modules declared with a custom `path:` in `Package.swift` are not found.
 
 Adding a language to the indexed set means naming its indexer and the marker file it runs in (`src/indexer.rs`) and mapping its symbols to module names (`src/scip.rs`). A language that has no indexer can still be read with a tree-sitter adapter (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
 
@@ -460,7 +460,7 @@ Languages whose dependencies are not visible from imports (Ruby, Elixir) are out
 
 ## How it works
 
-1. Walk the project. For Go and TypeScript run the SCIP indexer and read the index; for the other languages parse each file with tree-sitter and collect imports.
+1. Walk the project. For Go, TypeScript, Python, Rust, PHP, Java and C# run the SCIP indexer and read the index; for Kotlin and Swift parse each file with tree-sitter and collect imports.
 2. Turn every reference to a module into a dependency on a file inside the project, or on an external module.
 3. Map both ends to components and check each edge against the rules.
 4. Compare violations with the baseline and report.
@@ -482,15 +482,14 @@ Most architecture checkers are tied to one language. `easement` is not a replace
 Where `easement` differs:
 
 - **One config, one baseline, one report.** A repository with a Go backend and a TypeScript frontend gets the same component model, the same suppressions and the same CI output (`sarif`, `github`, `junit`) for both.
-- **The compiler's view, through SCIP.** Go, TypeScript, Python and Rust are resolved by their SCIP indexers, so aliases, `tsconfig` paths and re-exports are what the compiler sees; for the other languages files are read with tree-sitter and nothing has to build. The price of the indexers is that dependencies have to be installed, which ArchUnit, working on compiled classes, also asks for.
+- **The compiler's view, through SCIP.** Go, TypeScript, Python, Rust, PHP, Java and C# are resolved by their SCIP indexers, so aliases, `tsconfig` paths and re-exports are what the compiler sees; Kotlin and Swift are read with tree-sitter and nothing has to build. The price of the indexers is that dependencies have to be installed (and, for Java and C#, the project built), which ArchUnit, working on compiled classes, also asks for.
 - **Adoption and review features built in.** A baseline for existing violations, `--diff` to judge only what a pull request adds, `--scope` for a part of the project, and `extends` for shared policy in a monorepo.
 - **One static binary.** No runtime to install in CI.
 
 Where the others are stronger:
 
-- **Depth.** `easement` sees imports and, for Go, the names used through them, but it does not resolve types. Rules about classes, methods, annotations, naming or call chains (ArchUnit, arch-go) are out of its reach.
-- **Resolution.** A tool built for one ecosystem knows its build system better than a general adapter does: dependency-cruiser and its TypeScript options, import-linter and Python packaging, ArchUnit and the classpath.
-- **Maturity.** The tools above have years of use behind them. `easement` is early.
+- **Depth.** `easement` sees imports and the symbols used through them (Go and TypeScript), but it has no rules about classes, methods, annotations, naming or call chains (ArchUnit, arch-go).
+- **Kotlin and Swift.** They are read with tree-sitter, not a compiler, so what a build system would resolve there is approximated.
 
 Using both is reasonable: keep a language-specific tool for the deep rules of one codebase and let `easement` hold the boundaries between components and languages.
 
