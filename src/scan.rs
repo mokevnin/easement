@@ -76,7 +76,7 @@ pub fn walker(root: &Path) -> WalkBuilder {
 
 /// The project's files (`/`-separated, relative to `root`) without the excluded ones.
 pub fn project_files(root: &Path, config: &Config) -> Result<Vec<String>> {
-    let exclude = exclude_set(&config.exclude)?;
+    let exclude = glob_set(&config.exclude, "exclude")?;
     let mut files = Vec::new();
     for entry in walker(root).build() {
         let entry = entry?;
@@ -93,7 +93,8 @@ pub fn project_files(root: &Path, config: &Config) -> Result<Vec<String>> {
 }
 
 pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
-    let exclude = exclude_set(&config.exclude)?;
+    let exclude = glob_set(&config.exclude, "exclude")?;
+    let target_only = glob_set(&config.target_only, "target_only")?;
     let adapters = lang::adapters(root)?;
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
@@ -115,6 +116,9 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         all_files.push(slash(&rel));
         if indexer::LANGUAGES.iter().any(|l| l.covers(&slash(&rel))) {
             continue; // read from the index below
+        }
+        if target_only.is_match(&rel) {
+            continue; // a target of imports, never read as a source
         }
         let Some(adapter) = adapters.iter().find(|a| a.handles(path)) else {
             continue;
@@ -163,16 +167,26 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
         .into_iter()
         .filter(|d| project.contains(d.path.as_str()))
         .collect();
-    for document in &documents {
+    for document in documents
+        .iter()
+        .filter(|d| !target_only.is_match(d.path.as_str()))
+    {
         paths.push(document.path.clone());
         if let Ok(source) = std::fs::read_to_string(root.join(&document.path)) {
             suppressions.extend(suppress::parse(&document.path, &source));
         }
     }
     let facts = scip::facts(&documents, config.uses_symbols());
-    let in_project = |dep: &Dep| project.contains(slash(&dep.file).as_str());
-    deps.extend(facts.deps.into_iter().filter(in_project));
-    let symbols = facts.symbols;
+    let is_source = |file: &Path| {
+        let file = slash(file);
+        project.contains(file.as_str()) && !target_only.is_match(&file)
+    };
+    deps.extend(facts.deps.into_iter().filter(|dep| is_source(&dep.file)));
+    let symbols = facts
+        .symbols
+        .into_iter()
+        .filter(|symbol| is_source(&symbol.file))
+        .collect();
     Ok(Scan {
         all_files,
         paths,
@@ -184,11 +198,11 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     })
 }
 
-fn exclude_set(patterns: &[String]) -> Result<GlobSet> {
+fn glob_set(patterns: &[String], key: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for p in patterns {
         let p = p.trim_end_matches('/');
-        builder.add(Glob::new(p).with_context(|| format!("bad exclude pattern `{p}`"))?);
+        builder.add(Glob::new(p).with_context(|| format!("bad {key} pattern `{p}`"))?);
         builder.add(Glob::new(&format!("{p}/**"))?);
     }
     Ok(builder.build()?)

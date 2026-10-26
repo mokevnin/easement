@@ -19,6 +19,11 @@ pub struct Config {
     pub rules: BTreeMap<String, Rule>,
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Globs of files that stay in the graph as targets, so components can own them and
+    /// rules can forbid or allow importing them, but are never checked as the source of
+    /// a dependency (generated code). `exclude` wins over it.
+    #[serde(default)]
+    pub target_only: Vec<String>,
     #[serde(default)]
     pub baseline: Option<PathBuf>,
     /// Fail on dependency cycles between components: `true` for all of them,
@@ -521,7 +526,7 @@ fn merge(into: &mut Mapping, from: Mapping) {
                 }
             }
             (Some(Value::Sequence(old)), Value::Sequence(new))
-                if name == "common" || name == "exclude" =>
+                if matches!(name, "common" | "exclude" | "target_only") =>
             {
                 for v in new {
                     if !old.contains(&v) {
@@ -552,6 +557,7 @@ components:
   b: { in: b }
 common: [b]
 exclude: [gen]
+target_only: ['**/*.gen.ts']
 rules:
   a: { may_depend_on: [b], because: base }
 ",
@@ -564,6 +570,7 @@ components:
   b: { in: other/b }
 common: [c]
 exclude: [vendor]
+target_only: ['**/*.pb.go']
 rules:
   a: { because: own }
 ",
@@ -573,6 +580,7 @@ rules:
         assert_eq!(c.components["b"].patterns.as_vec(), ["other/b"]);
         assert_eq!(c.common, ["b", "c"]);
         assert_eq!(c.exclude, ["gen", "vendor"]);
+        assert_eq!(c.target_only, ["**/*.gen.ts", "**/*.pb.go"]);
         // The rule of the extending file replaces the base one as a whole.
         assert_eq!(c.reason("a"), Some("own"));
         assert!(c.rules["a"].may_depend_on.is_empty());

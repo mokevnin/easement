@@ -84,6 +84,13 @@
         "type": "string"
       }
     },
+    "target_only": {
+      "description": "Globs of files (generated code) that stay in the graph as targets, so components can own them and rules can allow or forbid importing them, but are never checked as the source of a dependency. `exclude` wins over it.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "baseline": {
       "description": "Path of the baseline file, default easement.baseline.yml.",
       "type": "string"
