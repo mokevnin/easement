@@ -1,6 +1,6 @@
 [package]
 name = "easement"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 description = "Architecture quality gate for polyglot codebases"
 license = "MIT"
