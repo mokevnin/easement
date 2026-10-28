@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/mokevnin/easement/compare/v0.3.1...v0.3.2) (2026-10-28)
+
+
+### Features
+
+* resolve Ruby through the scip-ruby indexer ([#33](https://github.com/mokevnin/easement/issues/33)) ([81ea7ca](https://github.com/mokevnin/easement/commit/81ea7ca5fa06d95d502c203bd8fee02ddd68b32f))
+
 ## [0.3.1](https://github.com/mokevnin/easement/compare/v0.3.0...v0.3.1) (2026-10-26)
 
 
