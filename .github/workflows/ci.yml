@@ -87,7 +87,7 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
-          install_args: rust go node pnpm java maven dotnet go:github.com/scip-code/scip-go/cmd/scip-go github:sourcegraph/scip-java github:sourcegraph/scip-ruby
+          install_args: rust go node pnpm java maven dotnet go:github.com/scip-code/scip-go/cmd/scip-go github:sourcegraph/scip-java
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -130,6 +130,15 @@ jobs:
         run: |
           brew install bash
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      # scip-ruby has no Linux arm64 release yet (sourcegraph/scip-ruby#228); the Ruby test
+      # skips itself there.
+      - name: Install the Ruby indexer
+        if: runner.arch != 'ARM64' || runner.os != 'Linux'
+        shell: bash
+        run: |
+          mise install github:sourcegraph/scip-ruby
+          mise where github:sourcegraph/scip-ruby >> "$GITHUB_PATH"
 
       - name: Install the C# indexer
         shell: bash
