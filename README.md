@@ -55,13 +55,34 @@ easement schema                # the JSON Schema of easement.yml
 easement completions zsh       # shell completions: bash, zsh, fish, powershell, elvish
 ```
 
-The text report is coloured on a terminal. `--color auto|always|never` overrides that, and `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`; the structured formats are never coloured. To install completions for zsh, write the script to a directory on your `fpath`: `easement completions zsh > ~/.zfunc/_easement`.
+The text report is coloured on a terminal. `--color auto|always|never` overrides that; `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`. The structured formats are never coloured.
 
-`easement suggest` reads the real graph against the config and lists the `may_depend_on` entries no import uses, the imports that nothing allows, and the components whose instances never import each other and so could be `isolated` (only `*` patterns, never `**`). An entry next to files no indexer covered is listed apart as unreliable, because the import it would remove may be in a file that was never read: check those by hand before removing anything. `easement suggest --patch` prints the removals as a patch (`easement suggest --patch | git apply`): it edits the text of `easement.yml`, so comments and `because` reasons stay, and it never touches an entry next to unindexed files. An entry it cannot place in the file (a rule that comes from `extends` or an alias, a list written over several lines) is named on stderr to remove by hand. `easement suggest --check` prints the same report and exits 1 while an unused entry is left that `--patch` would remove (entries next to unindexed files only appear in the report), so a CI step keeps the allowances from piling up.
+Completions for zsh go to a directory on your `fpath`: `easement completions zsh > ~/.zfunc/_easement`.
 
-`easement doctor` looks at the languages the project has and says, for each, whether its indexer is on the `PATH`, which version, and whether what it needs is in place (`node_modules` for TypeScript, `composer install` for PHP). For a missing indexer it prints how to install it and, where mise can, the lines for the `[tools]` of a `mise.toml`. It exits 1 when something is missing, so a script or an agent can run it first and read `--format json`.
+### init
 
 `easement init` finds the components in the layout of the project (the subdirectories of `internal/`, `src/`, `app/`, … or the top-level directories) and allows every dependency it finds between them. The first `easement check` passes; remove the dependencies that should not exist, and add `because:` reasons.
+
+### suggest
+
+`easement suggest` reads the real graph against the config and lists:
+
+- the `may_depend_on` entries no import uses;
+- the imports that nothing allows;
+- the components whose instances never import each other and so could be `isolated` (only `*` patterns, never `**`).
+
+An entry next to files no indexer covered is listed apart as unreliable, because the import it would remove may be in a file that was never read. Check those by hand before removing anything.
+
+- `--patch` prints the removals as a patch: `easement suggest --patch | git apply`. It edits the text of `easement.yml`, so comments and `because` reasons stay, and it never touches an entry next to unindexed files. An entry it cannot place (a rule that comes from `extends` or an alias, a list written over several lines) is named on stderr to remove by hand.
+- `--check` prints the same report and exits 1 while an unused entry is left that `--patch` would remove, so a CI step keeps the allowances from piling up.
+
+### doctor
+
+`easement doctor` looks at the languages the project has and says, for each, whether its indexer is on the `PATH`, which version, and whether what it needs is in place (`node_modules` for TypeScript, `composer install` for PHP). For a missing indexer it prints how to install it and, where mise can, the lines for the `[tools]` of a `mise.toml`.
+
+It exits 1 when something is missing, so a script or an agent can run it first and read `--format json`.
+
+### easement.yml
 
 `easement.yml` lives in the project root; all paths are relative to it.
 
@@ -239,7 +260,19 @@ rules:
 
 `forbid_symbol` names what a component must not use, as `package.Name` or `import/path.Name`. `public_symbols` is the other side: other components may use only these names from the component's packages (`only Scoped and Tx`). Both are `symbol` violations at the line of the use and can be suppressed inline.
 
-The indexer resolves every name to its definition, so `db.Client` is matched by what it is, not by how it is spelled: an import alias or a local variable that shadows the package name makes no difference, and a method call on a value of that type (`c.Query()`) counts as a use of `Client`. For Go the qualifier is the import path or its package name; for TypeScript it is the npm package (`lodash.debounce`) or the file without extension (`src/db/client.Client`). For Python the qualifier is the dotted module, for PHP the namespace with `\`, for Java and C# the namespace with `.`, for Ruby the module path with `::`, for Rust the crate and module path. Symbol rules work for every language an indexer resolves; Kotlin and Swift, which are read with tree-sitter, say nothing.
+The indexer resolves every name to its definition, so `db.Client` is matched by what it is, not by how it is spelled: an import alias or a local variable that shadows the package name makes no difference, and a method call on a value of that type (`c.Query()`) counts as a use of `Client`.
+
+The qualifier in front of the name depends on the language:
+
+- Go: the import path or its package name;
+- TypeScript: the npm package (`lodash.debounce`) or the file without extension (`src/db/client.Client`);
+- Python: the dotted module;
+- PHP: the namespace with `\`;
+- Java and C#: the namespace with `.`;
+- Ruby: the module path with `::`;
+- Rust: the crate and module path.
+
+Symbol rules work for every language an indexer resolves; Kotlin and Swift, which are read with tree-sitter, say nothing.
 
 ### Tests
 
@@ -412,15 +445,53 @@ The baseline still applies, and stale entries are still reported. A rule change 
 | PHP | everything `scip-php` resolves: a class used in a `use` statement or by its qualified name | the Composer autoloader: PSR-4 and classmap, installed packages from `vendor/` |
 | Swift | `import` | modules in the SwiftPM layout: `Sources/<Module>` next to a `Package.swift` |
 
-Every language but Kotlin and Swift comes from a SCIP index, which is exact but has its own limits: in TypeScript only files that a `tsconfig.json` includes are indexed, and easement says how many source files no index covered (`N files not covered by an indexer`); `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine); a violation names the target file (`imports src/db/d.ts`) rather than the specifier as written; `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen. Imports computed at run time are not reported at all. For Java and C# a method call or a constructor counts as a use of its class, and a package or namespace named on its own is not a dependency. In PHP only classes (and interfaces, traits, enums) count as dependencies: functions and constants brought in with `use function` or `use const` do not, and `scip-php` writes `index.scip` into the project directory for a moment, so easement refuses to run when one is already there. In Python third-party modules have to be installed in the environment the indexer sees, or their imports are not seen (there is no check for that yet, unlike `node_modules`), and a module reference is matched to its file by the end of its dotted name, so an import that two modules could satisfy is skipped. In Ruby `require` and `require_relative` are strings, so only the constants a file uses count, as a dependency on the file that defines the class (the deepest constant of `Shop::Domain::Order`); a method call counts as a use of its class; and since `scip-ruby` gives the standard library's classes and the project's the same package, and a gem's constants appear only when Sorbet has an RBI for the gem, `forbid_external` is blind to Ruby. In Rust the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`).
+Every language but Kotlin and Swift comes from a SCIP index, which is exact but has its own limits.
 
-Kotlin is still read with tree-sitter: `scip-java`'s Kotlin plugin fails with a `NoClassDefFoundError` on every Kotlin compiler from 1.9 to 2.3 that I tried, so there is no indexer to use yet. Known limit of Kotlin: references by fully qualified name without an import are not seen. Swift modules declared with a custom `path:` in `Package.swift` are not found.
+All indexed languages:
+
+- Imports computed at run time are not reported.
+- Easement says how many source files no index covered (`N files not covered by an indexer`), see [Indexers](#indexers).
+
+TypeScript / JavaScript:
+
+- Only files that a `tsconfig.json` includes are indexed.
+- `require()` in a `.ts` file is invisible unless `@types/node` is installed (JavaScript files are fine).
+- A violation names the target file (`imports src/db/d.ts`) rather than the specifier as written.
+- `vi.mock('./x')` and similar string arguments are not imports to the compiler, so they are not seen.
+
+Java and C#: a method call or a constructor counts as a use of its class, and a package or namespace named on its own is not a dependency.
+
+PHP:
+
+- Only classes (and interfaces, traits, enums) count as dependencies; functions and constants brought in with `use function` or `use const` do not.
+- `scip-php` writes `index.scip` into the project directory for a moment, so easement refuses to run when one is already there.
+
+Python:
+
+- Third-party modules have to be installed in the environment the indexer sees, or their imports are not seen. There is no check for that yet, unlike `node_modules`.
+- A module reference is matched to its file by the end of its dotted name, so an import that two modules could satisfy is skipped.
+
+Ruby:
+
+- `require` and `require_relative` are strings, so only the constants a file uses count, as a dependency on the file that defines the class (the deepest constant of `Shop::Domain::Order`). A method call counts as a use of its class.
+- `scip-ruby` gives the standard library's classes and the project's the same package, and a gem's constants appear only when Sorbet has an RBI for the gem, so `forbid_external` is blind to Ruby.
+
+Rust: the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`).
+
+Kotlin is still read with tree-sitter: `scip-java`'s Kotlin plugin fails with a `NoClassDefFoundError` on every Kotlin compiler from 1.9 to 2.3 that I tried, so there is no indexer to use yet. References by fully qualified name without an import are not seen. Swift modules declared with a custom `path:` in `Package.swift` are not found.
 
 Adding a language to the indexed set means naming its indexer and the marker file it runs in (`src/indexer.rs`) and mapping its symbols to module names (`src/scip.rs`). A language that has no indexer can still be read with a tree-sitter adapter (`src/lang/mod.rs`): extract imports from a file, resolve a specifier to a project path or an external module. Rules, baseline and reports are language-agnostic.
 
 ### Index cache
 
-Indexers are slow (a second or two for a small project, ten or more for a big one), so easement keeps what they write. The cache lives in the user's cache directory (`~/Library/Caches/easement` on macOS, `~/.cache/easement` on Linux; set `EASEMENT_CACHE_DIR` to move it, for example to one directory that every checkout, worktree or container of the project uses). The key is the content of the project, not where it is: the indexer binary, the name and content of every project file under the directory of the index (build output such as `target/` left out) and of the files directly above it (`tsconfig.base.json`, `go.work`, a root `package.json`). So a fresh worktree of code that was already checked reuses the indexes, a file touched without a change does not miss, and any change to the content runs the indexer again. The newest 32 indexes of each directory and indexer are kept. Dependencies that live outside the project (`node_modules`, `vendor/`, the Go module cache, the Python environment) are not looked at, so after changing them without touching a lock file run `easement check --no-cache`. `--format json` reports `stats.indexed` and `stats.from_cache`.
+Indexers are slow (a second or two for a small project, ten or more for a big one), so easement keeps what they write.
+
+- **Where:** the user's cache directory (`~/Library/Caches/easement` on macOS, `~/.cache/easement` on Linux). Set `EASEMENT_CACHE_DIR` to move it, for example to one directory that every checkout, worktree or container of the project uses.
+- **Key:** the content of the project, not where it is: the indexer binary, and the name and content of every project file under the directory of the index (build output such as `target/` left out) and of the files directly above it (`tsconfig.base.json`, `go.work`, a root `package.json`). A fresh worktree of code that was already checked reuses the indexes, a file touched without a change does not miss, and any change to the content runs the indexer again.
+- **Kept:** the newest 32 indexes of each directory and indexer.
+- **Not looked at:** dependencies outside the project (`node_modules`, `vendor/`, the Go module cache, the Python environment). After changing them without touching a lock file, run `easement check --no-cache`.
+
+`--format json` reports `stats.indexed` and `stats.from_cache`.
 
 ### Indexers
 
@@ -442,7 +513,19 @@ composer global require "davidrjenni/scip-php:dev-main#71a5b117ec4c5dd2af302e363
 
 The released `scip-php` (v0.0.2) cannot be installed any more, because every protobuf version it accepts has a security advisory, so the line above pins a commit of its main branch.
 
-`easement check` finds the `go.mod`, `tsconfig.json` and `Cargo.toml` files (Java: `pom.xml`, `build.gradle`; C#: `*.csproj`, `*.sln`; Ruby: `Gemfile`, `*.gemspec`; PHP: `composer.json`; Python projects: `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, or else the project root), runs the indexer in each of those directories and reads the result. A missing indexer, a failed run (add a directory that is not part of the project to `exclude`), or a `package.json` with dependencies but no `node_modules` is an error (exit code 2), never a quiet gap; source files that no `go.mod`, `tsconfig.json`, `Cargo.toml` or other project file covers are counted in the report as `files not covered by an indexer`: without installed packages the indexer cannot see third-party modules, so `forbid_external` would silently pass.
+`easement check` finds the project files, runs the indexer in each of those directories and reads the result. The project files are:
+
+- Go: `go.mod`; TypeScript: `tsconfig.json`; Rust: `Cargo.toml`;
+- Java: `pom.xml`, `build.gradle`; C#: `*.csproj`, `*.sln`; Ruby: `Gemfile`, `*.gemspec`; PHP: `composer.json`;
+- Python: `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, or else the project root.
+
+These are errors (exit code 2), never a quiet gap:
+
+- a missing indexer;
+- a failed run (add a directory that is not part of the project to `exclude`);
+- a `package.json` with dependencies but no `node_modules`.
+
+Source files that no project file covers are counted in the report as `files not covered by an indexer`. Without installed packages the indexer cannot see third-party modules, so `forbid_external` would silently pass.
 
 For Go, a file behind a build constraint (`//go:build race`) is built, and so indexed, only for the tags the indexer is given; the others are listed as not covered. `go.tags` names the tags to index with (they are passed as `-tags` through `GOFLAGS`, and are part of the key the cached index is stored under):
 
@@ -453,15 +536,17 @@ go:
 
 For TypeScript a file is covered when a `tsconfig.json` includes it, so generated code outside `include` is listed as not covered: add it to `include`. A `tsconfig.json` in a subdirectory is indexed as a project of its own, and an import from there into a file of another project is not seen, so prefer one `tsconfig.json` that includes what should be checked together.
 
-Those files are named in the text report (the first twenty; all of them in `--format json`, `stats.uncovered`), and the JSON report says `"confidence": "partial"` with the reasons in `confidence_reasons`: a green verdict then covers only the code an indexer read, and whoever acts on it has to treat the rest as unchecked. The same field is `partial` for a run that judges a part by design (`--diff`, `--component`, `--scope`) and names the part: `passed` then says nothing about the rest of the project. Files that are meant to stay outside an indexer (build helpers, generated code) are accepted with `uncovered_ok`, each with the reason, and then no longer count:
+Those files are named in the text report (the first twenty; all of them in `--format json`, `stats.uncovered`).
+
+The JSON report says `"confidence": "partial"` with the reasons in `confidence_reasons`. A green verdict then covers only the code an indexer read, and whoever acts on it has to treat the rest as unchecked. The field is also `partial` for a run that judges a part by design (`--diff`, `--component`, `--scope`) and names the part: `passed` then says nothing about the rest of the project.
+
+Files that are meant to stay outside an indexer (build helpers, generated code) are accepted with `uncovered_ok`, each with the reason, and then no longer count:
 
 ```yaml
 uncovered_ok:
   - { name: "tools/**", because: build helpers with no go.mod on purpose }
   - { name: ["**/race_on.go", "**/embed_none.go"], because: the other half of a build-tag pair }
 ```
-
-Languages whose dependencies are not visible from imports (Ruby, Elixir) are out of scope.
 
 ## How it works
 
