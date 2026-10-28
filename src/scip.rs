@@ -222,7 +222,18 @@ fn class_symbol(symbol: &str) -> String {
     let Some(text) = parts.next() else {
         return symbol.to_string();
     };
-    match scan(text).and_then(|d| d.into_iter().find(|(_, kind, _)| *kind == Kind::Type)) {
+    // Ruby nests its classes in modules, which are types too (`Shop#Web#Order#run().`):
+    // the class is the last of the leading types. Elsewhere it is the first one.
+    let ruby = header.first() == Some(&"scip-ruby");
+    let cut = scan(text).and_then(|found| {
+        if ruby {
+            let leading = found.iter().take_while(|(_, kind, _)| *kind == Kind::Type);
+            leading.last().cloned()
+        } else {
+            found.into_iter().find(|(_, kind, _)| *kind == Kind::Type)
+        }
+    });
+    match cut {
         Some((_, _, end)) => {
             let kept: String = text.chars().take(end).collect();
             format!("{} {kept}", header.join(" "))
@@ -248,6 +259,13 @@ impl Parsed<'_> {
             && matches!(self.descriptors.as_slice(), [(_, Kind::Namespace), (name, _)] if name == "__init__")
         {
             return Referent::Module;
+        }
+        // Ruby modules and classes are both types: a class is what a constant names.
+        if self.scheme == "scip-ruby" {
+            return match self.descriptors.iter().all(|(_, kind)| *kind == Kind::Type) {
+                true => Referent::Module,
+                false => Referent::Package,
+            };
         }
         // PHP, Java and C# have no module symbols: a class is what an import names.
         let class_based = matches!(self.scheme, "scip-php" | "scip-java" | "scip-dotnet");
@@ -313,6 +331,8 @@ impl Parsed<'_> {
             "scip-php" => self.qualified("\\"),
             // Java and C#: the class by its qualified name (`java.util.List`).
             "scip-java" | "scip-dotnet" => self.qualified("."),
+            // Ruby: the class by its qualified name (`ActiveRecord::Base`).
+            "scip-ruby" => self.qualified("::"),
             // Python: the dotted module (`os.path`, `requests`).
             "scip-python" => self.namespace("."),
             // Rust: the crate and the module path; the standard library is
@@ -367,6 +387,7 @@ impl Parsed<'_> {
             ("scip-go", _) => self.namespace("/"),
             ("scip-python", _) => self.namespace("."),
             ("scip-php", _) => self.namespace("\\"),
+            ("scip-ruby", _) => self.qualified("::"),
             ("scip-java" | "scip-dotnet", _) => self.namespace("."),
             ("rust-analyzer", _) => self.external_module(),
             (_, Some(path)) => path
@@ -438,11 +459,12 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
     let mut uses = Vec::new();
     for document in documents {
         // Rust writes `crate::domain::order::Order` as a reference to every module on
-        // the path; only the deepest one is what the line depends on.
+        // the path, and Ruby `Shop::Domain::Order` as one to every module and the class;
+        // only the deepest one is what the line depends on.
         let mut paths: HashMap<usize, Vec<Vec<String>>> = HashMap::new();
         for reference in &document.references {
             if let Some(parsed) = split(&reference.symbol)
-                && parsed.scheme == "rust-analyzer"
+                && matches!(parsed.scheme, "rust-analyzer" | "scip-ruby")
                 && matches!(parsed.referent(), Referent::Module)
             {
                 paths
@@ -452,22 +474,25 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
             }
         }
         let shadowed = |parsed: &Parsed, line: usize| {
-            parsed.scheme == "rust-analyzer"
+            matches!(parsed.scheme, "rust-analyzer" | "scip-ruby")
                 && paths.get(&line).is_some_and(|all| {
                     let mine: Vec<String> =
                         parsed.descriptors.iter().map(|(n, _)| n.clone()).collect();
                     all.iter().any(|other| {
-                        other.len() > mine.len() && (other.starts_with(&mine) || mine == ["crate"])
+                        other.len() > mine.len()
+                            && (other.starts_with(&mine)
+                                || (parsed.scheme == "rust-analyzer" && mine == ["crate"]))
                     })
                 })
         };
         // (target, module) -> first line
         let mut first: BTreeMap<(Option<&str>, String), usize> = BTreeMap::new();
         for reference in &document.references {
-            // For PHP, Java and C# a member (a method, a constructor) is a use of its class.
+            // For PHP, Java, C# and Ruby a member (a method, a constructor) is a use of its class.
             let symbol = if reference.symbol.starts_with("scip-php ")
                 || reference.symbol.starts_with("scip-java ")
                 || reference.symbol.starts_with("scip-dotnet ")
+                || reference.symbol.starts_with("scip-ruby ")
             {
                 class_symbol(&reference.symbol)
             } else {
@@ -589,6 +614,31 @@ mod tests {
 
     const DB: &str = "scip-go gomod example.com/app . `example.com/app/internal/db`/";
     const FMT: &str = "scip-go gomod github.com/golang/go/src go1.25 fmt/";
+
+    #[test]
+    fn ruby_depends_on_the_deepest_constant_of_a_line() {
+        let order = "scip-ruby gem project 0 Shop#Domain#Order#";
+        let docs = [
+            doc("lib/order.rb", &[order], &[]),
+            doc(
+                "lib/web.rb",
+                &[],
+                &[
+                    (3, "scip-ruby gem project 0 Shop#"),
+                    (3, "scip-ruby gem project 0 Shop#Domain#"),
+                    (3, order),
+                    (3, "scip-ruby gem project 0 Class#new()."),
+                    (4, "scip-ruby gem project 0 Shop#Domain#Order#`@id`."),
+                ],
+            ),
+        ];
+        let deps = facts(&docs, false).deps;
+        let found: Vec<_> = deps
+            .iter()
+            .map(|d| (d.line, d.specifier.as_str()))
+            .collect();
+        assert_eq!(found, [(3, "lib/order.rb")]);
+    }
 
     #[test]
     fn parses_descriptors() {

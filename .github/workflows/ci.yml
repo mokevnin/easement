@@ -131,6 +131,15 @@ jobs:
           brew install bash
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
 
+      # scip-ruby has no Linux arm64 release yet (sourcegraph/scip-ruby#228); the Ruby test
+      # skips itself there.
+      - name: Install the Ruby indexer
+        if: runner.arch != 'ARM64' || runner.os != 'Linux'
+        shell: bash
+        run: |
+          mise install github:sourcegraph/scip-ruby
+          mise where github:sourcegraph/scip-ruby >> "$GITHUB_PATH"
+
       - name: Install the C# indexer
         shell: bash
         run: |

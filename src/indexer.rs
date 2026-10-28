@@ -152,6 +152,28 @@ pub const LANGUAGES: &[Language] = &[
         needs: nothing_needed,
     },
     Language {
+        name: "ruby",
+        binary: "scip-ruby",
+        markers: &["Gemfile", "*.gemspec"],
+        outermost: true,
+        fallback_root: false,
+        extensions: &["rb"],
+        args: |out| {
+            vec![
+                "--gem-metadata".into(),
+                "project@0".into(),
+                "--index-file".into(),
+                out.display().to_string(),
+                ".".into(),
+            ]
+        },
+        install: "mise use -g github:sourcegraph/scip-ruby",
+        mise: Some("github:sourcegraph/scip-ruby"),
+        skip_dirs: &["vendor"],
+        writes_in_cwd: None,
+        needs: nothing_needed,
+    },
+    Language {
         name: "rust",
         binary: "rust-analyzer",
         markers: &["Cargo.toml"],
@@ -647,12 +669,12 @@ mod tests {
         assert_eq!(LANGUAGES[0].roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
         // A workspace root holds its members; Python falls back to the root.
-        assert_eq!(LANGUAGES[6].roots(&files), [""]);
+        assert_eq!(LANGUAGES[7].roots(&files), [""]);
         assert_eq!(LANGUAGES[2].roots(&files), [""]);
         let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
             .map(String::from)
             .to_vec();
-        assert_eq!(LANGUAGES[6].roots(&nested), ["a", "b"]);
+        assert_eq!(LANGUAGES[7].roots(&nested), ["a", "b"]);
     }
 
     #[test]

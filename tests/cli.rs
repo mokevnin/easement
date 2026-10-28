@@ -751,6 +751,14 @@ fn watch_checks_again_after_a_change() {
 /// Every layered fixture has one forbidden import, web -> infra, and allowed ones
 /// that must be seen: the count of internal dependencies proves the adapter resolved them.
 fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
+    // scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228). Anywhere else a
+    // missing indexer is still an error.
+    if name == "ruby"
+        && cfg!(all(target_os = "linux", target_arch = "aarch64"))
+        && which::which("scip-ruby").is_err()
+    {
+        return;
+    }
     let (_tmp, root) = fixture(name);
     if name == "rust" {
         // Not stored in the fixture: tools that walk the repository would take it for a crate.
@@ -792,6 +800,16 @@ fn csharp_resolves_namespaces() {
         "csharp",
         "Web/OrderController.cs",
         "Infra/OrderRepository.cs",
+        3,
+    );
+}
+
+#[test]
+fn ruby_resolves_constants() {
+    layered(
+        "ruby",
+        "lib/shop/web/order_controller.rb",
+        "lib/shop/infra/order_repository.rb",
         3,
     );
 }
