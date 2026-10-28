@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/mokevnin/easement/compare/v0.3.2...v0.3.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* build the Linux packages without the test indexers ([#35](https://github.com/mokevnin/easement/issues/35)) ([25ff897](https://github.com/mokevnin/easement/commit/25ff8979852896fbf2d80bf69dbea734d92c8bf6))
+
 ## [0.3.2](https://github.com/mokevnin/easement/compare/v0.3.1...v0.3.2) (2026-10-28)
 
 
