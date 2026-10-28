@@ -797,6 +797,16 @@ fn csharp_resolves_namespaces() {
 }
 
 #[test]
+fn ruby_resolves_constants() {
+    layered(
+        "ruby",
+        "lib/shop/web/order_controller.rb",
+        "lib/shop/infra/order_repository.rb",
+        3,
+    );
+}
+
+#[test]
 fn kotlin_resolves_packages_and_declarations() {
     layered(
         "kotlin",
