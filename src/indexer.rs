@@ -296,6 +296,35 @@ impl Language {
     }
 }
 
+/// `--cache-only` met an index that is not cached: the indexer would have to run.
+#[derive(Debug)]
+pub struct NotCached {
+    pub language: &'static str,
+    pub dir: String,
+}
+
+impl std::fmt::Display for NotCached {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shown = if self.dir.is_empty() { "." } else { &self.dir };
+        write!(
+            f,
+            "the {} index of {shown} is not cached, and --cache-only runs no indexer",
+            self.language
+        )
+    }
+}
+
+impl std::error::Error for NotCached {}
+
+/// How indexes are obtained: run the indexer, or read a cached index first, or only read one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CacheUse {
+    Off,
+    #[default]
+    On,
+    Only,
+}
+
 /// What the indexers found, and the source files they did not cover.
 pub struct Indexed {
     pub documents: Documents,
@@ -321,7 +350,7 @@ fn environment(language: &Language, go_tags: &[String]) -> Vec<(&'static str, St
     vec![("GOFLAGS", flags)]
 }
 
-pub fn run(root: &Path, files: &[String], use_cache: bool, go_tags: &[String]) -> Result<Indexed> {
+pub fn run(root: &Path, files: &[String], cache: CacheUse, go_tags: &[String]) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
     let mut parts = Vec::new();
     let mut wanted: Vec<&String> = Vec::new();
@@ -337,8 +366,7 @@ pub fn run(root: &Path, files: &[String], use_cache: bool, go_tags: &[String]) -
             continue;
         }
         for dir in roots {
-            let (documents, from_cache) =
-                index_dir(language, root, &dir, files, use_cache, go_tags)?;
+            let (documents, from_cache) = index_dir(language, root, &dir, files, cache, go_tags)?;
             parts.push(documents);
             if from_cache {
                 cached += 1;
@@ -559,7 +587,7 @@ fn index_dir(
     root: &Path,
     dir: &str,
     files: &[String],
-    use_cache: bool,
+    cache: CacheUse,
     go_tags: &[String],
 ) -> Result<(Vec<Document>, bool)> {
     let env = environment(language, go_tags);
@@ -569,7 +597,6 @@ fn index_dir(
         root.join(dir)
     };
     let shown = if dir.is_empty() { "." } else { dir };
-    (language.needs)(root, &cwd, shown)?;
     // `which` finds `scip-typescript.cmd` on Windows, which `Command` alone does not.
     let binary = which::which(language.binary).map_err(|_| {
         anyhow::anyhow!(
@@ -580,7 +607,9 @@ fn index_dir(
         )
     })?;
     let key = fingerprint(language, &binary, root, dir, files, &env);
-    let cached = use_cache.then(|| cache_file(language, dir, key)).flatten();
+    let cached = (cache != CacheUse::Off)
+        .then(|| cache_file(language, dir, key))
+        .flatten();
     if let Some((path, _)) = &cached
         && let Ok(bytes) = std::fs::read(path)
         && let Ok(documents) = scip::parse(&bytes, Path::new(dir))
@@ -592,6 +621,16 @@ fn index_dir(
         }
         return Ok((documents, true));
     }
+    if cache == CacheUse::Only {
+        return Err(NotCached {
+            language: language.name,
+            dir: dir.to_string(),
+        }
+        .into());
+    }
+    // Checked only when the indexer runs: a cached index was written with them in place, and
+    // what they are is in its key (a lock file).
+    (language.needs)(root, &cwd, shown)?;
     let out = tempfile::tempdir().context("cannot create a temporary directory")?;
     let file = match language.writes_in_cwd {
         Some(name) => {

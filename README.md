@@ -37,11 +37,12 @@ Go, TypeScript/JavaScript, Python, Rust, PHP, Java, C# and Ruby are resolved by 
 
 ```sh
 easement init                  # write a starting easement.yml from the code as it is
-easement check                 # exit 0: passed, 1: violations, 2: error
+easement check                 # exit 0: passed, 1: violations, 2: error, 3: --cache-only met an index that is not cached
 easement check --format json   # machine-readable report; also sarif, github, junit
 easement check --diff origin/main  # only imports added in this change
 easement check --watch         # check again on every change
 easement check --no-cache      # run the indexers even if their output is cached
+easement check --cache-only    # run no indexer: read every index from the cache, exit 3 on a miss
 easement check --component web # report only on the files of one component (repeatable)
 easement check --scope src/api # report only on files under a path (repeatable)
 easement baseline              # legalize current violations
@@ -502,6 +503,8 @@ Indexers are slow (a second or two for a small project, ten or more for a big on
 - **Not looked at:** dependencies outside the project (`node_modules`, `vendor/`, the Go module cache, the Python environment). After changing them without touching a lock file, run `easement check --no-cache`.
 
 `--format json` reports `stats.indexed` and `stats.from_cache`.
+
+`--cache-only` runs no indexer and exits 3 when an index is not cached. A CI job can call it first and set up an indexer's toolchain (the Go module cache, `npm install`) only on a miss; the dependencies an indexer needs are checked only when it runs, since a cached index was written with them in place.
 
 ### Indexers
 
