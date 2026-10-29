@@ -21,6 +21,12 @@ inputs:
   format:
     description: Report format, one of text, json, sarif, github, junit. `github` annotates the changed files.
     default: github
+  cache:
+    description: >
+      Keep the indexes between runs with actions/cache. A run on the default branch saves them;
+      every run restores the newest saved ones, and a language whose files did not change skips
+      its indexer. `false` runs every indexer.
+    default: "true"
 
 runs:
   using: composite
@@ -33,6 +39,22 @@ runs:
         bindir="$RUNNER_TEMP/easement-bin"
         sh "$GITHUB_ACTION_PATH/install.sh" -b "$bindir" -v "$VERSION"
         echo "$bindir" >> "$GITHUB_PATH"
+    # Saved from the default branch only: one entry per pull request commit would evict the
+    # entries every pull request can read (the repository's cache is capped).
+    - name: Cache the indexes
+      if: inputs.cache == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/easement-cache
+        key: easement-${{ runner.os }}-${{ github.sha }}
+        restore-keys: easement-${{ runner.os }}-
+    - name: Restore the indexes
+      if: inputs.cache == 'true' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/easement-cache
+        key: easement-${{ runner.os }}-${{ github.sha }}
+        restore-keys: easement-${{ runner.os }}-
     - name: Check the architecture
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -40,6 +62,7 @@ runs:
         CONFIG: ${{ inputs.config }}
         DIFF: ${{ inputs.diff }}
         FORMAT: ${{ inputs.format }}
+        EASEMENT_CACHE_DIR: ${{ inputs.cache == 'true' && format('{0}/easement-cache', runner.temp) || '' }}
       run: |
         args=(check --config "$CONFIG" --format "$FORMAT")
         if [ -n "$DIFF" ]; then

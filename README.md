@@ -380,7 +380,17 @@ The repository is a GitHub Action:
     diff: origin/main      # optional: judge only what the pull request adds
 ```
 
-Inputs: `version`, `config`, `working-directory`, `diff` and `format` (`github` by default). With SARIF:
+Inputs: `version`, `config`, `working-directory`, `diff`, `format` (`github` by default) and `cache` (`true` by default: the indexes are kept with `actions/cache`, saved by runs on the default branch and restored by every run, so a pull request that changes no Go file skips `scip-go`). Without the action, keep `EASEMENT_CACHE_DIR` the same way:
+
+```yaml
+- uses: actions/cache@v6
+  with:
+    path: ~/.cache/easement
+    key: easement-${{ runner.os }}-${{ github.sha }}
+    restore-keys: easement-${{ runner.os }}-
+```
+
+With SARIF:
 
 ```yaml
 - run: easement check --format sarif > easement.sarif
@@ -487,7 +497,7 @@ Adding a language to the indexed set means naming its indexer and the marker fil
 Indexers are slow (a second or two for a small project, ten or more for a big one), so easement keeps what they write.
 
 - **Where:** the user's cache directory (`~/Library/Caches/easement` on macOS, `~/.cache/easement` on Linux). Set `EASEMENT_CACHE_DIR` to move it, for example to one directory that every checkout, worktree or container of the project uses.
-- **Key:** the content of the project, not where it is: the indexer binary, and the name and content of every project file under the directory of the index (build output such as `target/` left out) and of the files directly above it (`tsconfig.base.json`, `go.work`, a root `package.json`). A fresh worktree of code that was already checked reuses the indexes, a file touched without a change does not miss, and any change to the content runs the indexer again.
+- **Key:** the content of the project, not where it is: the indexer binary, and the name and content of the project files under the directory of the index that its indexer reads (build output such as `target/` left out) and of the files directly above it (`tsconfig.base.json`, `go.work`, a root `package.json`). For Go these are the `.go` files and `go.mod`, `go.sum`, `go.work`, `go.work.sum` and `modules.txt`; for TypeScript the sources, every JSON file and the lock files; for the other languages, whose build tools read files of their own choosing, every file. A Go backend and a TypeScript frontend in one root keep apart: a change to the frontend reuses the Go index, a change to the docs reuses both. A fresh worktree of code that was already checked reuses the indexes, a file touched without a change does not miss, and any change to what an indexer reads runs it again.
 - **Kept:** the newest 32 indexes of each directory and indexer.
 - **Not looked at:** dependencies outside the project (`node_modules`, `vendor/`, the Go module cache, the Python environment). After changing them without touching a lock file, run `easement check --no-cache`.
 

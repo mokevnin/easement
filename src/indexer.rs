@@ -36,10 +36,55 @@ pub struct Language {
     writes_in_cwd: Option<&'static str>,
     /// What has to be in place before the indexer runs: (project root, directory, shown name).
     needs: fn(&Path, &Path, &str) -> Result<()>,
+    /// Which project files under the index directory the cache key reads (the `/`-separated
+    /// path): what the indexer could see. Another language's sources, docs and assets are left
+    /// out, so a change to them reuses the index. When in doubt, a file is in.
+    inputs: fn(&str) -> bool,
 }
 
 fn nothing_needed(_: &Path, _: &Path, _: &str) -> Result<()> {
     Ok(())
+}
+
+/// Every file: for an indexer whose build reads files of its own choosing (Maven, Gradle,
+/// Cargo, MSBuild, Bundler, Composer, Python's environment).
+fn every_file(_: &str) -> bool {
+    true
+}
+
+/// The file name, the last part of a `/`-separated path.
+fn file_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |(_, name)| name)
+}
+
+/// scip-go reads the Go sources and what `go` resolves them with: the module and workspace
+/// files and a vendored dependency list.
+fn go_inputs(path: &str) -> bool {
+    let name = file_name(path);
+    name.ends_with(".go")
+        || matches!(
+            name,
+            "go.mod" | "go.sum" | "go.work" | "go.work.sum" | "modules.txt"
+        )
+}
+
+const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// scip-typescript reads what the TypeScript compiler does: the sources and declarations, every
+/// JSON file (a `tsconfig.json` and what it extends, a `package.json`, a JSON module an import
+/// names) and the lock files that decide which dependency is installed.
+fn typescript_inputs(path: &str) -> bool {
+    let name = file_name(path);
+    let source = name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| TYPESCRIPT_EXTENSIONS.contains(&ext));
+    source
+        || name.ends_with(".json")
+        || name.ends_with(".json5")
+        || matches!(
+            name,
+            "pnpm-lock.yaml" | "pnpm-workspace.yaml" | "yarn.lock" | "bun.lock" | "bun.lockb"
+        )
 }
 
 pub const LANGUAGES: &[Language] = &[
@@ -56,6 +101,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: go_inputs,
     },
     Language {
         name: "typescript",
@@ -63,7 +109,7 @@ pub const LANGUAGES: &[Language] = &[
         markers: &["tsconfig.json"],
         outermost: false,
         fallback_root: false,
-        extensions: &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
+        extensions: TYPESCRIPT_EXTENSIONS,
         args: |out| {
             vec![
                 "index".into(),
@@ -77,6 +123,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: require_installed,
+        inputs: typescript_inputs,
     },
     Language {
         name: "python",
@@ -108,6 +155,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: every_file,
     },
     Language {
         name: "php",
@@ -122,6 +170,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &["vendor"],
         writes_in_cwd: Some("index.scip"),
         needs: require_composer,
+        inputs: every_file,
     },
     Language {
         name: "java",
@@ -136,6 +185,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &["target", "build"],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: every_file,
     },
     Language {
         name: "csharp",
@@ -150,6 +200,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &["bin", "obj"],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: every_file,
     },
     Language {
         name: "ruby",
@@ -172,6 +223,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &["vendor"],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: every_file,
     },
     Language {
         name: "rust",
@@ -193,6 +245,7 @@ pub const LANGUAGES: &[Language] = &[
         skip_dirs: &[],
         writes_in_cwd: None,
         needs: nothing_needed,
+        inputs: every_file,
     },
 ];
 
@@ -337,8 +390,8 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// Everything that decides what an indexer would write: the indexer itself and
-/// the name and content of every project file under `dir` except its build
-/// output, plus the files that sit directly in the directories above `dir`
+/// the name and content of every project file under `dir` that the indexer reads
+/// (`Language::inputs`, all but build output), plus the files that sit directly in the directories above `dir`
 /// (`tsconfig.base.json`, `go.work`, a root `package.json`), which the project
 /// files extend. Nothing about the checkout (its path, the modification times)
 /// is in the key, so a worktree of the same code reuses the index. Dependencies
@@ -370,7 +423,9 @@ fn fingerprint(
     };
     let mut seen: Vec<(&str, Option<u64>)> = files
         .iter()
-        .filter(|f| (f.starts_with(&prefix) && !language.in_skip_dir(f)) || above(f))
+        .filter(|f| {
+            (f.starts_with(&prefix) && !language.in_skip_dir(f) && (language.inputs)(f)) || above(f)
+        })
         .map(|f| {
             // An unreadable file is a different state from every readable one.
             let content = std::fs::read(root.join(f)).ok().map(|bytes| {
@@ -675,6 +730,45 @@ mod tests {
             .map(String::from)
             .to_vec();
         assert_eq!(LANGUAGES[7].roots(&nested), ["a", "b"]);
+    }
+
+    #[test]
+    fn the_cache_key_of_go_and_typescript_reads_only_what_their_indexer_does() {
+        for path in [
+            "a.go",
+            "svc/x_test.go",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "vendor/modules.txt",
+        ] {
+            assert!(go_inputs(path), "{path}");
+        }
+        for path in [
+            "web/a.tsx",
+            "README.md",
+            "locales/en.json",
+            "pnpm-lock.yaml",
+            "x.goal",
+        ] {
+            assert!(!go_inputs(path), "{path}");
+        }
+        for path in [
+            "src/a.tsx",
+            "types/x.d.ts",
+            "lib/a.mjs",
+            "tsconfig.json",
+            "tsconfig.app.json",
+            "package.json",
+            "locales/en.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+        ] {
+            assert!(typescript_inputs(path), "{path}");
+        }
+        for path in ["main.go", "go.mod", "README.md", "style.css", "logo.svg"] {
+            assert!(!typescript_inputs(path), "{path}");
+        }
     }
 
     #[test]

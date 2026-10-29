@@ -1576,6 +1576,47 @@ rules:
 }
 
 #[test]
+fn a_change_to_one_language_reuses_the_index_of_the_other() {
+    // Go and TypeScript share the project root, as in a repository with a Go backend and a
+    // frontend: each index is keyed by the files its indexer reads.
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  api: { in: api }\n  web: { in: web }\n",
+        ),
+        ("go.mod", "module example.com/shop\n\ngo 1.22\n"),
+        ("api/api.go", "package api\n\nconst Name = \"shop\"\n"),
+        ("web/a.ts", "export const a = 1;\n"),
+        ("README.md", "# shop\n"),
+    ]);
+    let cache = TempDir::new().unwrap();
+    let stats = || verdict(&root, cache.path()).1;
+    assert_eq!(stats()["indexed"], 2);
+    let edit = |path: &str| {
+        let file = root.join(path);
+        let text = fs::read_to_string(&file).unwrap();
+        fs::write(&file, format!("{text}\n// changed\n")).unwrap();
+    };
+    // Neither indexer reads the README.
+    edit("README.md");
+    let after = stats();
+    assert!(after.get("indexed").is_none(), "{after}");
+    assert_eq!(after["from_cache"], 2);
+    edit("web/a.ts");
+    let after = stats();
+    assert_eq!(
+        (after["indexed"].clone(), after["from_cache"].clone()),
+        (1.into(), 1.into())
+    );
+    edit("api/api.go");
+    let after = stats();
+    assert_eq!(
+        (after["indexed"].clone(), after["from_cache"].clone()),
+        (1.into(), 1.into())
+    );
+}
+
+#[test]
 fn indexes_are_cached_until_the_project_changes() {
     let (_tmp, root) = fixture("go");
     let cache = TempDir::new().unwrap();
