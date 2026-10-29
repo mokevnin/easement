@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/mokevnin/easement/compare/v0.3.5...v0.3.6) (2026-10-29)
+
+
+### Features
+
+* add check --cache-only, which runs no indexer and exits 3 on a miss ([#42](https://github.com/mokevnin/easement/issues/42)) ([632a2c8](https://github.com/mokevnin/easement/commit/632a2c88b48b1c575197a930a914afdebdf6157c))
+
 ## [0.3.5](https://github.com/mokevnin/easement/compare/v0.3.4...v0.3.5) (2026-10-29)
 
 
