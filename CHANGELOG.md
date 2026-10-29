@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/mokevnin/easement/compare/v0.3.4...v0.3.5) (2026-10-29)
+
+
+### Bug Fixes
+
+* key the index cache on the indexer's content, not its install time ([#40](https://github.com/mokevnin/easement/issues/40)) ([3067fdd](https://github.com/mokevnin/easement/commit/3067fdd2b75596d44319e51ac6ff6a60c6b74c58))
+
 ## [0.3.4](https://github.com/mokevnin/easement/compare/v0.3.3...v0.3.4) (2026-10-29)
 
 
