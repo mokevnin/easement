@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/mokevnin/easement/compare/v0.3.3...v0.3.4) (2026-10-29)
+
+
+### Features
+
+* key each index on the files its indexer reads ([#38](https://github.com/mokevnin/easement/issues/38)) ([49d0ea5](https://github.com/mokevnin/easement/commit/49d0ea530c5eee180af6996540fd199ec948c709))
+
 ## [0.3.3](https://github.com/mokevnin/easement/compare/v0.3.2...v0.3.3) (2026-10-28)
 
 
