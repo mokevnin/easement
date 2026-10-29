@@ -409,9 +409,7 @@ fn fingerprint(
     language.name.hash(&mut hasher);
     env.hash(&mut hasher);
     (language.args)(Path::new("")).hash(&mut hasher);
-    if let Ok(meta) = std::fs::metadata(binary) {
-        (binary, meta.len(), meta.modified().ok()).hash(&mut hasher);
-    }
+    indexer_identity(binary).hash(&mut hasher);
     let prefix = if dir.is_empty() {
         String::new()
     } else {
@@ -439,6 +437,40 @@ fn fingerprint(
     seen.sort();
     seen.hash(&mut hasher);
     hasher.finish()
+}
+
+/// What tells one build of an indexer from another: where it really is (symbolic links
+/// resolved, so a version manager's install directory names the version) and a hash of its
+/// content. Not when it was installed: a CI runner that restores the toolchain from a cache gets
+/// the same files with other modification times, and must still find the indexes. The indexer is
+/// not run for a version: some (scip-php) take any argument as a request to index. A binary
+/// that cannot be read is told apart by its modification time, which only costs reuse.
+fn indexer_identity(
+    binary: &Path,
+) -> (Option<PathBuf>, Option<u64>, Option<std::time::SystemTime>) {
+    static CONTENT: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Option<u64>>>,
+    > = std::sync::OnceLock::new();
+    let real = std::fs::canonicalize(binary).ok();
+    let path = real.clone().unwrap_or_else(|| binary.to_path_buf());
+    let hash = |path: &Path| {
+        std::fs::read(path).ok().map(|bytes| {
+            let mut h = DefaultHasher::new();
+            bytes.hash(&mut h);
+            h.finish()
+        })
+    };
+    let content = CONTENT
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut seen| *seen.entry(path.clone()).or_insert_with(|| hash(&path)))
+        .unwrap_or_else(|_| hash(&path));
+    let modified = if content.is_some() {
+        None
+    } else {
+        std::fs::metadata(binary).and_then(|m| m.modified()).ok()
+    };
+    (real, content, modified)
 }
 
 /// The file the index of `dir` is kept in; the name carries the fingerprint, so a
@@ -769,6 +801,24 @@ mod tests {
         for path in ["main.go", "go.mod", "README.md", "style.css", "logo.svg"] {
             assert!(!typescript_inputs(path), "{path}");
         }
+    }
+
+    #[test]
+    fn an_indexer_is_told_apart_by_its_content_not_by_when_it_was_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("scip-go");
+        std::fs::write(&first, "build 1").unwrap();
+        let identity = indexer_identity(&first);
+        assert!(identity.1.is_some() && identity.2.is_none(), "{identity:?}");
+        // The same build restored from a cache: another modification time, the same identity.
+        let file = std::fs::File::options().write(true).open(&first).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        assert_eq!(indexer_identity(&first), identity);
+        // Another build is another indexer.
+        let second = dir.path().join("other");
+        std::fs::write(&second, "build 2").unwrap();
+        assert_ne!(indexer_identity(&second).1, identity.1);
     }
 
     #[test]
