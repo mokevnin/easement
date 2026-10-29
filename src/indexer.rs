@@ -409,9 +409,7 @@ fn fingerprint(
     language.name.hash(&mut hasher);
     env.hash(&mut hasher);
     (language.args)(Path::new("")).hash(&mut hasher);
-    if let Ok(meta) = std::fs::metadata(binary) {
-        (binary, meta.len(), meta.modified().ok()).hash(&mut hasher);
-    }
+    indexer_identity(binary).hash(&mut hasher);
     let prefix = if dir.is_empty() {
         String::new()
     } else {
@@ -439,6 +437,34 @@ fn fingerprint(
     seen.sort();
     seen.hash(&mut hasher);
     hasher.finish()
+}
+
+/// What tells one build of an indexer from another: its `--version` line and its size. Not where
+/// it is installed or when: a CI runner that restores the toolchain from a cache gets the same
+/// files with other modification times, and must still find the indexes. An indexer that prints
+/// no version is told apart by its modification time too, which only costs reuse.
+fn indexer_identity(binary: &Path) -> (Option<String>, Option<u64>, Option<std::time::SystemTime>) {
+    static VERSIONS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    let version = VERSIONS
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut versions| {
+            versions
+                .entry(binary.to_path_buf())
+                .or_insert_with(|| version_of(binary))
+                .clone()
+        })
+        .unwrap_or_else(|_| version_of(binary));
+    let meta = std::fs::metadata(binary).ok();
+    let size = meta.as_ref().map(std::fs::Metadata::len);
+    let modified = if version.is_some() {
+        None
+    } else {
+        meta.and_then(|m| m.modified().ok())
+    };
+    (version, size, modified)
 }
 
 /// The file the index of `dir` is kept in; the name carries the fingerprint, so a
@@ -769,6 +795,30 @@ mod tests {
         for path in ["main.go", "go.mod", "README.md", "style.css", "logo.svg"] {
             assert!(!typescript_inputs(path), "{path}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_indexer_is_told_apart_by_its_version_not_by_when_it_was_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, version: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\necho {version}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let first = write("first", "scip-go 0.2.9");
+        let identity = indexer_identity(&first);
+        assert_eq!(identity.0.as_deref(), Some("scip-go 0.2.9"));
+        // The same build restored from a cache: other modification time, same identity.
+        let file = std::fs::File::options().write(true).open(&first).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        assert_eq!(indexer_identity(&first), identity);
+        // Another version is another indexer.
+        let second = write("second", "scip-go 0.3.0");
+        assert_ne!(indexer_identity(&second), identity);
     }
 
     #[test]
