@@ -70,8 +70,12 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         scope: Vec<String>,
         /// Run the indexers even when an index of the unchanged project is cached.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "cache_only")]
         no_cache: bool,
+        /// Run no indexer: read every index from the cache, and exit 3 when one is not
+        /// cached. For CI, to set up an indexer's toolchain only when it has to run.
+        #[arg(long)]
+        cache_only: bool,
     },
     /// Record current violations as legalized debt in the baseline file.
     Baseline {
@@ -253,7 +257,7 @@ struct CheckOptions {
     diff: Option<String>,
     components: Vec<String>,
     paths: Vec<String>,
-    no_cache: bool,
+    index_cache: indexer::CacheUse,
 }
 
 fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
@@ -318,7 +322,7 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<bool> {
 /// Runs the check, then again after every change of the project. Never returns
 /// on its own; errors (a broken config mid-edit) are shown and waited out.
 fn watch(options: &CheckOptions) -> Result<bool> {
-    let mut cache = scan::Cache::new(options.no_cache);
+    let mut cache = scan::Cache::new(options.index_cache);
     let mut last = None;
     loop {
         let stamp = Project::open(&options.config)
@@ -350,7 +354,15 @@ fn run(cli: Cli) -> Result<bool> {
             component,
             scope,
             no_cache,
+            cache_only,
         } => {
+            let index_cache = if no_cache {
+                indexer::CacheUse::Off
+            } else if cache_only {
+                indexer::CacheUse::Only
+            } else {
+                indexer::CacheUse::On
+            };
             let options = CheckOptions {
                 config,
                 format,
@@ -358,12 +370,12 @@ fn run(cli: Cli) -> Result<bool> {
                 diff,
                 components: component,
                 paths: scope,
-                no_cache,
+                index_cache,
             };
             if watching {
                 watch(&options)
             } else {
-                check(&options, &mut scan::Cache::new(options.no_cache))
+                check(&options, &mut scan::Cache::new(options.index_cache))
             }
         }
         Command::Baseline { config } => {
@@ -495,7 +507,11 @@ fn main() -> ExitCode {
         Err(err) => {
             let red = anstyle::AnsiColor::Red.on_default().bold();
             anstream::eprintln!("easement: {red}error{red:#}: {err:#}");
-            ExitCode::from(2)
+            if err.downcast_ref::<indexer::NotCached>().is_some() {
+                ExitCode::from(3)
+            } else {
+                ExitCode::from(2)
+            }
         }
     }
 }

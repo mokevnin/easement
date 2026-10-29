@@ -35,15 +35,15 @@ struct Parsed {
 #[derive(Default)]
 pub struct Cache {
     parsed: HashMap<PathBuf, Parsed>,
-    /// Run the indexers even when an index of the unchanged project is cached.
-    pub no_index_cache: bool,
+    /// Whether the indexers' output is read from and kept in the index cache.
+    pub index_cache: indexer::CacheUse,
 }
 
 impl Cache {
-    /// A cache that also keeps the indexers' output between runs unless `no_index_cache`.
-    pub fn new(no_index_cache: bool) -> Self {
+    /// A cache that also keeps the indexers' output between runs as `index_cache` says.
+    pub fn new(index_cache: indexer::CacheUse) -> Self {
         Self {
-            no_index_cache,
+            index_cache,
             ..Self::default()
         }
     }
@@ -159,7 +159,7 @@ pub fn scan(root: &Path, config: &Config, cache: &mut Cache) -> Result<Scan> {
     }
     cache.parsed.retain(|path, _| seen.contains(path));
 
-    let indexed = indexer::run(root, &all_files, !cache.no_index_cache, &config.go.tags)?;
+    let indexed = indexer::run(root, &all_files, cache.index_cache, &config.go.tags)?;
     let project: HashSet<&str> = all_files.iter().map(String::as_str).collect();
     let documents: Vec<scip::Document> = indexed
         .documents

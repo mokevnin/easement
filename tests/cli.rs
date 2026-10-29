@@ -1617,6 +1617,32 @@ fn a_change_to_one_language_reuses_the_index_of_the_other() {
 }
 
 #[test]
+fn cache_only_runs_no_indexer_and_exits_3_on_a_miss() {
+    let (_tmp, root) = fixture("go");
+    let cache = TempDir::new().unwrap();
+    // Nothing cached yet: no indexer runs, and the miss has its own exit code.
+    easement_cached(&root, &["check", "--cache-only"], cache.path())
+        .code(3)
+        .stderr(contains("not cached"));
+    // The fixture has violations: exit 1 with the index read from the cache.
+    easement_cached(&root, &["check"], cache.path()).code(1);
+    let out = easement_cached(
+        &root,
+        &["check", "--cache-only", "--format", "json"],
+        cache.path(),
+    )
+    .code(1);
+    let report: serde_json::Value = serde_json::from_str(&stdout_of(out)).unwrap();
+    assert_eq!(report["stats"]["from_cache"], 1);
+    easement_cached(
+        &root,
+        &["check", "--cache-only", "--no-cache"],
+        cache.path(),
+    )
+    .code(2);
+}
+
+#[test]
 fn indexes_are_cached_until_the_project_changes() {
     let (_tmp, root) = fixture("go");
     let cache = TempDir::new().unwrap();
