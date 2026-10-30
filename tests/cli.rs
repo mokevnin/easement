@@ -748,15 +748,16 @@ fn watch_checks_again_after_a_change() {
     assert!(failed, "the change was not picked up");
 }
 
+/// scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228), so the Ruby tests
+/// skip themselves there. Anywhere else a missing indexer is still an error.
+fn no_scip_ruby_here() -> bool {
+    cfg!(all(target_os = "linux", target_arch = "aarch64")) && which::which("scip-ruby").is_err()
+}
+
 /// Every layered fixture has one forbidden import, web -> infra, and allowed ones
 /// that must be seen: the count of internal dependencies proves the adapter resolved them.
 fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
-    // scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228). Anywhere else a
-    // missing indexer is still an error.
-    if name == "ruby"
-        && cfg!(all(target_os = "linux", target_arch = "aarch64"))
-        && which::which("scip-ruby").is_err()
-    {
+    if name == "ruby" && no_scip_ruby_here() {
         return;
     }
     let (_tmp, root) = fixture(name);
@@ -1111,6 +1112,9 @@ fn forbid_symbol_catches_every_way_to_use_a_type() {
 
 #[test]
 fn ruby_symbols_are_constants_and_methods() {
+    if no_scip_ruby_here() {
+        return;
+    }
     let (_tmp, root) = fixture("ruby_symbols");
     easement(&root, &["check"])
         .code(1)
