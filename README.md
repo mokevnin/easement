@@ -270,10 +270,10 @@ The qualifier in front of the name depends on the language:
 - Python: the dotted module;
 - PHP: the namespace with `\`;
 - Java and C#: the namespace with `.`;
-- Ruby: the module path with `::`;
+- Ruby: the module path with `::` (`ActiveRecord.Rollback`); a method is named by the class or module that defines it (`Shop::Db::Client.connect`) and also counts as a use of it;
 - Rust: the crate and module path.
 
-Symbol rules work for every language an indexer resolves; Kotlin and Swift, which are read with tree-sitter, say nothing.
+Symbol rules work for Go, TypeScript, Python, Rust and Ruby. PHP, Java and C# do not report symbol uses yet, and Kotlin and Swift, which are read with tree-sitter, say nothing.
 
 ### Tests
 
@@ -485,7 +485,10 @@ Python:
 Ruby:
 
 - `require` and `require_relative` are strings, so only the constants a file uses count, as a dependency on the file that defines the class (the deepest constant of `Shop::Domain::Order`). A method call counts as a use of its class.
-- `scip-ruby` gives the standard library's classes and the project's the same package, and a gem's constants appear only when Sorbet has an RBI for the gem, so `forbid_external` is blind to Ruby.
+- `scip-ruby` gives the standard library's classes and the project's the same package, and a gem's constants appear only when Sorbet has an RBI for the gem, so `forbid_external` is blind to Ruby. The same holds for `forbid_symbol`: `ActiveRecord.Rollback` is found once the gem's RBI is in `sorbet/rbi` (`tapioca gems`).
+- A method call is seen only where Sorbet knows the type of the receiver: a constant, the result of `new`, or a value whose `sig` names its class; a call on an untyped value is not a use. `Order.new` is Sorbet's `Class#new`, so forbid the class, not `new`.
+- A method inherited or mixed in is named by where it is defined, not by the receiver: `Post.transaction` in Rails is `ActiveRecord::Transactions::ClassMethods.transaction`, and for `public_symbols` a method of a parent class or a concern is a use of that parent or concern.
+- A module that several files reopen (a namespace such as `Shop`) belongs to no one component, so `public_symbols` judges the classes and modules that one file defines. A module function counts as a use of its module: `Shop::Db.helper` uses `Db`.
 
 Rust: the dependency of a line is the deepest module it names, `std`, `core` and `alloc` all count as `std`, and `rust-analyzer` must be installed (`rustup component add rust-analyzer`).
 

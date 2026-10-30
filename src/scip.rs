@@ -10,7 +10,7 @@
 //! References to symbols that no document of the index defines point outside
 //! the project: they are external modules.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -222,24 +222,39 @@ fn class_symbol(symbol: &str) -> String {
     let Some(text) = parts.next() else {
         return symbol.to_string();
     };
-    // Ruby nests its classes in modules, which are types too (`Shop#Web#Order#run().`):
-    // the class is the last of the leading types. Elsewhere it is the first one.
-    let ruby = header.first() == Some(&"scip-ruby");
-    let cut = scan(text).and_then(|found| {
-        if ruby {
-            let leading = found.iter().take_while(|(_, kind, _)| *kind == Kind::Type);
-            leading.last().cloned()
-        } else {
-            found.into_iter().find(|(_, kind, _)| *kind == Kind::Type)
+    let Some(found) = scan(text) else {
+        return symbol.to_string();
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let kept: String = if header.first() == Some(&"scip-ruby") {
+        // Ruby nests its classes in modules, which are types too (`Shop#Web#Order#run().`):
+        // the class is the last of the leading types. A class method belongs to the
+        // singleton class (`Shop#Web#`<Class:Order>`#find().`), which stands for the class.
+        let leading = found
+            .iter()
+            .take_while(|(_, kind, _)| *kind == Kind::Type)
+            .count();
+        let Some((name, _, end)) = leading.checked_sub(1).map(|last| &found[last]) else {
+            return symbol.to_string();
+        };
+        match name
+            .strip_prefix("<Class:")
+            .and_then(|n| n.strip_suffix('>'))
+        {
+            Some(class) => {
+                let start = leading.checked_sub(2).map_or(0, |before| found[before].2);
+                format!("{}{class}#", chars[..start].iter().collect::<String>())
+            }
+            None => chars[..*end].iter().collect(),
         }
-    });
-    match cut {
-        Some((_, _, end)) => {
-            let kept: String = text.chars().take(end).collect();
-            format!("{} {kept}", header.join(" "))
+    } else {
+        // Elsewhere the class is the first type.
+        match found.iter().find(|(_, kind, _)| *kind == Kind::Type) {
+            Some((_, _, end)) => chars[..*end].iter().collect(),
+            None => return symbol.to_string(),
         }
-        None => symbol.to_string(),
-    }
+    };
+    format!("{} {kept}", header.join(" "))
 }
 
 /// What a reference points at.
@@ -410,6 +425,72 @@ fn npm_name(package: &str) -> String {
     }
 }
 
+/// The use a Ruby reference makes: of a constant (`Shop::Db::Client` is `Shop::Db.Client`)
+/// or of a method, which is also a use of its class (`Shop::Db::Client.query`). Of the
+/// constants a line spells out only the deepest one counts, as for dependencies.
+fn ruby_use(
+    reference: &Reference,
+    path: &str,
+    defined: &HashMap<&str, &str>,
+    reopened: &HashSet<&str>,
+    mine: &HashSet<&str>,
+    shadowed: impl Fn(&Parsed, usize) -> bool,
+) -> Option<SymbolRef> {
+    let class = class_symbol(&reference.symbol);
+    let parsed = split(&class)?;
+    let names: Vec<&str> = parsed.descriptors.iter().map(|(n, _)| n.as_str()).collect();
+    let (name, outer) = names.split_last()?;
+    if !parsed
+        .descriptors
+        .iter()
+        .all(|(_, kind)| *kind == Kind::Type)
+    {
+        return None;
+    }
+    let method = match class == reference.symbol {
+        true => None,
+        false => Some(
+            split(&reference.symbol)?
+                .descriptors
+                .get(names.len())?
+                .0
+                .clone(),
+        ),
+    };
+    if method.is_none() && shadowed(&parsed, reference.line) {
+        return None;
+    }
+    // A module reopened in several files is no one file's.
+    let home = |symbol: &str| {
+        (!reopened.contains(symbol))
+            .then(|| defined.get(symbol))
+            .flatten()
+    };
+    let home = method
+        .is_some()
+        .then(|| home(&reference.symbol))
+        .flatten()
+        .or_else(|| home(&class));
+    // A constant that this file opens itself (`Shop` around its classes) is no use of it.
+    if home == Some(&path) || (method.is_none() && mine.contains(class.as_str())) {
+        return None;
+    }
+    let qualified = names.join("::");
+    let target = match home {
+        Some(file) => Some(Target::Internal(PathBuf::from(file))),
+        None if defined.contains_key(class.as_str()) => None,
+        None => Some(Target::External(qualified.clone())),
+    };
+    Some(SymbolRef {
+        file: PathBuf::from(path),
+        line: reference.line,
+        specifier: outer.join("::"),
+        name: name.to_string(),
+        method: method.map(|method| (qualified, method)),
+        target,
+    })
+}
+
 /// Dependencies and symbol uses of the documents.
 pub struct Facts {
     pub deps: Vec<Dep>,
@@ -420,9 +501,14 @@ pub struct Facts {
 /// the import. With `symbols`, also one `SymbolRef` per use of a name.
 pub fn facts(documents: &[Document], symbols: bool) -> Facts {
     let mut defined: HashMap<&str, &str> = HashMap::new();
+    // Symbols that more than one file defines: a Ruby module reopened in each file under it.
+    let mut reopened: HashSet<&str> = HashSet::new();
     for document in documents {
         for symbol in &document.definitions {
             let entry = defined.entry(symbol).or_insert(&document.path);
+            if *entry != document.path.as_str() {
+                reopened.insert(symbol);
+            }
             if document.path.as_str() < *entry {
                 *entry = &document.path;
             }
@@ -487,7 +573,18 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
         };
         // (target, module) -> first line
         let mut first: BTreeMap<(Option<&str>, String), usize> = BTreeMap::new();
+        let mine: HashSet<&str> = document.definitions.iter().map(String::as_str).collect();
         for reference in &document.references {
+            if symbols && reference.symbol.starts_with("scip-ruby ") {
+                uses.extend(ruby_use(
+                    reference,
+                    &document.path,
+                    &defined,
+                    &reopened,
+                    &mine,
+                    shadowed,
+                ));
+            }
             // For PHP, Java, C# and Ruby a member (a method, a constructor) is a use of its class.
             let symbol = if reference.symbol.starts_with("scip-php ")
                 || reference.symbol.starts_with("scip-java ")
@@ -549,7 +646,8 @@ pub fn facts(documents: &[Document], symbols: bool) -> Facts {
                         line: reference.line,
                         specifier: parsed.qualifier(home),
                         name,
-                        target,
+                        method: None,
+                        target: Some(target),
                     });
                 }
             }
@@ -641,6 +739,126 @@ mod tests {
     }
 
     #[test]
+    fn a_ruby_class_method_is_a_use_of_its_class() {
+        let order = "scip-ruby gem project 0 Shop#Domain#Order#";
+        let find = "scip-ruby gem project 0 Shop#Domain#`<Class:Order>`#find().";
+        let docs = [
+            doc("lib/order.rb", &[order, find], &[]),
+            doc("lib/web.rb", &[], &[(5, find)]),
+        ];
+        let deps = facts(&docs, false).deps;
+        let found: Vec<_> = deps
+            .iter()
+            .map(|d| (d.line, d.specifier.as_str()))
+            .collect();
+        assert_eq!(found, [(5, "lib/order.rb")]);
+    }
+
+    #[test]
+    fn ruby_constants_and_methods_are_symbol_uses() {
+        let ruby = "scip-ruby gem project 0 ";
+        let client = format!("{ruby}Shop#Db#Client#");
+        let query = format!("{ruby}Shop#Db#Client#query().");
+        let connect = format!("{ruby}Shop#Db#`<Class:Client>`#connect().");
+        let helper = format!("{ruby}Shop#`<Class:Db>`#helper().");
+        let config = format!("{ruby}`<Class:Shop>`#config().");
+        let docs = [
+            doc(
+                "lib/shop/db/client.rb",
+                &[
+                    &format!("{ruby}Shop#"),
+                    &format!("{ruby}Shop#Db#"),
+                    &client,
+                    &query,
+                    &connect,
+                    &helper,
+                ],
+                &[],
+            ),
+            doc(
+                "lib/shop/db/rollback.rb",
+                &[&format!("{ruby}Shop#"), &format!("{ruby}Shop#Db#")],
+                &[],
+            ),
+            doc("lib/shop.rb", &[&format!("{ruby}Shop#"), &config], &[]),
+            doc(
+                "lib/shop/web/controller.rb",
+                &[&format!("{ruby}Shop#"), &format!("{ruby}Shop#Web#")],
+                &[
+                    (7, &format!("{ruby}Shop#")),
+                    (7, &format!("{ruby}Shop#Db#")),
+                    (7, &client),
+                    (7, &connect),
+                    (8, &query),
+                    (9, &format!("{ruby}Kernel#raise().")),
+                    (9, &format!("{ruby}ActiveRecord#")),
+                    (9, &format!("{ruby}ActiveRecord#Rollback#")),
+                    (12, &format!("{ruby}Shop#")),
+                    (12, &format!("{ruby}Shop#Db#")),
+                    (12, &helper),
+                    (14, &config),
+                ],
+            ),
+        ];
+        let uses: Vec<_> = facts(&docs, true)
+            .symbols
+            .into_iter()
+            .map(|u| {
+                let method = u.method.map(|(owner, name)| format!("{owner}.{name}"));
+                (
+                    u.line,
+                    format!("{}.{}", u.specifier, u.name),
+                    method,
+                    u.target,
+                )
+            })
+            .collect();
+        let db = || Some(Target::Internal(PathBuf::from("lib/shop/db/client.rb")));
+        let method = |m: &str| Some(m.to_string());
+        assert_eq!(
+            uses,
+            [
+                (7, "Shop::Db.Client".into(), None, db()),
+                (
+                    7,
+                    "Shop::Db.Client".into(),
+                    method("Shop::Db::Client.connect"),
+                    db()
+                ),
+                (
+                    8,
+                    "Shop::Db.Client".into(),
+                    method("Shop::Db::Client.query"),
+                    db()
+                ),
+                (
+                    9,
+                    ".Kernel".into(),
+                    method("Kernel.raise"),
+                    Some(Target::External("Kernel".into()))
+                ),
+                (
+                    9,
+                    "ActiveRecord.Rollback".into(),
+                    None,
+                    Some(Target::External("ActiveRecord::Rollback".into()))
+                ),
+                // Shop::Db is reopened in both files of lib/shop/db: no one file owns it.
+                (12, "Shop.Db".into(), None, None),
+                (12, "Shop.Db".into(), method("Shop::Db.helper"), db()),
+                // The file opens Shop too, but the method is defined elsewhere.
+                (
+                    14,
+                    ".Shop".into(),
+                    method("Shop.config"),
+                    Some(Target::Internal(PathBuf::from("lib/shop.rb")))
+                ),
+            ]
+        );
+        assert!(facts(&docs, false).symbols.is_empty());
+    }
+
+    #[test]
     fn parses_descriptors() {
         let d = descriptors("src/lib/`index.ts`/Client#Query().").unwrap();
         let names: Vec<_> = d.iter().map(|(n, _)| n.as_str()).collect();
@@ -712,9 +930,9 @@ mod tests {
         assert_eq!(uses[0].specifier, "example.com/app/internal/db");
         assert_eq!(
             uses[0].target,
-            Target::Internal(PathBuf::from("internal/db/db.go"))
+            Some(Target::Internal(PathBuf::from("internal/db/db.go")))
         );
-        assert_eq!(uses[1].target, Target::External("fmt".into()));
+        assert_eq!(uses[1].target, Some(Target::External("fmt".into())));
         assert!(facts(&documents, false).symbols.is_empty());
     }
 

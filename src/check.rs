@@ -150,7 +150,12 @@ pub struct SymbolRef {
     pub line: usize,
     pub specifier: String,
     pub name: String,
-    pub target: Target,
+    /// The method of `name` that is called, with what `forbid_symbol` names it
+    /// through: `Shop::Db::Client` and `query`.
+    pub method: Option<(String, String)>,
+    /// None for a name of the project that no one file defines (a Ruby module
+    /// reopened in each file under it): no component owns it.
+    pub target: Option<Target>,
 }
 
 /// An import between two different components.
@@ -692,7 +697,13 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
         };
         if let Some(rule) = config.rules.get(from) {
             for listed in &rule.forbid_symbol {
-                if names_symbol(listed.name(), &used.specifier, &used.name) {
+                let pattern = listed.name();
+                if names_symbol(pattern, &used.specifier, &used.name)
+                    || used
+                        .method
+                        .as_ref()
+                        .is_some_and(|(owner, method)| names_symbol(pattern, owner, method))
+                {
                     report(
                         format!("{from} must not use {}", listed.name()),
                         listed.name().to_string(),
@@ -702,7 +713,7 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
                 }
             }
         }
-        if let Target::Internal(path) = &used.target
+        if let Some(Target::Internal(path)) = &used.target
             && let Some(to) = map.component_of(&slash(path))
             && to != from
             && let Some(public) = &config.components[to].public_symbols
