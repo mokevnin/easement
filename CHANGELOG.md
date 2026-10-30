@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.7](https://github.com/mokevnin/easement/compare/v0.3.6...v0.3.7) (2026-10-30)
+
+
+### Bug Fixes
+
+* report Ruby constants and methods to forbid_symbol and public_symbols ([#44](https://github.com/mokevnin/easement/issues/44)) ([b21f15d](https://github.com/mokevnin/easement/commit/b21f15d8353a520c36c1043c92cb09b033fd03aa))
+
 ## [0.3.6](https://github.com/mokevnin/easement/compare/v0.3.5...v0.3.6) (2026-10-29)
 
 
