@@ -1,0 +1,19 @@
+version: 1
+
+components:
+  db:
+    in: lib/shop/db
+    public_symbols: [Scoped]
+    because: callers get a scoped client, never the raw one
+  mutators: { in: lib/shop/mutators }
+  web: { in: lib/shop/web }
+
+rules:
+  mutators:
+    may_depend_on: [db]
+    forbid_symbol:
+      - { name: "ActiveRecord.Rollback", because: "a mutator returns its failure, it does not roll back" }
+  web:
+    may_depend_on: [db]
+    forbid_symbol:
+      - { name: "Shop::Db::Client.connect", because: "connections come from the pool" }

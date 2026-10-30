@@ -748,15 +748,16 @@ fn watch_checks_again_after_a_change() {
     assert!(failed, "the change was not picked up");
 }
 
+/// scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228), so the Ruby tests
+/// skip themselves there. Anywhere else a missing indexer is still an error.
+fn no_scip_ruby_here() -> bool {
+    cfg!(all(target_os = "linux", target_arch = "aarch64")) && which::which("scip-ruby").is_err()
+}
+
 /// Every layered fixture has one forbidden import, web -> infra, and allowed ones
 /// that must be seen: the count of internal dependencies proves the adapter resolved them.
 fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
-    // scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228). Anywhere else a
-    // missing indexer is still an error.
-    if name == "ruby"
-        && cfg!(all(target_os = "linux", target_arch = "aarch64"))
-        && which::which("scip-ruby").is_err()
-    {
+    if name == "ruby" && no_scip_ruby_here() {
         return;
     }
     let (_tmp, root) = fixture(name);
@@ -1107,6 +1108,41 @@ fn forbid_symbol_catches_every_way_to_use_a_type() {
         ))
         .stdout(contains("allowed.go").not())
         .stdout(contains("7 violation(s)"));
+}
+
+#[test]
+fn ruby_symbols_are_constants_and_methods() {
+    if no_scip_ruby_here() {
+        return;
+    }
+    let (_tmp, root) = fixture("ruby_symbols");
+    easement(&root, &["check"])
+        .code(1)
+        // A gem's constant, which Sorbet knows from the RBI in sorbet/rbi.
+        .stdout(contains(
+            "lib/shop/mutators/publish.rb:8: mutators must not use ActiveRecord.Rollback [symbol]",
+        ))
+        .stdout(contains(
+            "because: a mutator returns its failure, it does not roll back",
+        ))
+        // One method of a class, called on the class.
+        .stdout(contains(
+            "lib/shop/web/controller.rb:18: web must not use Shop::Db::Client.connect [symbol]",
+        ))
+        // The class in a signature, a method called on a value of it, and a class method.
+        .stdout(contains(
+            "lib/shop/web/controller.rb:11: web -> db: Client is not in the public symbols of db (Scoped)",
+        ))
+        .stdout(contains(
+            "lib/shop/web/controller.rb:13: web -> db: Client is not in the public symbols of db (Scoped)",
+        ))
+        .stdout(contains(
+            "lib/shop/web/controller.rb:18: web -> db: Client is not in the public symbols of db (Scoped)",
+        ))
+        // Scoped is public, Shop::Db is only the namespace, and web may raise a rollback.
+        .stdout(contains("controller.rb:17").not())
+        .stdout(contains("controller.rb:19").not())
+        .stdout(contains("5 violation(s)"));
 }
 
 #[test]
