@@ -35,30 +35,53 @@ Go, TypeScript/JavaScript, Python, Rust, PHP, Java, C# and Ruby are resolved by 
 
 ## Usage
 
-```sh
-easement init                  # write a starting easement.yml from the code as it is
-easement check                 # exit 0: passed, 1: violations, 2: error, 3: --cache-only met an index that is not cached
-easement check --format json   # machine-readable report; also sarif, github, junit
-easement check --diff origin/main  # only imports added in this change
-easement check --watch         # check again on every change
-easement check --no-cache      # run the indexers even if their output is cached
-easement check --cache-only    # run no indexer: read every index from the cache, exit 3 on a miss
-easement check --component web # report only on the files of one component (repeatable)
-easement check --scope src/api # report only on files under a path (repeatable)
-easement baseline              # legalize current violations
-easement explain src/app/a.ts  # which component a file is in and what it may do
-easement graph                 # the components as a Mermaid diagram (--format dot)
-easement suggest               # what the real graph says about the config
-easement suggest --patch        # the unused allowances as a patch for easement.yml
-easement suggest --check        # exit 1 while may_depend_on has unused entries (for CI)
-easement doctor                # are the indexers the project needs installed (--format json)
-easement schema                # the JSON Schema of easement.yml
-easement completions zsh       # shell completions: bash, zsh, fish, powershell, elvish
+Start from the code as it is: `easement init` finds the components in the layout of the project and allows every dependency it sees between them.
+
+```text
+$ easement init
+easement: wrote easement.yml with 4 components and 5 allowed dependencies; remove the dependencies that should not exist, then run `easement check`
 ```
 
-The text report is coloured on a terminal. `--color auto|always|never` overrides that; `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`. The structured formats are never coloured.
+```yaml
+rules:
+  handlers: { may_depend_on: [repository, services] }
+  repository: { may_depend_on: [models] }
+  services: { may_depend_on: [models, repository] }
+```
 
-Completions for zsh go to a directory on your `fpath`: `easement completions zsh > ~/.zfunc/_easement`.
+Then say what the architecture should be. Handlers should not reach the storage directly, so drop `repository` from their allowances and give the reason:
+
+```yaml
+  handlers:
+    may_depend_on: [services]
+    because: handlers go through services, never straight to storage
+```
+
+`easement check` now points at the code that breaks the rule, like any linter:
+
+```text
+$ easement check
+internal/handlers/books.go:6: handlers -> repository is not allowed (imports internal/repository/books.go) [dependency]
+  because: handlers go through services, never straight to storage
+
+easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps, 1 files outside components
+```
+
+It exits 0 when the code matches the config, 1 on violations and 2 on an error (a broken config, a missing indexer). Fix the import (or, if it is right, the rule) and run it again.
+
+The commands you will use most:
+
+```sh
+easement init                 # write a starting easement.yml
+easement check                # check the project
+easement check --diff main    # only what this branch adds, see Diff mode
+easement baseline             # accept the current violations, fail on new ones
+easement explain <file>       # which component a file is in and what it may do
+easement suggest              # allowances nothing uses, imports nothing allows
+easement doctor               # are the indexers the project needs installed
+```
+
+`easement --help` and `easement <command> --help` list the rest: the report formats for CI, `graph`, `schema`, `--watch`, the cache flags, shell completions (`easement completions zsh > ~/.zfunc/_easement`). The text report is coloured on a terminal; `--color auto|always|never` overrides that, and `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`.
 
 ### init
 
@@ -112,13 +135,6 @@ exclude: ["**/*_test.go"]
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
 - **target_only**: globs of generated files that stay in the graph as targets but are never checked as sources. Components can own them (`web-generated: { in: src/generated }`), and rules can allow or forbid importing them (`must_not_depend_on: [web-generated]`); their own imports, symbol uses and directives are not checked. `exclude` wins when a file matches both.
 - **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all, and no import of them is seen. To hold tests to rules of their own, see [Tests](#tests).
-
-```text
-$ easement check
-internal/handlers/books.go:6: handler -> repository is not allowed (imports example.com/shop/internal/repository) [dependency]
-
-easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps
-```
 
 ## Rules
 
