@@ -29,6 +29,27 @@ Homebrew works on macOS and Linux. Other options:
 
 Windows binaries are built, but Windows is not tested and its support is not guaranteed: some indexers do not work there.
 
+## Set up with a coding agent
+
+Copy this prompt into Claude Code, Codex, Cursor or another coding agent opened in your project. The agent installs `easement` and the indexers, writes `easement.yml` for the architecture it finds, wires the check into CI and adds the rules for itself to the project's agent instructions.
+
+```text
+Set up easement (https://github.com/mokevnin/easement), an architecture quality gate, in this project. Read its README first; it is the reference for every step below.
+
+1. Install easement the way this project installs its tools: a line in mise.toml if the project uses mise ("github:mokevnin/easement" = "latest"), otherwise Homebrew or the install script from the README.
+2. Run `easement doctor --format json` and install every indexer it reports missing, again the way the project installs tools. Repeat until it exits 0.
+3. Run `easement init`, then `easement check`. If the report says files are not covered by an indexer, fix the cause (a tsconfig include, a missing go.mod) or list them in `uncovered_ok` with a reason.
+4. Study the code and turn the generated config into the intended architecture: remove the allowances that should not exist, give every rule a `because` that tells where the code should go instead, and use `layers`, `public`, `no_cycles` and `tests: auto` where they fit. Do not change application code to make the check pass. Record the existing violations with `easement baseline`.
+5. Add the check to CI: the GitHub Action from the README with `diff` on pull requests if the project uses GitHub Actions, otherwise `easement check` in the existing pipeline. If the project has git hooks, run it on pre-push.
+6. Add these rules to the project's agent instructions (AGENTS.md, CLAUDE.md or whatever file the project already uses; create AGENTS.md if there is none):
+   - Before adding a file or an import, run `easement explain <file>` to see its component and what it may depend on.
+   - After changing code, run `easement check`; it must exit 0.
+   - On a violation, follow its `because` and move the code. Never edit easement.yml, regenerate the baseline or add an `easement:disable` comment without asking a human.
+7. Run `easement check` once more and report: the components and rules you chose and why, the number of baselined violations, and anything you were unsure about.
+```
+
+Review the rules it proposes: an agent sees the code as it is, and only you know which of today's dependencies are mistakes.
+
 ## Status
 
 Go, TypeScript/JavaScript, Python, Rust, PHP, Java, C# and Ruby are resolved by [SCIP](https://scip-code.org/) indexers, so they need the [indexers](#indexers) installed; Kotlin and Swift are read with tree-sitter.
