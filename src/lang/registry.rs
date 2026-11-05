@@ -13,6 +13,7 @@ pub enum Manifest {
     Npm,
     Go,
     Cargo,
+    Pub,
 }
 
 impl Manifest {
@@ -21,6 +22,7 @@ impl Manifest {
             Manifest::Npm => "package.json",
             Manifest::Go => "go.mod",
             Manifest::Cargo => "Cargo.toml",
+            Manifest::Pub => "pubspec.yaml",
         }
     }
 }
@@ -226,8 +228,23 @@ pub static RUST: Language = Language {
     parts: Some(parts::rust),
 };
 
+/// Dart and Flutter sources, resolved by the Pub indexer.
+pub static DART: Language = Language {
+    name: "dart",
+    extensions: &["dart"],
+    tests: &["**/*_test.dart"],
+    not_tests: &[],
+    whole_directory: false,
+    std: Some(stdlib::dart),
+    unused: &[],
+    conventional: &[],
+    manifest: Some(Manifest::Pub),
+    symbols: true,
+    parts: None,
+};
+
 /// Every language, in the order their test globs are listed.
-pub static LANGUAGES: [&Language; 10] = [
+pub static LANGUAGES: [&Language; 11] = [
     &GO,
     &TYPESCRIPT,
     &PYTHON,
@@ -238,6 +255,7 @@ pub static LANGUAGES: [&Language; 10] = [
     &SWIFT,
     &RUBY,
     &RUST,
+    &DART,
 ];
 
 /// The language of a file, by its extension.
@@ -251,7 +269,7 @@ pub fn of(file: &str) -> Option<&'static Language> {
 /// The kind of manifest a file is, by its name.
 pub fn manifest_of(file: &str) -> Option<Manifest> {
     let name = file.rsplit('/').next().unwrap_or(file);
-    [Manifest::Npm, Manifest::Go, Manifest::Cargo]
+    [Manifest::Npm, Manifest::Go, Manifest::Cargo, Manifest::Pub]
         .into_iter()
         .find(|manifest| manifest.file_name() == name)
 }

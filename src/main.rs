@@ -2,6 +2,7 @@ mod baseline;
 mod check;
 mod components;
 mod config;
+mod coverage;
 mod decision;
 mod diagram;
 mod diff;
@@ -236,8 +237,11 @@ impl Project {
     }
 
     fn analyze(&self, cache: &mut scan::Cache, scope: &scope::Scope) -> Result<Analysis> {
-        let scan = scan::scan(&self.root, &self.config().scan_policy(), cache)?;
+        let mut scan = scan::scan(&self.root, &self.config().scan_policy(), cache)?;
         let map = ComponentMap::new(self.config())?;
+        for check in &scan.coverage_checks {
+            scan.analysis_partial.extend(check(self.config(), &map)?);
+        }
         let (mut violations, edges, mut stats) =
             check::evaluate(self.config(), &map, scope, &scan.deps);
         violations.extend(check::symbols(self.config(), &map, &scan.symbols));
@@ -330,17 +334,22 @@ impl Project {
             &in_scope,
             &scan.deps,
         ));
-        // Only a whole index can tell a name that matches nothing: files it did not
-        // cover, names it left unnamed and languages without an index may hold it.
-        let indexed_whole = scan.uncovered.is_empty()
-            && scan.unnamed_uses.is_empty()
-            && scan.known_symbols.1
-            && scan
-                .paths
-                .iter()
-                .all(|f| indexer::INDEXERS.iter().any(|l| l.covers(f)));
-        stats.symbols_unmatched =
-            check::symbols_unmatched(self.config(), &scan.known_symbols.0, indexed_whole);
+        let coverage = coverage::Coverage::new(coverage::Input {
+            files: &scan.checked_files,
+            uncovered: &scan.uncovered,
+            gaps: &scan.analysis_partial,
+            domains: &scan.domains,
+            unnamed: &scan.unnamed_uses,
+        });
+        stats.analysis_partial = scan
+            .analysis_partial
+            .iter()
+            .filter(|gap| coverage.gap_in_scope(gap, scope, &map))
+            .cloned()
+            .collect();
+        stats.symbols_unmatched = check::symbols_unmatched(self.config(), |component| {
+            coverage.symbols_for(component, &map, &scan.known_symbols)
+        });
         stats.files = scan
             .paths
             .iter()
@@ -357,7 +366,8 @@ impl Project {
         let accepted = map.accepted_gaps(scan.uncovered.iter().filter(|f| scope.contains(&map, f)));
         Ok(Analysis {
             accepted,
-            unindexed: scan.uncovered,
+            unindexed: coverage.uncovered(),
+            coverage,
             violations,
             all_files: scan.all_files,
             edges,
@@ -402,6 +412,8 @@ struct Analysis {
     unindexed: Vec<String>,
     /// The files of `unindexed` in the scope that `uncovered_ok` accepts, by entry.
     accepted: Vec<components::AcceptedGap>,
+    /// Completeness of file, graph and symbol absence claims.
+    coverage: coverage::Coverage,
     /// Every file that is not excluded, source or not.
     all_files: Vec<String>,
     edges: Vec<check::Edge>,
@@ -451,6 +463,8 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Outcome> {
         map,
         edges,
         accepted,
+        deps,
+        coverage,
         ..
     } = project.analyze(cache, &scope)?;
     let current = violations.iter().map(check::Violation::key).collect();
@@ -489,7 +503,9 @@ fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Outcome> {
         .partition(|v| project.config().warns(v.rule));
     let mut verdict = Verdict::judge(judged, warnings, &current, baseline.as_ref());
     verdict.owners = project.config().owners();
-    verdict.stale.retain(|k| scope.contains(&map, &k.file));
+    verdict.stale.retain(|key| {
+        coverage.key_in_scope(key, &map, &deps, &scope) && coverage.can_retire(key, &map, &deps)
+    });
     verdict.sort();
     let changes = changes.as_ref();
     let narrowed = report::narrowed(changes, &options.components, &options.paths);
@@ -586,6 +602,9 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Baseline { config, accept_new } => {
             let project = Project::open(&config)?;
             let analysis = project.analyze(&mut fresh(), &scope::Scope::default())?;
+            for reason in report::analysis_reasons(&analysis.stats) {
+                eprintln!("easement: partial: {reason}");
+            }
             let (config_rules, violations): (Vec<_>, Vec<_>) = check::dedupe(analysis.violations)
                 .into_iter()
                 .partition(|v| v.rule.is_config_rule());
@@ -601,11 +620,15 @@ fn run(cli: Cli) -> Result<Outcome> {
                 None => (violations, Vec::new()),
             };
             let mut baseline = Baseline::from_violations(&violations);
-            // A file no indexer read may still hold its debt: keep its entries.
+            // Missing facts can hide file or graph debt; keep only affected keys.
             let unread: Vec<_> = old
                 .iter()
                 .flat_map(|old| &old.violations)
-                .filter(|k| analysis.unindexed.contains(&k.file))
+                .filter(|k| {
+                    !analysis
+                        .coverage
+                        .can_retire(k, &analysis.map, &analysis.deps)
+                })
                 .filter(|k| !baseline.violations.contains(k))
                 .cloned()
                 .collect();
@@ -621,7 +644,8 @@ fn run(cli: Cli) -> Result<Outcome> {
             }
             if !unread.is_empty() {
                 println!(
-                    "easement: {} entr(ies) kept for files no indexer covered, so their debt is not known to be paid; `easement check` lists those files",
+                    "easement: {} entr(ies) kept because their files or dependency paths have incomplete analysis; \
+                     independently verified debt can still be removed; `easement check` lists the limitations",
                     unread.len()
                 );
             }
@@ -684,6 +708,12 @@ fn run(cli: Cli) -> Result<Outcome> {
                 analysis.accepted.clone(),
             );
             result.cached = report::cache_note(&analysis.stats);
+            result
+                .coverage
+                .evidence_gaps
+                .extend(report::analysis_gaps(&analysis.stats));
+            result.confidence_reasons = result.coverage.reasons();
+            result.confidence = result.coverage.confidence();
             match format {
                 OutputFormat::Text => print!("{}", impact::render(&result, &analysis.map)),
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
@@ -699,8 +729,12 @@ fn run(cli: Cli) -> Result<Outcome> {
                 files: &analysis.all_files,
                 violations: &analysis.violations,
                 uncovered: &analysis.unindexed,
+                incomplete: !analysis.coverage.uncertain().is_empty(),
             };
             print!("{}", impact::why(project.config(), &graph, &from, &to)?);
+            for reason in report::analysis_reasons(&analysis.stats) {
+                println!("easement: partial: {reason}");
+            }
             if let Some(note) = report::cache_note(&analysis.stats) {
                 println!("Cached: {note}");
             }
@@ -760,12 +794,13 @@ fn run(cli: Cli) -> Result<Outcome> {
                     project.config(),
                     &analysis.map,
                     &analysis.edges,
-                    &analysis.unindexed,
+                    &analysis.coverage.uncertain(),
                 );
                 let (new, skipped) = patch::remove_allowances(text, &gone);
                 for note in skipped
                     .into_iter()
                     .chain(report::cache_note(&analysis.stats))
+                    .chain(report::analysis_reasons(&analysis.stats))
                 {
                     eprintln!("easement: {note}");
                 }
@@ -781,18 +816,21 @@ fn run(cli: Cli) -> Result<Outcome> {
                     &analysis.edges,
                     &analysis.deps,
                     &analysis.files,
-                    &analysis.unindexed,
+                    &analysis.coverage.uncertain(),
                     &diagram::unused_arrows(&project.policy, &analysis.edges)?,
                 )
             );
             if let Some(note) = report::cache_note(&analysis.stats) {
                 println!("easement: {note}");
             }
+            for reason in report::analysis_reasons(&analysis.stats) {
+                println!("easement: partial: {reason}");
+            }
             let unused = suggest::removable(
                 project.config(),
                 &analysis.map,
                 &analysis.edges,
-                &analysis.unindexed,
+                &analysis.coverage.uncertain(),
             );
             Ok(!check || unused.is_empty())
         }
@@ -894,7 +932,7 @@ mod tests {
         let files = [
             "a.go", "a.py", "a.pyi", "a.ts", "a.d.ts", "a.tsx", "a.mts", "a.cts", "a.js", "a.jsx",
             "a.mjs", "a.cjs", "A.java", "A.kt", "a.kts", "A.cs", "a.php", "a.rb", "a.rs",
-            "a.swift", "Makefile", "v1.2/x", "a.json",
+            "a.swift", "Makefile", "v1.2/x", "a.json", "a.dart",
         ];
         let mut table = String::new();
         for file in files {
@@ -935,6 +973,8 @@ mod tests {
             ("a.swift", "Foundation"),
             ("a.ts", "fs"),
             ("a.rb", "json"),
+            ("a.dart", "dart:async"),
+            ("a.dart", "package:flutter/widgets.dart"),
         ] {
             is_std.push_str(&format!(
                 "{file} {module}: {}\n",
