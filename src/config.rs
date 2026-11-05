@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::check::RuleId;
+use crate::decision::Grant;
 use crate::lang::registry;
 use crate::stdlib::STD;
 use anyhow::{Context, Result, anyhow, bail};
@@ -832,40 +833,34 @@ impl Config {
             .because()
     }
 
+    /// Whether a grant lets `from` depend on `to`; outside tests, ask
+    /// `decision::pair`, which says what else the policy requires.
+    #[cfg(test)]
     pub fn allows(&self, from: &str, to: &str) -> bool {
-        from == to
-            || self.tests.is_some() && from == TESTS && !self.rules.contains_key(TESTS)
-            || !self.forbids(from, to)
-                && (self.common.iter().any(|c| c == to)
-                    || self.above(from, to)
-                    || self
-                        .rules
-                        .get(from)
-                        .is_some_and(|r| r.may_depend_on.iter().any(|c| c.name() == to)))
+        self.grant(from, to).is_some()
     }
 
     /// What lets `from` depend on `to`, when something does and nothing
-    /// forbids it: `same component`, `tests: auto`, `may_depend_on`,
-    /// `common` or `layers`.
-    pub fn allow_source(&self, from: &str, to: &str) -> Option<&'static str> {
+    /// forbids it.
+    pub fn grant(&self, from: &str, to: &str) -> Option<Grant> {
         if from == to {
-            return Some("same component");
+            return Some(Grant::SameComponent);
         }
         if self.forbids(from, to) {
             return None;
         }
         if self.tests.is_some() && from == TESTS && !self.rules.contains_key(TESTS) {
-            Some("tests: auto")
+            Some(Grant::Tests)
         } else if self
             .rules
             .get(from)
             .is_some_and(|r| r.may_depend_on.iter().any(|c| c.name() == to))
         {
-            Some("may_depend_on")
+            Some(Grant::MayDependOn)
         } else if self.common.iter().any(|c| c == to) {
-            Some("common")
+            Some(Grant::Common)
         } else if self.above(from, to) {
-            Some("layers")
+            Some(Grant::Layers)
         } else {
             None
         }
