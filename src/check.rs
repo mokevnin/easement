@@ -328,19 +328,25 @@ pub fn evaluate(
                 line: dep.line,
             });
         }
-        if let Err(clause) = &decision.grant {
-            found.push(violation(&decision, clause, dep, file));
-        }
+        found.extend(violation(&decision, dep));
     }
     stats.unmapped_files = unmapped.len();
     (found, edges, stats)
 }
 
 /// The violation a rejected dependency decision raises at the import behind it.
-fn violation(decision: &Decision, clause: &Clause, dep: &Dep, file: String) -> Violation {
+fn violation(decision: &Decision, dep: &Dep) -> Option<Violation> {
     let Decision {
-        from, to, target, ..
-    } = decision;
+        from,
+        to,
+        target,
+        grant: Err(clause),
+        because,
+    } = decision
+    else {
+        return None;
+    };
+    let file = slash(&dep.file);
     let to = to.unwrap_or_default();
     let spec = &dep.specifier;
     let message = match clause {
@@ -372,18 +378,18 @@ fn violation(decision: &Decision, clause: &Clause, dep: &Dep, file: String) -> V
             format!("{from} -> {to}: {target} is not in the public API of {to} (imports {spec})")
         }
     };
-    Violation {
+    Some(Violation {
         rule: clause.rule(),
         evidence: vec![(file.clone(), dep.line)],
         file,
         line: dep.line,
         message,
-        because: decision.because.map(str::to_string),
+        because: because.map(str::to_string),
         from: from.to_string(),
         to: to.to_string(),
         target: target.clone(),
         specifier: spec.clone(),
-    }
+    })
 }
 
 /// Component dependencies, as `a -> b`, whose every import sits on a line

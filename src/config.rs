@@ -812,6 +812,14 @@ impl Config {
         })
     }
 
+    /// Whether `must_not_reach` of `from` names `to`: not even a chain of
+    /// imports through other components may reach it.
+    pub fn forbids_reach(&self, from: &str, to: &str) -> bool {
+        self.rules
+            .get(from)
+            .is_some_and(|r| r.must_not_reach.iter().any(|c| c.name() == to))
+    }
+
     /// The reason given with `to` in the `must_not_depend_on` or
     /// `must_not_reach` of `from`, if any.
     pub fn forbid_reason(&self, from: &str, to: &str) -> Option<&str> {
@@ -831,13 +839,6 @@ impl Config {
             .iter()
             .find(|c| c.name() == to)?
             .because()
-    }
-
-    /// Whether a grant lets `from` depend on `to`; outside tests, ask
-    /// `decision::pair`, which says what else the policy requires.
-    #[cfg(test)]
-    pub fn allows(&self, from: &str, to: &str) -> bool {
-        self.grant(from, to).is_some()
     }
 
     /// What lets `from` depend on `to`, when something does and nothing
@@ -1171,11 +1172,11 @@ rules:
 ",
         )
         .unwrap();
-        assert!(c.allows("a", "a"));
-        assert!(c.allows("a", "b"));
-        assert!(c.allows("c", "m"));
-        assert!(!c.allows("a", "c"));
-        assert!(!c.allows("b", "a"));
+        assert!(c.grant("a", "a").is_some());
+        assert!(c.grant("a", "b").is_some());
+        assert!(c.grant("c", "m").is_some());
+        assert!(!c.grant("a", "c").is_some());
+        assert!(!c.grant("b", "a").is_some());
     }
 
     #[test]
@@ -1196,15 +1197,15 @@ layers:
 ",
         )
         .unwrap();
-        assert!(c.allows("web", "api"));
-        assert!(!c.allows("api", "jobs"));
-        assert!(!c.allows("jobs", "api"));
-        assert!(c.allows("api", "service"));
-        assert!(c.allows("service", "repo"));
+        assert!(c.grant("web", "api").is_some());
+        assert!(!c.grant("api", "jobs").is_some());
+        assert!(!c.grant("jobs", "api").is_some());
+        assert!(c.grant("api", "service").is_some());
+        assert!(c.grant("service", "repo").is_some());
         // Nothing above `service` reaches past it.
-        assert!(!c.allows("api", "repo"));
-        assert!(!c.allows("web", "repo"));
-        assert!(!c.allows("repo", "web"));
+        assert!(!c.grant("api", "repo").is_some());
+        assert!(!c.grant("web", "repo").is_some());
+        assert!(!c.grant("repo", "web").is_some());
         assert_eq!(
             c.layer_block("api", "repo").as_deref(),
             Some("the closed layer service is between them")
@@ -1239,13 +1240,13 @@ rules:
 ",
         )
         .unwrap();
-        assert!(c.allows("top", "mid"));
-        assert!(c.allows("mid", "low"));
-        assert!(!c.allows("mid", "top"));
-        assert!(!c.allows("low", "mid"));
-        assert!(!c.allows("top", "low"));
-        assert!(!c.allows("top", "m"));
-        assert!(c.allows("mid", "m"));
+        assert!(c.grant("top", "mid").is_some());
+        assert!(c.grant("mid", "low").is_some());
+        assert!(!c.grant("mid", "top").is_some());
+        assert!(!c.grant("low", "mid").is_some());
+        assert!(!c.grant("top", "low").is_some());
+        assert!(!c.grant("top", "m").is_some());
+        assert!(c.grant("mid", "m").is_some());
     }
 
     #[test]
@@ -1402,8 +1403,8 @@ tests: auto
         )
         .unwrap();
         assert!(open.components.contains_key("tests"));
-        assert!(open.allows("tests", "a"));
-        assert!(!open.allows("a", "tests"));
+        assert!(open.grant("tests", "a").is_some());
+        assert!(!open.grant("a", "tests").is_some());
         let ruled = parse(
             "version: 1
 components:
@@ -1415,8 +1416,8 @@ rules:
 ",
         )
         .unwrap();
-        assert!(ruled.allows("tests", "helper"));
-        assert!(!ruled.allows("tests", "a"));
+        assert!(ruled.grant("tests", "helper").is_some());
+        assert!(!ruled.grant("tests", "a").is_some());
         let err = parse(
             "version: 1
 components:
@@ -1440,7 +1441,7 @@ rules:
 ",
         )
         .unwrap();
-        assert!(c.allows("a", "b"));
+        assert!(c.grant("a", "b").is_some());
         assert_eq!(c.allow_reason("a", "b"), Some("why b"));
     }
 

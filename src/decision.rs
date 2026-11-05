@@ -145,10 +145,7 @@ pub fn pair<'a>(config: &'a Config, map: &'a ComponentMap, from: &str, to: &str)
     let grant = match config.grant(from, to) {
         Some(grant) => Ok(grant),
         None if config.forbids(from, to) => Err(Refusal::Prohibited {
-            reach: config
-                .rules
-                .get(from)
-                .is_some_and(|r| r.must_not_reach.iter().any(|c| c.name() == to)),
+            reach: config.forbids_reach(from, to),
         }),
         None => Err(Refusal::NotGranted {
             layers: config.layer_block(from, to),
