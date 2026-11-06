@@ -1009,6 +1009,7 @@ fn index_dir(
             file.persist(&path).map_err(|e| e.error)
         });
         prune(parent, &prefix);
+        trim(parent, &path, CACHE_BUDGET);
     }
     Ok((documents, false))
 }
@@ -1030,6 +1031,39 @@ fn prune(parent: &Path, prefix: &str) {
     mine.sort_by(|a, b| b.cmp(a));
     for (_, path) in mine.into_iter().skip(KEPT_PER_DIR) {
         let _ = std::fs::remove_file(path);
+    }
+}
+
+/// What the whole cache may take. `KEPT_PER_DIR` counts entries, not bytes, and
+/// only for the directory just indexed: an index of a big project weighs hundreds
+/// of megabytes, and every project and worktree adds 32 of its own, so without a
+/// budget the cache grew past 14 GB.
+const CACHE_BUDGET: u64 = 4 << 30;
+
+/// Removes the least recently used indexes, of any directory and indexer, until
+/// the cache fits in `budget`. `written`, the entry just made, stays even when it
+/// alone is over: removing it would only make the next run index again.
+fn trim(parent: &Path, written: &Path, budget: u64) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let mut all: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        // Only finished entries: a temporary file is another run's index in the writing.
+        .filter(|path| path.extension().is_some_and(|ext| ext == "scip"))
+        .filter_map(|path| {
+            let meta = path.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), path))
+        })
+        .collect();
+    all.sort_by(|a, b| b.cmp(a));
+    let mut used: u64 = 0;
+    for (_, len, path) in all {
+        used = used.saturating_add(len);
+        if used > budget && path != written {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -1399,5 +1433,44 @@ mod tests {
                 .join(format!("aaaa-{:016x}.scip", KEPT_PER_DIR + 2))
                 .exists()
         );
+    }
+
+    #[test]
+    fn trimming_drops_the_least_recently_used_entries_of_every_directory_past_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = std::time::SystemTime::now();
+        let write = |name: &str, len: u64, age: u64| {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_len(len).unwrap();
+            file.set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+        };
+        write("aaaa-0.scip", 40, 400);
+        write("bbbb-0.scip", 40, 300);
+        write("aaaa-1.scip", 40, 200);
+        write("bbbb-1.scip", 40, 100);
+        write("cccc-0.scip", 40, 0);
+        // A half-written entry of another run is not an index: it is neither counted nor removed.
+        write(".tmpXXXX", 1_000, 1_000);
+        let written = dir.path().join("cccc-0.scip");
+        let left = || {
+            let mut names: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+
+        trim(dir.path(), &written, 120);
+        assert_eq!(
+            left(),
+            [".tmpXXXX", "aaaa-1.scip", "bbbb-1.scip", "cccc-0.scip"]
+        );
+
+        // The entry just written stays even when it alone is over the budget.
+        trim(dir.path(), &written, 10);
+        assert_eq!(left(), [".tmpXXXX", "cccc-0.scip"]);
     }
 }
