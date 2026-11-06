@@ -155,6 +155,17 @@ pub struct Scope {
     pub last: usize,
 }
 
+/// A name that more than one component declares: the files that declare it
+/// stand for the same name, and which one an import means is not written down
+/// in the code.
+#[derive(Debug, Clone)]
+pub struct Ambiguous {
+    /// The name as it is written, `package.Name`.
+    pub name: String,
+    /// The files that declare it, in the order of their paths.
+    pub files: Vec<String>,
+}
+
 /// A language adapter: extracts imports from a file and resolves them, for a
 /// language no indexer reads (see `registry` for the rest of a language).
 pub trait Adapter {
@@ -162,13 +173,25 @@ pub trait Adapter {
     fn handles(&self, path: &Path) -> bool;
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>>;
     fn resolve(&self, file: &Path, specifier: &str) -> Target;
+    /// The name an import of `specifier` names, when more than one component
+    /// of the project declares it: which one the import means is not written
+    /// down in the code.
+    fn ambiguity(&self, specifier: &str) -> Option<Ambiguous>;
 }
 
-pub fn adapters(root: &Path) -> Result<Vec<Box<dyn Adapter>>> {
+pub fn adapters<'a>(
+    root: &'a Path,
+    map: &'a crate::components::ComponentMap,
+) -> Result<Vec<Box<dyn Adapter + 'a>>> {
     Ok(vec![
-        Box::new(kotlin::Kotlin::new(root)?),
-        Box::new(swift::Swift::new(root)?),
+        Box::new(kotlin::Kotlin::new(root, map)?),
+        Box::new(swift::Swift::new(root, map)?),
     ])
+}
+
+/// The languages the adapters read: the ones no indexer covers.
+pub fn adapter_languages() -> [&'static registry::Language; 2] {
+    [&registry::KOTLIN, &registry::SWIFT]
 }
 
 pub(crate) fn parse(language: &Language, path: &Path, source: &str) -> Result<Tree> {

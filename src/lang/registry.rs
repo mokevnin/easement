@@ -594,11 +594,10 @@ mod tests {
                 .filter(|l| l.covers(file))
                 .map(|l| l.name())
                 .collect();
-            let adapters: Vec<&str> = crate::lang::adapters(std::path::Path::new("."))
-                .unwrap()
+            let adapters: Vec<&str> = crate::lang::adapter_languages()
                 .iter()
-                .filter(|a| a.handles(std::path::Path::new(file)))
-                .map(|a| a.name())
+                .filter(|l| crate::lang::registry::is(std::path::Path::new(file), l))
+                .map(|l| l.name)
                 .collect();
             table.push_str(&format!(
                 "{file}: indexer {covered:?}, adapter {adapters:?}, std {}, unused {:?}, manifest {:?}\n",

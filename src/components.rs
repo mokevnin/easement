@@ -562,6 +562,48 @@ impl ComponentMap {
         self.matching(rel_path).map(|e| e.component.as_str())
     }
 
+    /// The file that a name several files declare means for the file that imports
+    /// it: the copy in the component of the importing file when there is one, a
+    /// copy in no component when there is one (it breaks no rule), and otherwise
+    /// the first by path. The choice never depends on the order the files were
+    /// read in.
+    ///
+    /// The paths are relative to the root, in slashes.
+    pub fn choose<'a>(
+        &self,
+        candidates: impl IntoIterator<Item = &'a str>,
+        importer: Option<&str>,
+    ) -> Option<&'a str> {
+        let candidates: Vec<&str> = candidates.into_iter().collect();
+        let here = importer.and_then(|rel| self.component_of(rel));
+        if let Some(here) = here {
+            let own = candidates
+                .iter()
+                .copied()
+                .filter(|candidate| self.component_of(candidate) == Some(here))
+                .min();
+            if own.is_some() {
+                return own;
+            }
+        }
+        candidates
+            .iter()
+            .copied()
+            .filter(|candidate| self.component_of(candidate).is_none())
+            .min()
+            .or_else(|| candidates.iter().copied().min())
+    }
+
+    /// Whether the files that declare a name stand in more than one place: in
+    /// different components, or in one component and outside every component.
+    pub fn spans_places<'a>(&self, files: impl IntoIterator<Item = &'a str>) -> bool {
+        let places: std::collections::BTreeSet<Option<&str>> = files
+            .into_iter()
+            .map(|file| self.component_of(file))
+            .collect();
+        places.len() > 1
+    }
+
     /// The component of `rel_path` and the `in` pattern that put it there.
     pub fn component_and_pattern(&self, rel_path: &str) -> Option<(&str, &str)> {
         self.matching(rel_path)

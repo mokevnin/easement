@@ -283,10 +283,13 @@ pub struct Facts {
 /// `excluded` are documents of files that `exclude` hides: never read as
 /// sources, they only resolve the names that no document of `documents` defines.
 pub fn facts(documents: &[Document], excluded: &[Document], symbols: bool) -> Facts {
-    facts_watching(documents, excluded, symbols, &BTreeSet::new())
+    facts_watching(documents, excluded, symbols, &BTreeSet::new(), None)
 }
 
 /// [`facts`] that also collects `Facts::known` for the names in `watched`.
+///
+/// With `map`, a symbol that more than one component defines is taken for the
+/// copy in the component of the file that uses it, as the adapters do.
 ///
 /// Every reference is read with [`read`] first, so what follows is the same for every
 /// language: a module, or a name at the top level of one, is a dependency on the file
@@ -296,12 +299,20 @@ pub fn facts_watching(
     excluded: &[Document],
     symbols: bool,
     watched: &BTreeSet<String>,
+    map: Option<&crate::components::ComponentMap>,
 ) -> Facts {
     let mut defined: HashMap<&str, &str> = HashMap::new();
+    // Every file that defines a symbol: a name more than one component declares
+    // is taken for the copy in the component of the file that uses it.
+    let mut definers: HashMap<&str, Vec<&str>> = HashMap::new();
     // Symbols that more than one file defines: a Ruby module reopened in each file under it.
     let mut reopened: HashSet<&str> = HashSet::new();
     for document in documents {
         for symbol in &document.definitions {
+            definers
+                .entry(symbol)
+                .or_default()
+                .push(document.path.as_str());
             let entry = defined.entry(symbol).or_insert(&document.path);
             if *entry != document.path.as_str() {
                 reopened.insert(symbol);
@@ -366,6 +377,19 @@ pub fn facts_watching(
     };
     // The file that defines `symbol`, the first by path when several do.
     let defined_at = |symbol: &str| defined.get(symbol).or_else(|| hidden.get(symbol)).copied();
+    // The file that defines `symbol` for the file that uses it: the copy in the
+    // component of that file when there is one, and otherwise the first by path.
+    let pick = |symbol: &str, user: &str| -> Option<&str> {
+        match map {
+            Some(map) => map
+                .choose(
+                    definers.get(symbol).into_iter().flatten().copied(),
+                    Some(user),
+                )
+                .or_else(|| hidden.get(symbol).copied()),
+            None => defined_at(symbol),
+        }
+    };
     // The one file that defines `symbol`: a module reopened in several files is no one file's.
     let home = |symbol: &str| -> Option<&str> {
         (!reopened.contains(symbol))
@@ -487,7 +511,7 @@ pub fn facts_watching(
             {
                 continue;
             }
-            let mut internal = defined_at(&name.symbol);
+            let mut internal = pick(&name.symbol, &document.path);
             if internal.is_none() && name.reading.by_ending {
                 internal = ending(name);
             }
@@ -932,6 +956,40 @@ mod tests {
                 "{language}: {uses:?}"
             );
         }
+    }
+
+    /// The components of a policy, for the resolution of a name.
+    fn components(yaml: &str) -> crate::components::ComponentMap {
+        let config: crate::config::Config = serde_norway::from_str(yaml).unwrap();
+        crate::components::ComponentMap::new(&config).unwrap()
+    }
+
+    /// A name that two components define is taken for the copy in the component
+    /// of the file that uses it, as the adapters do.
+    #[test]
+    fn a_name_two_components_define_is_taken_for_the_copy_of_the_using_component() {
+        let ts = "scip-typescript npm fx 1.0.0 src/";
+        let model = format!("{ts}model/`model.ts`/Order#");
+        let docs = [
+            doc("src/a/model.ts", &[&model], &[]),
+            doc("src/z/model.ts", &[&model], &[]),
+            doc("src/z/page.ts", &[], &[(1, &model)]),
+        ];
+        let map = components("version: 1\ncomponents:\n  a: { in: src/a }\n  z: { in: src/z }\n");
+        let targets = |facts: &Facts| -> Vec<Target> {
+            facts.deps.iter().map(|d| d.target.clone()).collect()
+        };
+        let with_components = facts_watching(&docs, &[], false, &BTreeSet::new(), Some(&map));
+        assert_eq!(
+            targets(&with_components),
+            [Target::Internal(Unit::from("src/z/model.ts"))]
+        );
+        // Without the components, the first file by path is taken.
+        let plain = facts(&docs, &[], false);
+        assert_eq!(
+            targets(&plain),
+            [Target::Internal(Unit::from("src/a/model.ts"))]
+        );
     }
 
     /// The internal dependencies of the last document, by line and file.

@@ -595,8 +595,9 @@ mod tests {
                             .unwrap()
                             .config;
                     let mut cache = Cache::new(CacheUse::Off, Jobs::default());
-                    let scan = scan::scan(tmp.path(), &config.scan_policy(), &mut cache).unwrap();
                     let map = ComponentMap::new(&config).unwrap();
+                    let scan =
+                        scan::scan(tmp.path(), &config.scan_policy(), &map, &mut cache).unwrap();
                     each(name, &config, &map, &scan.deps);
                 });
             }

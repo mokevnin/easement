@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use tree_sitter::{Language, Query};
@@ -52,21 +52,30 @@ const KEYWORDS: &[&str] = &[
 /// scanning the declarations at the start of lines, else by a file named `C.kt`);
 /// `import a.b.*` to the first directory of the package. Names used by their
 /// fully qualified name without an import are not seen.
-pub struct Kotlin {
+///
+/// A name that more than one file declares is ambiguous: the import is taken
+/// for the copy in the component of the importing file, and for the first file
+/// by path when that component declares none.
+pub struct Kotlin<'a> {
     language: Language,
     query: Query,
-    /// `package.Name` of a top-level declaration -> file, relative to the root.
-    declarations: BTreeMap<String, PathBuf>,
-    /// Package -> directories holding it, relative to the root.
-    packages: BTreeMap<String, BTreeSet<PathBuf>>,
+    /// `package.Name` of a top-level declaration -> the files that declare it,
+    /// relative to the root, in slashes.
+    declarations: BTreeMap<String, BTreeSet<String>>,
+    /// Package -> directories holding it, relative to the root, in slashes.
+    packages: BTreeMap<String, BTreeSet<String>>,
+    /// The components of the project: a name several files declare is taken
+    /// for the copy in the component of the file that imports it.
+    map: &'a crate::components::ComponentMap,
+    root: &'a Path,
 }
 
-impl Kotlin {
-    pub fn new(root: &Path) -> Result<Self> {
+impl<'a> Kotlin<'a> {
+    pub fn new(root: &'a Path, map: &'a crate::components::ComponentMap) -> Result<Self> {
         let language: Language = tree_sitter_kotlin_ng::LANGUAGE.into();
         let query = Query::new(&language, QUERY)?;
-        let mut declarations = BTreeMap::new();
-        let mut packages: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
+        let mut declarations: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut packages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for entry in crate::relpath::walker(root).build().flatten() {
             let path = entry.path();
             if !super::registry::is(path, &super::registry::KOTLIN) {
@@ -89,16 +98,18 @@ impl Kotlin {
             for name in top_level_names(&source) {
                 declarations
                     .entry(qualify(&name))
-                    .or_insert_with(|| rel.clone());
+                    .or_default()
+                    .insert(crate::relpath::slash(&rel));
             }
             declarations
                 .entry(qualify(&stem.to_string_lossy()))
-                .or_insert_with(|| rel.clone());
+                .or_default()
+                .insert(crate::relpath::slash(&rel));
             if let Some(dir) = rel.parent() {
                 packages
                     .entry(package)
                     .or_default()
-                    .insert(dir.to_path_buf());
+                    .insert(crate::relpath::slash(dir));
             }
         }
         Ok(Self {
@@ -106,7 +117,14 @@ impl Kotlin {
             query,
             declarations,
             packages,
+            map,
+            root,
         })
+    }
+
+    /// The path of the file that imports, relative to the root, in slashes.
+    fn importer(&self, file: &Path) -> Option<String> {
+        relative(self.root, file).map(|rel| crate::relpath::slash(&rel))
     }
 }
 
@@ -181,7 +199,7 @@ fn specifier(declaration: &str) -> String {
         .to_string()
 }
 
-impl Adapter for Kotlin {
+impl Adapter for Kotlin<'_> {
     fn name(&self) -> &'static str {
         "kotlin"
     }
@@ -201,26 +219,64 @@ impl Adapter for Kotlin {
             .collect())
     }
 
-    fn resolve(&self, _file: &Path, specifier: &str) -> Target {
+    fn resolve(&self, file: &Path, specifier: &str) -> Target {
+        let importer = self.importer(file);
         let name = specifier.trim_end_matches(".*");
         if specifier.ends_with(".*")
-            && let Some(dir) = self.packages.get(name).and_then(|d| d.first())
+            && let Some(dirs) = self.packages.get(name)
+            && let Some(dir) = self
+                .map
+                .choose(dirs.iter().map(String::as_str), importer.as_deref())
         {
-            return Target::Internal(dir.clone().into());
+            return Target::Internal(super::Unit::from(dir));
         }
         let parts: Vec<&str> = name.split('.').collect();
         for k in (1..=parts.len()).rev() {
-            if let Some(file) = self.declarations.get(&parts[..k].join(".")) {
-                return Target::Internal(file.clone().into());
+            if let Some(files) = self.declarations.get(&parts[..k].join("."))
+                && let Some(found) = self
+                    .map
+                    .choose(files.iter().map(String::as_str), importer.as_deref())
+            {
+                return Target::Internal(super::Unit::from(found));
             }
         }
         Target::External(specifier.to_string())
+    }
+
+    fn ambiguity(&self, specifier: &str) -> Option<super::Ambiguous> {
+        let name = specifier.trim_end_matches(".*");
+        let (key, files) = if specifier.ends_with(".*") {
+            (name.to_string(), self.packages.get(name)?)
+        } else {
+            let parts: Vec<&str> = name.split('.').collect();
+            let mut found = None;
+            for k in (1..=parts.len()).rev() {
+                if let Some(files) = self.declarations.get(&parts[..k].join(".")) {
+                    found = Some((parts[..k].join("."), files));
+                    break;
+                }
+            }
+            found?
+        };
+        if !self.map.spans_places(files.iter().map(String::as_str)) {
+            return None;
+        }
+        Some(super::Ambiguous {
+            name: key,
+            files: files.iter().cloned().collect(),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The components of a policy, for the resolution of a name.
+    fn components(yaml: &str) -> crate::components::ComponentMap {
+        let config: crate::config::Config = serde_norway::from_str(yaml).unwrap();
+        crate::components::ComponentMap::new(&config).unwrap()
+    }
 
     #[test]
     fn reads_package_and_top_level_names() {
@@ -243,7 +299,8 @@ mod tests {
 
     #[test]
     fn extracts_imports() {
-        let kt = Kotlin::new(Path::new("/nonexistent")).unwrap();
+        let map = components("version: 1\ncomponents:\n  app: { in: app }\n");
+        let kt = Kotlin::new(Path::new("/nonexistent"), &map).unwrap();
         let src = "package p\n\nimport com.acme.model.User\nimport com.acme.util.*\nimport com.acme.x.Y as Z\n\nclass A\n";
         let got: Vec<_> = kt
             .imports(Path::new("A.kt"), src)
@@ -279,7 +336,8 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let kt = Kotlin::new(root).unwrap();
+        let map = components("version: 1\ncomponents:\n  app: { in: app }\n");
+        let kt = Kotlin::new(root, &map).unwrap();
         let go = |spec: &str| kt.resolve(Path::new("A.kt"), spec);
         assert_eq!(
             go("com.acme.model.User"),
@@ -302,5 +360,84 @@ mod tests {
             go("kotlin.collections.List"),
             Target::External("kotlin.collections.List".into())
         );
+    }
+
+    /// A name that two components declare is taken for the copy in the
+    /// component of the file that imports it, and never for the copy of
+    /// another component, whichever file the reader saw first.
+    #[test]
+    fn a_name_two_components_declare_is_taken_for_the_copy_of_the_importing_component() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // The copy of the other component comes first, so that a reader that
+        // takes the first file it sees takes the wrong one.
+        for (path, text) in [
+            (
+                "other/User.kt",
+                "package com.acme.model\n\ndata class User(val id: Int)\n",
+            ),
+            (
+                "model/User.kt",
+                "package com.acme.model\n\ndata class User(val id: Int)\ndata class Order\n",
+            ),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let map =
+            components("version: 1\ncomponents:\n  model: { in: model }\n  other: { in: other }\n");
+        let kt = Kotlin::new(root, &map).unwrap();
+        assert_eq!(
+            kt.resolve(&root.join("model/Use.kt"), "com.acme.model.User"),
+            Target::Internal("model/User.kt".into())
+        );
+        assert_eq!(
+            kt.resolve(&root.join("other/Use.kt"), "com.acme.model.User"),
+            Target::Internal("other/User.kt".into())
+        );
+        // A file that belongs to no component takes the first file by path.
+        assert_eq!(
+            kt.resolve(&root.join("nowhere/Use.kt"), "com.acme.model.User"),
+            Target::Internal("model/User.kt".into())
+        );
+        // The name that two components declare is said.
+        let ambiguous = kt
+            .ambiguity("com.acme.model.User")
+            .expect("the name two components declare");
+        assert_eq!(ambiguous.name, "com.acme.model.User");
+        assert_eq!(ambiguous.files, ["model/User.kt", "other/User.kt"]);
+        // A name only one component declares is not ambiguous.
+        assert!(kt.ambiguity("com.acme.model.Order").is_none());
+    }
+
+    /// A name that a component declares and a file outside every component
+    /// declares is ambiguous too: the copy outside is a place of its own, and
+    /// which one an import means is not written down in the code.
+    #[test]
+    fn a_name_declared_inside_and_outside_a_component_is_ambiguous() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for (path, text) in [
+            (
+                "model/User.kt",
+                "package com.acme.model\n\ndata class User(val id: Int)\n",
+            ),
+            (
+                "tools/User.kt",
+                "package com.acme.model\n\ndata class User(val id: Int)\n",
+            ),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let map = components("version: 1\ncomponents:\n  model: { in: model }\n");
+        let kt = Kotlin::new(root, &map).unwrap();
+        let ambiguous = kt
+            .ambiguity("com.acme.model.User")
+            .expect("the name two places declare");
+        assert_eq!(ambiguous.name, "com.acme.model.User");
+        assert_eq!(ambiguous.files, ["model/User.kt", "tools/User.kt"]);
     }
 }

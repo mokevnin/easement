@@ -144,7 +144,6 @@ pub fn run(
             path.display()
         );
     }
-    let adapters = lang::adapters(root)?;
     let files: Vec<String> = crate::relpath::walker(root)
         .build()
         .flatten()
@@ -153,7 +152,9 @@ pub fn run(
         .map(|p| crate::relpath::slash(&p))
         .filter(|p| {
             crate::indexer::indexed(p)
-                || adapters.iter().any(|a| a.handles(std::path::Path::new(p)))
+                || lang::adapter_languages()
+                    .iter()
+                    .any(|l| lang::registry::is(std::path::Path::new(p), l))
         })
         .collect();
     let found = discover(&files);
@@ -162,12 +163,13 @@ pub fn run(
     }
     let draft = render(&found, &BTreeMap::new());
     let config: Config = serde_norway::from_str(&draft)?;
+    let map = ComponentMap::new(&config)?;
     let scanned = scan::scan(
         root,
         &config.scan_policy(),
+        &map,
         &mut scan::Cache::new(index_cache, jobs),
     )?;
-    let map = ComponentMap::new(&config)?;
     let (_, edges, _) = check::evaluate(&config, &map, &scanned.deps);
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for e in &edges {

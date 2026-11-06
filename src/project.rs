@@ -54,7 +54,10 @@ impl Project {
 
     /// The project as the policy it was opened with scans it.
     pub fn scan(&self, cache: &mut scan::Cache) -> Result<scan::Scan> {
-        scan::scan(&self.root, &self.config().scan_policy(), cache)
+        // The components are read by the scan: a name that more than one of
+        // them declares is resolved for the component of the importing file.
+        let map = ComponentMap::new(self.config())?;
+        scan::scan(&self.root, &self.config().scan_policy(), &map, cache)
     }
 
     /// What `policy` says of the scanned code: its violations, and what its
@@ -160,6 +163,7 @@ impl Project {
         if self.config().packages {
             stats.packages_partial = scan.packages_problems.clone();
         }
+        stats.declarations_partial = scan.declarations_problems.clone();
         if self.config().tests.is_some() {
             stats.parts_partial = parts_reasons(&scan.parts_doubts);
         }

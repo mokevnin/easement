@@ -373,6 +373,10 @@ pub struct Stats {
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
     #[serde(skip)]
     pub packages_partial: Vec<Unjudged>,
+    /// Names that more than one component declares, so that an import of one
+    /// was taken for the copy of the component that imports it.
+    #[serde(skip)]
+    pub declarations_partial: Vec<Unjudged>,
     /// Why `forbid_symbol` left some uses of names unchecked.
     #[serde(skip)]
     pub symbols_partial: Vec<Unjudged>,

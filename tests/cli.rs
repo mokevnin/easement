@@ -3312,6 +3312,30 @@ fn kotlin_resolves_packages_and_declarations() {
     );
 }
 
+/// A name that two components declare: the import of it belongs to the
+/// component that imports it, and the ambiguity is said.
+#[test]
+fn a_name_two_components_declare_is_taken_for_the_copy_of_the_importing_component() {
+    let (_tmp, root) = fixture("kotlin_duplicate");
+    let out = easement(&root, &["check", "--format", "json"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let violations = report["violations"].as_array().cloned().unwrap_or_default();
+    assert_eq!(violations.len(), 0, "{violations:?}");
+    let gaps = gap_messages(&report, "declarations");
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    let message = gaps[0].as_str().unwrap();
+    assert!(
+        message.contains("com.acme.test.helpers.CoroutineDiagnostics"),
+        "{message}"
+    );
+    for file in [
+        "shared/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt",
+        "desktop/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt",
+    ] {
+        assert!(message.contains(file), "{message}");
+    }
+}
+
 /// The `symbols` evidence gaps of a JSON report.
 /// The messages of the evidence gaps of `kind` in a report.
 fn gap_messages(report: &serde_json::Value, kind: &str) -> Vec<serde_json::Value> {

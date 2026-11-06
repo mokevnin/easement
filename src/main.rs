@@ -424,7 +424,14 @@ fn review(config: &Path, base: &str, cache: &mut scan::Cache) -> Result<review::
     let old_scan = if rescanned.is_empty() {
         None
     } else {
-        Some(scan::scan(&project.root, &old.config.scan_policy(), cache)?)
+        // The old code under the old policy: its components are the old ones.
+        let map = ComponentMap::new(&old.config)?;
+        Some(scan::scan(
+            &project.root,
+            &old.config.scan_policy(),
+            &map,
+            cache,
+        )?)
     };
     let old_judgment = project.judge(&old, old_scan.as_ref().unwrap_or(&scan))?;
     // What no indexer read under the old policy and it did not accept: the

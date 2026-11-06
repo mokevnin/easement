@@ -114,6 +114,9 @@ pub enum GapKind {
     Parts,
     /// Manifests, or dependencies of one, that `packages` could not judge.
     Packages,
+    /// Names that more than one component declares, so that an import of one
+    /// was taken for the copy of the component that imports it.
+    Declarations,
     /// Uses of names that `forbid_symbol` could not judge.
     Symbols,
     /// Files that `unused` took as used without judging them.
@@ -127,7 +130,11 @@ impl GapKind {
     /// about it (`impact`, `why`) may be short; the rest leave a rule unjudged.
     pub fn hides_dependencies(self) -> bool {
         match self {
-            GapKind::Uncovered | GapKind::Parts | GapKind::Packages | GapKind::Deleted => true,
+            GapKind::Uncovered
+            | GapKind::Parts
+            | GapKind::Packages
+            | GapKind::Declarations
+            | GapKind::Deleted => true,
             GapKind::NamingUnseen
             | GapKind::StdUnknown
             | GapKind::Manifests
@@ -226,6 +233,11 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
         GapKind::Packages,
         &stats.packages_partial,
         "fix the manifest the message names, or review those dependencies by hand",
+    );
+    add(
+        GapKind::Declarations,
+        &stats.declarations_partial,
+        "give the name one home: keep it in one component, or rename it so that it is unique",
     );
     add(
         GapKind::Symbols,
