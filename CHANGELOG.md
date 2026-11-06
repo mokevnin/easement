@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.5.0](https://github.com/mokevnin/easement/compare/v0.4.14...v0.5.0) (2026-11-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* those keys are gone from `stats`; read `evidence_gaps` by `kind` and `narrowed` instead.
+* `confidence` and `confidence_reasons` are gone from the JSON reports; a report leaves something out when `narrowed` or `evidence_gaps` is not empty.
+* `go: { tags: [...] }` is `indexers: { go: { tags: [...] } }`.
+* `stats.symbols_unmatched` is gone from `--format json`; such a ban is an `unmatched` violation.
+* violation messages and the text of every command change wording, and the target of a `must_depend_on` violation reads `component <name>` instead of `import <name>`, beside `external <name>` and `file <name>`; baseline entries of such violations are keyed anew.
+* under `--component` and `--scope` the counters (`files`, `internal_deps`, `external_deps`, `unmapped_files`) and the evidence gaps are those of the whole project, not of the part.
+* verdicts change. Java, C#, PHP and Ruby code that called a method on a value of another component's type no longer depends on it, and loses the external dependencies that only such calls made. Rust, TypeScript and Python code that writes a name re-exported from another component now depends on that component; a Go file that uses a name of its own package defined in another file depends on that file. Baseline entries may need updating.
+* `--diff` now fails on unchanged code that a change to the policy or to a manifest makes violate it, and judges the whole project when the change alters what is scanned.
+* a project with symbol rules over Java, C#, PHP, Kotlin or Swift files now gets `confidence: partial` with a `symbols` evidence gap, and `check --require-evidence` fails on it. A violation that the unverified Java, C# or PHP member uses produced disappears and is replaced by the gap.
+* a project whose policy has a `part` that matches no part now fails `check`; fix the part, or set `optional: true` on its component.
+
+### Features
+
+* `suggest --format json`, with the unread files behind each suggestion ([812773f](https://github.com/mokevnin/easement/commit/812773f8c82acf5fd130f9f4ee82bf5564e2ff37))
+* `suggest --patch` edits easement.yml through a lossless YAML tree ([333a72b](https://github.com/mokevnin/easement/commit/333a72b90c4e15fd89ba814419f3555bc9034077))
+* a report says what it leaves out in its three lists alone ([6cd4a04](https://github.com/mokevnin/easement/commit/6cd4a04b776fb9078793d4b9a66234c30e9e7463))
+* add `check --require-evidence`, which fails a pass that rests on evidence gaps ([2d276ad](https://github.com/mokevnin/easement/commit/2d276adf6e233993d983c1da7ac6ad95a1a60258)), closes [#91](https://github.com/mokevnin/easement/issues/91)
+* add `easement propose`, the decision on dependencies before the code exists ([6429131](https://github.com/mokevnin/easement/commit/642913127540958f3705b7cd336431d9fc1758b3)), closes [#93](https://github.com/mokevnin/easement/issues/93)
+* add `easement review`, what a change to the policy permits, forbids and accepts ([3a0a5bf](https://github.com/mokevnin/easement/commit/3a0a5bf04498392338ef9e7a0f7bd8ec8001fdd8)), closes [#98](https://github.com/mokevnin/easement/issues/98)
+* add named surfaces, paths of a component open only to the consumers they list ([4d07ed5](https://github.com/mokevnin/easement/commit/4d07ed58429710496c8cfbd8c08ee3c5b5e1e7a0)), closes [#96](https://github.com/mokevnin/easement/issues/96)
+* add policy examples, decisions `check` pins with no code behind them ([0f8a0dc](https://github.com/mokevnin/easement/commit/0f8a0dc7b7ce57a5467ccc548d569a727c24ca1e)), closes [#94](https://github.com/mokevnin/easement/issues/94)
+* answer `explain` and `why` in JSON, and give violations their chain and provenance ([88ef1de](https://github.com/mokevnin/easement/commit/88ef1dea35c2327f2240f91d0ccde29658b545ac)), closes [#95](https://github.com/mokevnin/easement/issues/95)
+* define a dependency as a name the code writes, in every language ([7e7722b](https://github.com/mokevnin/easement/commit/7e7722b8f9f3f40cb0096b824c48933afe667aea)), closes [#104](https://github.com/mokevnin/easement/issues/104)
+* judge what a change to the policy causes under `--diff` ([e2e46a8](https://github.com/mokevnin/easement/commit/e2e46a824e1aa4f7d06cc8f2c3e5a2268825cb90))
+* list the policy examples a change adds, removes or changes in `review` ([7971924](https://github.com/mokevnin/easement/commit/7971924cc893657dd2e6823f4296abbcd54b679c)), closes [#98](https://github.com/mokevnin/easement/issues/98)
+* settings of an indexer go under `indexers`, which the core does not read ([7310aec](https://github.com/mokevnin/easement/commit/7310aec03eebaee7eba467aac62181aff9264dea)), closes [#105](https://github.com/mokevnin/easement/issues/105)
+* the stats of a report count; the gaps are said once, in `evidence_gaps` ([744b045](https://github.com/mokevnin/easement/commit/744b0451010baff25b70de4cb4b4cec91136e0d0))
+
+
+### Bug Fixes
+
+* `--diff` reads the git diff with unidiff, so a path with a space is found ([18f32a1](https://github.com/mokevnin/easement/commit/18f32a133410185f57ed2369916278b56ca53126))
+* `forbid_symbol` names a member of a type in Go, TypeScript, Python and Rust ([8757f66](https://github.com/mokevnin/easement/commit/8757f66638d30f332447d54d4e9c069ff5fe364f))
+* a `forbid_symbol` name that can never fire fails as `unmatched` ([79c2a4a](https://github.com/mokevnin/easement/commit/79c2a4a4a33d42fe1d4deeb47a15df69220d4e28))
+* a Cargo workspace dependency is not importable where no package lists it ([96632ee](https://github.com/mokevnin/easement/commit/96632ee9c419caa6f110cd418b02a6617bf4f985))
+* a scope narrows the violations reported, never what was read ([59c2938](https://github.com/mokevnin/easement/commit/59c2938684988f3fd8c931f2611610d8cabd7231)), closes [#91](https://github.com/mokevnin/easement/issues/91)
+* check again under `--watch` when an `extends` file outside the root changes ([9ebb052](https://github.com/mokevnin/easement/commit/9ebb052eee586c08f84057492ea03060f862d78e)), closes [#92](https://github.com/mokevnin/easement/issues/92)
+* count a file whose lines were only deleted as changed under `--diff` ([b452aa0](https://github.com/mokevnin/easement/commit/b452aa0db1ac70ce12c2c5a30126841dd5d720ea)), closes [#97](https://github.com/mokevnin/easement/issues/97)
+* cut a module name where the importing file's language cuts it ([ccec7ed](https://github.com/mokevnin/easement/commit/ccec7edca8075fc1416cfc12e7a99064b2004b2c))
+* every command says the gaps of its run, in one way ([67a9548](https://github.com/mokevnin/easement/commit/67a9548ca00e335ad0633ce9df4795c222a1bbe8))
+* every command that reads the indexes takes `--no-cache` and `--cache-only` ([9dd3b96](https://github.com/mokevnin/easement/commit/9dd3b96088018b908d47ca9b3ca457baf51b55c3))
+* fail a `part` that matches no part as `unmatched` ([1f06f53](https://github.com/mokevnin/easement/commit/1f06f53b07747d086cab874354c5f132734ee78a))
+* fail under `--diff` what a rule taken out of `warn` now fails ([f796573](https://github.com/mokevnin/easement/commit/f796573c32c91e99904052480c7a14e644682876)), closes [#97](https://github.com/mokevnin/easement/issues/97)
+* judge no import of a `target_only` source in `propose` ([a4bd04e](https://github.com/mokevnin/easement/commit/a4bd04eed83c90662203e23b99bc552895ba78fd))
+* name the count, not the files, in a symbols gap, and narrow the npm one by scope ([14d07de](https://github.com/mokevnin/easement/commit/14d07dedb88839792ff6d80d1e23e11bdbd1d93a))
+* read a quoted name in a bracketed SCIP descriptor ([13e4cba](https://github.com/mokevnin/easement/commit/13e4cba04d1e02e20e07564acc2bfb2cac5c25b2))
+* report symbol rules over languages without verified uses as an evidence gap ([3a75f19](https://github.com/mokevnin/easement/commit/3a75f191bfee7ef4fdfa606af88138fd9936bab6))
+* SARIF and JUnit say what a run leaves out ([3a69fb8](https://github.com/mokevnin/easement/commit/3a69fb8528f05132eaad11b83f7c8c4daf191864))
+* the output says dependency and surface, as GLOSSARY.md does ([59fa067](https://github.com/mokevnin/easement/commit/59fa0673e52740aab587cc41444cb0cad3b89e78))
+
 ## [0.4.14](https://github.com/mokevnin/easement/compare/v0.4.13...v0.4.14) (2026-11-05)
 
 
