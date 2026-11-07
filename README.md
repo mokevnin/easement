@@ -44,8 +44,9 @@ All languages share component boundaries, public APIs, layers, isolation, cycles
 | Ruby | SCIP, constant references | Yes | Yes | No | — |
 | Kotlin | Imports only | No | No | No | — |
 | Swift | Imports only | No | No | No | — |
+| Svelte | Imports only | No | No | No | — |
 
-**SCIP** uses language indexers to resolve references to definitions; install the indexer and the project's dependencies. Kotlin and Swift use bundled tree-sitter adapters with approximate import resolution. **Symbol rules** restrict uses of specific types, functions or methods; **type naming** assigns matching type names to components. **Package declarations** checks imports against declared dependencies and applies component rules to dependencies in manifests.
+**SCIP** uses language indexers to resolve references to definitions; install the indexer and the project's dependencies. Kotlin, Swift and Svelte use bundled tree-sitter adapters with approximate import resolution. **Symbol rules** restrict uses of specific types, functions or methods; **type naming** assigns matching type names to components. **Package declarations** checks imports against declared dependencies and applies component rules to dependencies in manifests.
 
 Coverage has limits: TypeScript/JavaScript needs a `tsconfig.json` that includes the files; Ruby needs Sorbet type information and cannot enforce external gem restrictions; unused-file checks stay conservative around incomplete indexes, and framework-loaded files may need explicit entry points. See [language requirements and limits](https://github.com/mokevnin/easement/blob/main/docs/languages.md).
 

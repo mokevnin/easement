@@ -44,6 +44,7 @@ tree-sitter = "0.27.1"
 tree-sitter-go = "0.25.0"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-swift = "0.7.4"
+tree-sitter-typescript = "0.23.2"
 unidiff = { version = "0.4.1", default-features = false }
 which = "8.0.6"
 yaml-edit = { version = "0.3.6", default-features = false }

@@ -1,0 +1,10 @@
+version: 1
+
+components:
+  domain: { in: src/lib/domain }
+  infra: { in: src/lib/infra }
+  web: { in: src/routes/web }
+
+rules:
+  infra: { may_depend_on: [domain] }
+  web: { may_depend_on: [domain] }

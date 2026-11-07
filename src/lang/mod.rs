@@ -8,6 +8,7 @@ pub mod go;
 pub mod kotlin;
 pub mod parts;
 pub mod registry;
+pub mod svelte;
 pub mod swift;
 pub mod typescript;
 
@@ -238,6 +239,9 @@ pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>>
     }
     if has(&registry::SWIFT) {
         adapters.push(Box::new(swift::Swift::new(root, files)?));
+    }
+    if has(&registry::SVELTE) {
+        adapters.push(Box::new(svelte::Svelte::new(root, files)?));
     }
     Ok(adapters)
 }

@@ -1,6 +1,6 @@
 //! How each language's imports and members resolve into dependencies: Go,
 //! TypeScript, Python, Java, C#, Rust (with its test code: `#[cfg(test)]`,
-//! integration tests, benches and examples), PHP, Ruby, Kotlin and Swift; and
+//! integration tests, benches and examples), PHP, Ruby, Kotlin, Swift and Svelte; and
 //! what `exclude` and the baseline do with what was resolved.
 
 use std::fs;
@@ -739,6 +739,16 @@ fn php_resolves_psr4_names() {
         "php",
         "src/Web/OrderController.php",
         "src/Infra/OrderRepository.php",
+        3,
+    );
+}
+
+#[test]
+fn svelte_resolves_relative_and_subpath_imports() {
+    layered(
+        "svelte",
+        "src/routes/web/OrderController.svelte",
+        "src/lib/infra/OrderRepository.svelte",
         3,
     );
 }
