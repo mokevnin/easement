@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.2](https://github.com/mokevnin/easement/compare/v0.5.1...v0.5.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* a language's foreign directories are one fact of its registry entry ([f5de062](https://github.com/mokevnin/easement/commit/f5de062e8334309182276d5727608a20a14cb576)), closes [#109](https://github.com/mokevnin/easement/issues/109)
+* find the namespace a misspelled forbid_symbol name sits under at every language's separators ([9e3b4e4](https://github.com/mokevnin/easement/commit/9e3b4e485d0134dde6de2da93748552b74d98495)), closes [#108](https://github.com/mokevnin/easement/issues/108)
+* key vendored Go code again, as the indexer reads it ([5d28ea6](https://github.com/mokevnin/easement/commit/5d28ea6e17d98f4019139c162ef553a73f2dabaa)), closes [#109](https://github.com/mokevnin/easement/issues/109)
+
+
+### Performance Improvements
+
+* answer `why` from the dependencies at each place, found in one pass ([8a6032f](https://github.com/mokevnin/easement/commit/8a6032f7494daec7949b1ee7f0b57f21cd95a8f6))
+* build the Kotlin and Swift adapters from the scan's one walk, only when they have files ([8b1409b](https://github.com/mokevnin/easement/commit/8b1409b019e3bcfdd7d5072434ebb330885e8f2f))
+* parse a Go file up to its first declaration to read its head ([9cb5daf](https://github.com/mokevnin/easement/commit/9cb5daf41ad54ff41270f7c341ed93c48bf201ad)), closes [#126](https://github.com/mokevnin/easement/issues/126)
+* read each SCIP symbol once per run and share who defines what ([318212b](https://github.com/mokevnin/easement/commit/318212b61ccd5fc0cd96e0ab9e2e21fb7c4ba2b1))
+* remember a component lookup once when threads miss it together ([b940542](https://github.com/mokevnin/easement/commit/b940542020545761b6832e5413b1d998cc19e517))
+* remember which entry owns a path and part for the life of a component map ([9d3b0b2](https://github.com/mokevnin/easement/commit/9d3b0b25362361ad01475b3b31470cf1e943d433))
+
 ## [0.5.1](https://github.com/mokevnin/easement/compare/v0.5.0...v0.5.1) (2026-11-07)
 
 
