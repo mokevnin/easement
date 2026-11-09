@@ -2,7 +2,13 @@
 //! taken from its `<script>` blocks with the TypeScript grammar and resolved the way
 //! Vite and TypeScript resolve them: a relative path, a subpath import of the
 //! nearest `package.json` (`#lib/*`), or a `paths` alias of its `tsconfig.json`
-//! (`$lib`, which SvelteKit writes into `.svelte-kit/tsconfig.json`).
+//! (`$lib`, which SvelteKit writes into `.svelte-kit/tsconfig.json`, and which a
+//! SvelteKit project without that generated file still gets by default).
+//!
+//! Two kinds of import are not left as external modules: one that looks like
+//! project code but names no file is an evidence gap ([`Adapter::looks_local`]),
+//! and a TypeScript file's import of a component is a dependency on it
+//! ([`Adapter::imports_into`]) when the TypeScript index did not point it there.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,6 +27,9 @@ const QUERY: &str = r#"
 (export_statement source: (string (string_fragment) @node))
 (call_expression function: (import) arguments: (arguments . (string (string_fragment) @node)))
 "#;
+
+/// SvelteKit's virtual modules: what a `$` specifier names when it is not an alias.
+const VIRTUAL: &[&str] = &["$app/", "$env/", "$service-worker"];
 
 /// What a bundler tries after a specifier that names no file as written.
 const EXTENSIONS: &[&str] = &["ts", "js", "mts", "mjs", "tsx", "jsx", "svelte", "d.ts"];
@@ -82,6 +91,22 @@ impl Svelte {
         })
     }
 
+    /// The imports a script of `path` writes, with `offset` the 0-based line of the
+    /// file the script starts on.
+    fn script_imports(&self, path: &Path, script: &str, offset: usize) -> Result<Vec<Import>> {
+        let tree = parse(&self.language, path, script)?;
+        Ok(captured_nodes(&self.query, &tree, script)
+            .into_iter()
+            .map(|node| Import {
+                specifier: node
+                    .utf8_text(script.as_bytes())
+                    .unwrap_or_default()
+                    .to_string(),
+                line: offset + node.start_position().row + 1,
+            })
+            .collect())
+    }
+
     /// The path a non-relative specifier stands for under the aliases of the
     /// project that holds `file`.
     fn alias(&self, file: &str, specifier: &str) -> Option<String> {
@@ -110,9 +135,15 @@ fn aliases(root: &Path, dir: &str) -> Vec<(String, String)> {
         std::fs::read_to_string(root.join(relpath::join(dir, rel))).ok()
     };
     let mut found = Vec::new();
+    let mut kit = false;
     if let Some(text) = read("package.json")
         && let Some(package) = object(&text)
     {
+        kit = ["dependencies", "devDependencies"].iter().any(|field| {
+            package
+                .get_object(field)
+                .is_some_and(|deps| deps.get("@sveltejs/kit").is_some())
+        });
         for (pattern, value) in package.get_object("imports").into_iter().flat_map(entries) {
             if let Some(target) = condition(&value).and_then(|t| relpath::resolve(dir, &t)) {
                 found.push((pattern, target));
@@ -145,6 +176,17 @@ fn aliases(root: &Path, dir: &str) -> Vec<(String, String)> {
             }
         }
     }
+    // SvelteKit's own `$lib`, for a package that depends on `@sveltejs/kit`, when the
+    // generated config that writes it is missing (a fresh checkout): last, so a
+    // configured `$lib` wins over it.
+    // shortcut: `kit.files.lib` and `kit.alias` are not read, so a moved `$lib` or a
+    // custom alias then becomes an evidence gap (`looks_local`) until `svelte-kit sync`.
+    if kit {
+        let lib = relpath::join(dir, "src/lib");
+        found.push(("$lib".to_string(), lib.clone()));
+        found.push(("$lib/*".to_string(), format!("{lib}/*")));
+    }
+    // Stable, so of two equal patterns the one found first wins.
     found.sort_by_key(|(pattern, _)| std::cmp::Reverse(pattern.len()));
     found
 }
@@ -163,11 +205,14 @@ fn entries<'a>(object: &JsonObject<'a>) -> impl Iterator<Item = (String, JsonVal
 }
 
 /// The path a subpath import maps to: a string, or the first string under its
-/// conditions (`{ "svelte": "./x.svelte", "default": "./x.js" }`).
+/// conditions (`{ "svelte": "./x.svelte", "default": "./x.js" }`) but `types`,
+/// which names declarations rather than the code that runs.
 fn condition(value: &JsonValue<'_>) -> Option<String> {
     match value {
         JsonValue::String(s) => Some(s.to_string()),
-        JsonValue::Object(conditions) => entries(conditions).find_map(|(_, v)| condition(&v)),
+        JsonValue::Object(conditions) => entries(conditions)
+            .filter(|(name, _)| name != "types")
+            .find_map(|(_, v)| condition(&v)),
         _ => None,
     }
 }
@@ -195,24 +240,17 @@ impl Adapter for Svelte {
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>> {
         let mut found = Vec::new();
         for (script, offset) in scripts(source) {
-            let tree = parse(&self.language, path, script)?;
-            found.extend(
-                captured_nodes(&self.query, &tree, script)
-                    .into_iter()
-                    .map(|node| Import {
-                        specifier: node
-                            .utf8_text(script.as_bytes())
-                            .unwrap_or_default()
-                            .to_string(),
-                        line: offset + node.start_position().row + 1,
-                    }),
-            );
+            found.extend(self.script_imports(path, script, offset)?);
         }
         Ok(found)
     }
 
     fn resolve(&self, file: &Path, specifier: &str) -> Target {
         let file = slash(file.strip_prefix(&self.root).unwrap_or(file));
+        // Vite's `?raw`, `?url` and the like name the same file.
+        let specifier = specifier
+            .split_once('?')
+            .map_or(specifier, |(path, _)| path);
         let base = if specifier.starts_with("./") || specifier.starts_with("../") {
             relpath::resolve(parent(&file), specifier)
         } else {
@@ -223,6 +261,40 @@ impl Adapter for Svelte {
             // A package, a virtual module (`$app/state`), or a generated one (`./$types`).
             None => Target::External(specifier.to_string()),
         }
+    }
+
+    fn looks_local(&self, specifier: &str) -> bool {
+        // A route's `./$types` is generated and types only.
+        let generated = specifier
+            .rsplit('/')
+            .next()
+            .is_some_and(|last| last == "$types" || last.starts_with("$types."));
+        let local = specifier.starts_with("./")
+            || specifier.starts_with("../")
+            // Subpath imports are the package's own by definition.
+            || specifier.starts_with('#')
+            // A `kit.alias` of `svelte.config.js`, unless a virtual module.
+            || (specifier.starts_with('$') && !VIRTUAL.iter().any(|v| specifier.starts_with(v)));
+        local && !generated
+    }
+
+    fn imports_into(&self, path: &Path, source: &str) -> Vec<(Import, Target)> {
+        if !super::registry::is(path, &super::registry::TYPESCRIPT) {
+            return Vec::new();
+        }
+        // shortcut: `.tsx`/`.jsx` go through the TypeScript grammar too; its error
+        // recovery keeps the imports at the top of a file, which is where they are.
+        let Ok(imports) = self.script_imports(path, source, 0) else {
+            return Vec::new();
+        };
+        imports
+            .into_iter()
+            .filter_map(|import| {
+                let target = self.resolve(path, &import.specifier);
+                matches!(&target, Target::Internal(unit) if self.handles(unit.path()))
+                    .then_some((import, target))
+            })
+            .collect()
     }
 }
 
@@ -325,5 +397,84 @@ mod tests {
         assert_eq!(go("svelte"), Target::External("svelte".into()));
         assert_eq!(go("$app/state"), Target::External("$app/state".into()));
         assert_eq!(go("./$types"), Target::External("./$types".into()));
+        assert_eq!(go("../lib/api.ts?raw"), internal("web/src/lib/api.ts"));
+    }
+
+    #[test]
+    fn sveltekit_lib_is_the_default_without_the_generated_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let package = root.join("web/package.json");
+        std::fs::create_dir_all(package.parent().unwrap()).unwrap();
+        std::fs::write(
+            package,
+            r#"{ "devDependencies": { "@sveltejs/kit": "^3.0.0" } }"#,
+        )
+        .unwrap();
+        let files: Vec<PathBuf> = ["web/package.json", "web/src/lib/api.ts"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let svelte = Svelte::new(root, &files).unwrap();
+        let page = root.join("web/src/routes/+page.svelte");
+        assert_eq!(
+            svelte.resolve(&page, "$lib/api"),
+            Target::Internal(PathBuf::from("web/src/lib/api.ts").into())
+        );
+    }
+
+    #[test]
+    fn a_local_looking_specifier_is_told_from_a_module() {
+        let svelte = Svelte::new(Path::new("/nonexistent"), &[]).unwrap();
+        for local in [
+            "./gone",
+            "../gone.js",
+            "#lib/gone",
+            "$lib/gone",
+            "$components/X.svelte",
+        ] {
+            assert!(svelte.looks_local(local), "{local}");
+        }
+        for module in [
+            "svelte",
+            "@scope/pkg",
+            "$app/state",
+            "$env/static/public",
+            "$service-worker",
+            "./$types",
+            "../$types.js",
+            "virtual:pwa",
+        ] {
+            assert!(!svelte.looks_local(module), "{module}");
+        }
+    }
+
+    #[test]
+    fn a_typescript_file_depends_on_the_components_it_imports() {
+        let files: Vec<PathBuf> = ["src/lib/api.ts", "src/lib/Button.svelte"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let svelte = Svelte::new(Path::new("/nonexistent"), &files).unwrap();
+        let src = "import B from './Button.svelte';\nimport { x } from './api';\nimport y from 'svelte';\n";
+        let got: Vec<_> = svelte
+            .imports_into(Path::new("src/lib/index.ts"), src)
+            .into_iter()
+            .map(|(i, t)| (i.specifier, i.line, t))
+            .collect();
+        assert_eq!(
+            got,
+            [(
+                "./Button.svelte".to_string(),
+                1,
+                Target::Internal(PathBuf::from("src/lib/Button.svelte").into())
+            )]
+        );
+        // Only an indexed language's files are read.
+        assert!(
+            svelte
+                .imports_into(Path::new("src/lib/A.svelte"), src)
+                .is_empty()
+        );
     }
 }

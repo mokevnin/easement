@@ -224,6 +224,18 @@ pub trait Adapter {
     fn handles(&self, path: &Path) -> bool;
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>>;
     fn resolve(&self, file: &Path, specifier: &str) -> Target;
+    /// Whether `specifier`, which [`Adapter::resolve`] took for external, still
+    /// names code of the project (an alias whose config is missing, a relative
+    /// path to no file): its dependency is then an evidence gap, not a module.
+    fn looks_local(&self, _specifier: &str) -> bool {
+        false
+    }
+    /// The imports of a file an indexer reads (`path`, relative to the root) that
+    /// name a file of this adapter's language, with their targets: the index of the
+    /// importing language does not follow them into a file it does not read.
+    fn imports_into(&self, _path: &Path, _source: &str) -> Vec<(Import, Target)> {
+        Vec::new()
+    }
 }
 
 /// The adapters of the languages that have a file among `files`, everything but

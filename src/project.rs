@@ -324,6 +324,9 @@ pub fn graph_unread(
     let accepted;
     (stats.uncovered, accepted) = map.split_uncovered(&scan.uncovered);
     stats.imports_partial = unresolved_reasons(&scan.unresolved_imports);
+    stats
+        .imports_partial
+        .extend(unresolved_local_reasons(&scan.unresolved_local));
     if config.tests.is_some() {
         stats.parts_partial = parts_reasons(&scan.parts_doubts);
     }
@@ -336,6 +339,29 @@ const IMPORTS_SHOWN: usize = 3;
 /// The line about the imports that the indexer did not resolve: how many, the
 /// first few by file and line, and the place of every one of them.
 fn unresolved_reasons(imports: &[(String, lang::Import)]) -> Vec<check::Unjudged> {
+    import_reasons(imports, |count, named| {
+        format!(
+            "the indexer did not resolve {count} import(s), so the dependencies they write were not checked (for example, a package that does not type-check, or an import cycle): {named}"
+        )
+    })
+}
+
+/// The line about the imports of files an adapter reads that look like project
+/// code but name no file of it.
+fn unresolved_local_reasons(imports: &[(String, lang::Import)]) -> Vec<check::Unjudged> {
+    import_reasons(imports, |count, named| {
+        format!(
+            "{count} import(s) look like project code but name no file of it, so the dependencies they write were not checked (for example, an alias of a generated config that is missing until the build writes it, or a file that does not exist): {named}"
+        )
+    })
+}
+
+/// The line `reason` writes from how many imports there are and the first few of
+/// them by file and line, with the place of every one.
+fn import_reasons(
+    imports: &[(String, lang::Import)],
+    reason: impl Fn(usize, &str) -> String,
+) -> Vec<check::Unjudged> {
     if imports.is_empty() {
         return Vec::new();
     }
@@ -354,11 +380,8 @@ fn unresolved_reasons(imports: &[(String, lang::Import)]) -> Vec<check::Unjudged
         format!(" and {more} more")
     });
     vec![
-        check::Unjudged::new(format!(
-            "the indexer did not resolve {} import(s), so the dependencies they write were not checked (for example, a package that does not type-check, or an import cycle): {named}",
-            places.len()
-        ))
-        .in_files(imports.iter().map(|(file, _)| file.as_str()))
-        .at(places),
+        check::Unjudged::new(reason(places.len(), &named))
+            .in_files(imports.iter().map(|(file, _)| file.as_str()))
+            .at(places),
     ]
 }

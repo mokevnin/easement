@@ -754,6 +754,90 @@ fn svelte_resolves_relative_and_subpath_imports() {
 }
 
 #[test]
+fn svelte_components_imported_from_typescript_are_dependencies() {
+    // The TypeScript index points the import at the ambient `*.svelte` module,
+    // not at the component, so the adapter adds the dependency itself.
+    let (_tmp, root) = fixture("svelte");
+    write_all(
+        &root,
+        &[
+            (
+                "tsconfig.json",
+                r#"{ "compilerOptions": { "strict": true, "moduleResolution": "bundler", "module": "esnext" }, "include": ["src"] }"#,
+            ),
+            ("src/svelte.d.ts", "declare module '*.svelte';\n"),
+            (
+                "src/lib/domain/order.ts",
+                "import Controller from '../../routes/web/OrderController.svelte';\nexport const c = Controller;\n",
+            ),
+        ],
+    );
+    let (found, _) = violations(&root);
+    assert!(
+        found.contains(&(
+            "src/lib/domain/order.ts".to_string(),
+            "src/routes/web/OrderController.svelte".to_string()
+        )),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn svelte_lib_resolves_without_the_generated_config() {
+    // A fresh checkout: `.svelte-kit/` is not generated yet, but `$lib` is
+    // SvelteKit's own default.
+    let (_tmp, root) = fixture("svelte");
+    write_all(
+        &root,
+        &[
+            (
+                "package.json",
+                r##"{ "name": "shop", "private": true, "imports": { "#lib/*": "./src/lib/*" }, "devDependencies": { "@sveltejs/kit": "^3.0.0" } }"##,
+            ),
+            (
+                "src/routes/web/OrderController.svelte",
+                "<script>\n  import OrderRepository from '$lib/infra/OrderRepository.svelte';\n</script>\n",
+            ),
+        ],
+    );
+    let (found, _) = violations(&root);
+    assert_eq!(
+        found,
+        [(
+            "src/routes/web/OrderController.svelte".to_string(),
+            "src/lib/infra/OrderRepository.svelte".to_string()
+        )]
+    );
+}
+
+#[test]
+fn svelte_local_import_that_names_no_file_is_an_evidence_gap() {
+    // A `kit.alias` whose generated config is missing resolves to nothing: it is
+    // not an external module, and the check says it could not judge it.
+    let (_tmp, root) = fixture("svelte");
+    write_all(
+        &root,
+        &[(
+            "src/routes/web/OrderController.svelte",
+            "<script>\n  import Repo from '$infra/OrderRepository.svelte';\n  import { page } from '$app/state';\n  import type { PageData } from './$types';\n</script>\n",
+        )],
+    );
+    let checked = check(&root);
+    let report = json(&checked);
+    let gaps = gap_messages(&report, "unresolved_imports");
+    assert_eq!(gaps.len(), 1, "{report}");
+    let message = gaps[0].as_str().unwrap();
+    assert!(
+        message.contains("$infra/OrderRepository.svelte"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("$app/state") && !message.contains("$types"),
+        "{message}"
+    );
+}
+
+#[test]
 fn swift_resolves_package_modules() {
     layered(
         "swift",
