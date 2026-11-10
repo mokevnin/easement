@@ -67,6 +67,10 @@ pub struct Scan {
     /// dependencies are missing (scip-go on an import cycle, a package that does
     /// not type-check).
     pub unresolved_imports: Vec<(String, Import)>,
+    /// Imports of files an adapter reads that look like project code but name no
+    /// file of it (an alias whose generated config is missing), so their
+    /// dependencies are missing.
+    pub unresolved_local: Vec<(String, Import)>,
     /// Files whose test code a finder of parts could not tell from the file's.
     pub parts_doubts: Vec<(String, lang::parts::Doubt)>,
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
@@ -146,6 +150,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let mut deps = Vec::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
+    let mut unresolved_local = Vec::new();
     for (entry, rel) in walked {
         let path = entry.path();
         let file = slash(&rel);
@@ -189,11 +194,16 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         paths.push(file);
         suppressions.extend(parsed.suppressions.iter().cloned());
         for import in &parsed.imports {
+            let target = adapter.resolve(path, &import.specifier);
+            if matches!(target, Target::External(_)) && adapter.looks_local(&import.specifier) {
+                unresolved_local.push((slash(&rel), import.clone()));
+                continue;
+            }
             deps.push(Dep::module(
                 rel.clone(),
                 import.line,
                 import.specifier.clone(),
-                adapter.resolve(path, &import.specifier),
+                target,
             ));
         }
     }
@@ -268,6 +278,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let index = scip::Indexed::of(&names);
     let mut types: Vec<TypeDef> = Vec::new();
     let mut unresolved_imports = Vec::new();
+    let mut bridged: Vec<Dep> = Vec::new();
     for document in documents
         .iter()
         .filter(|d| !target_only.is_match(d.path.as_str()))
@@ -275,6 +286,17 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         paths.push(document.path.clone());
         if let Ok(source) = std::fs::read_to_string(root.join(&document.path)) {
             suppressions.extend(suppress::parse(&document.path, &source));
+            // What the index may not follow into a file an adapter reads.
+            for adapter in &adapters {
+                for (import, target) in adapter.imports_into(Path::new(&document.path), &source) {
+                    bridged.push(Dep::module(
+                        document.path.clone(),
+                        import.line,
+                        import.specifier,
+                        target,
+                    ));
+                }
+            }
             // Each import the file writes must have left a module on its path in the index.
             if let Some(written) =
                 lang::registry::of(&document.path).and_then(|language| language.written_imports)
@@ -303,6 +325,13 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let (sources, mut unread_deps): (Vec<Dep>, Vec<Dep>) =
         facts.deps.into_iter().partition(|dep| is_source(&dep.file));
     deps.extend(sources);
+    // Only what the index did not resolve itself, so no dependency counts twice.
+    bridged.retain(|dep| {
+        !deps
+            .iter()
+            .any(|known| known.file == dep.file && known.target == dep.target)
+    });
+    deps.extend(bridged);
     let mut packages_problems = Vec::new();
     if policy.packages {
         let declared =
@@ -361,6 +390,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         uncovered: indexed.uncovered,
         unnamed_uses,
         unresolved_imports,
+        unresolved_local,
         parts_doubts,
         packages_problems,
         known_symbols: facts.known,

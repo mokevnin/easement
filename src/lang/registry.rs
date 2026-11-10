@@ -366,6 +366,33 @@ pub static SWIFT: Language = Language {
     settings: &[],
 };
 
+/// Svelte components, read by the `svelte` adapter: no indexer reads them, so
+/// `unused` cannot judge them and no symbol rule sees their names.
+pub static SVELTE: Language = Language {
+    name: "svelte",
+    extensions: &["svelte"],
+    declarations: &[],
+    tests: &[],
+    not_tests: &[],
+    whole_directory: false,
+    std: None,
+    unused: &[],
+    conventional: &[],
+    manifest: None,
+    symbols: false,
+    parts: None,
+    runs_on_import: None,
+    uses_unimported: &[],
+    program: None,
+    unindexed_uses: None,
+    written_imports: None,
+    foreign_dirs: &[],
+    third_party: &["node_modules"],
+    part_names: &[],
+    module_separators: &["/"],
+    settings: &[],
+};
+
 /// Ruby loads by convention (autoloading), so `unused` cannot judge it.
 pub static RUBY: Language = Language {
     name: "ruby",
@@ -437,7 +464,7 @@ pub static RUST: Language = Language {
 };
 
 /// Every language, in the order their test globs are listed.
-pub static LANGUAGES: [&Language; 10] = [
+pub static LANGUAGES: [&Language; 11] = [
     &GO,
     &TYPESCRIPT,
     &PYTHON,
@@ -448,6 +475,7 @@ pub static LANGUAGES: [&Language; 10] = [
     &SWIFT,
     &RUBY,
     &RUST,
+    &SVELTE,
 ];
 
 /// The language of a file, by its extension.

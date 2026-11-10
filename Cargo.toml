@@ -22,7 +22,7 @@ dunce = "1.0.5"
 globset = "0.4.20"
 gomod-parser = "0.6.0"
 ignore = "0.4.33"
-jsonc-parser = "0.34"
+jsonc-parser = { version = "0.34", features = ["preserve_order"] }
 pathfinding = "4.16.0"
 protobuf = "3"
 quick-junit = "0.8.0"
@@ -44,6 +44,7 @@ tree-sitter = "0.27.1"
 tree-sitter-go = "0.25.0"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-swift = "0.7.4"
+tree-sitter-typescript = "0.23.2"
 unidiff = { version = "0.4.1", default-features = false }
 which = "8.0.6"
 yaml-edit = { version = "0.3.6", default-features = false }
