@@ -6,11 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use easement::commands::Checked;
-use easement::{EvidenceGap, GapKind};
+use easement::{CacheUse, EvidenceGap, GapKind};
 use tempfile::TempDir;
 
 use crate::common::{fixture, write_all};
-use crate::run::{check, json, pinned, text};
+use crate::run::{check, check_in, json, pinned, text};
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
 /// client types, which declare `"*.css"`, `"*.svg"` and `"*?raw"` by wildcard,
@@ -161,7 +161,9 @@ fn an_import_the_index_takes_nowhere_is_a_gap_that_names_its_cause() {
 #[test]
 fn each_cause_of_an_unresolved_import_is_pinned() {
     let (_tmp, root) = ts_imports();
-    let checked = check(&root);
+    // Indexed afresh, so that no other run decides whether the output says it is cached.
+    let own = TempDir::new().unwrap();
+    let checked = check_in(&root, own.path(), CacheUse::Off).unwrap();
     let report = json(&checked);
     let said = text(&checked);
     let start = said.find("Evidence gaps").expect("the text lists the gaps");
