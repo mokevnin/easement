@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.3](https://github.com/mokevnin/easement/compare/v0.6.2...v0.6.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* take a file an unresolved import may reach as unjudged, not unused ([932d559](https://github.com/mokevnin/easement/commit/932d5593efb735ba8f80040743d9e4bbe50a14de)), closes [#138](https://github.com/mokevnin/easement/issues/138)
+* **test:** index the unresolved-import snapshot afresh ([39036c0](https://github.com/mokevnin/easement/commit/39036c06cc34cd951935dd6bf84f1fbae812cf53))
+
 ## [0.6.2](https://github.com/mokevnin/easement/compare/v0.6.1...v0.6.2) (2026-11-11)
 
 
