@@ -8,6 +8,7 @@ use crate::check::RuleId;
 use crate::components::{ComponentMap, NamedSurface};
 use crate::config::Config;
 use crate::lang::Target;
+use crate::lang::Unit;
 use crate::lang::{Dep, Written};
 use crate::policy::Site;
 use crate::relpath::slash;
@@ -183,6 +184,10 @@ pub struct Decision<'a> {
     /// grant when nothing in the policy restricts it: an allowed external
     /// module, a target in no component.
     pub grant: Result<Option<Grant>, Clause<'a>>,
+    /// How certainly the target was resolved.
+    pub resolution: ResolutionStatus,
+    /// All files or directories that may declare the imported name.
+    pub candidates: Vec<String>,
     /// The reason the policy gives for the clause that rejected it.
     pub because: Option<&'a str>,
 }
@@ -308,6 +313,21 @@ pub fn unread(map: &ComponentMap, rel_path: &str) -> Option<Outside> {
     }
 }
 
+/// How certainly a dependency's target was resolved. It says nothing of whether
+/// the declaration is a duplicate: an import that means every copy (a wildcard,
+/// an overload) still tells how certain its target is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionStatus {
+    /// A single declaration: the target is proven.
+    Unambiguous,
+    /// Several declarations in one component (or all outside components): the
+    /// component is known, the exact file is not.
+    SameScope,
+    /// Declarations in different components: the target is not proven.
+    Ambiguous,
+}
+
 /// The verdict on one dependency, or why no rule judges the imports of its
 /// source. The scan reads no import of an [`unread`] file, so `check` meets
 /// only the unowned ones; a proposed dependency meets them all.
@@ -321,12 +341,25 @@ pub fn decide<'a>(
         return Err(why);
     }
     let from = map.component_of_unit(&dep.from).ok_or(Outside::Unowned)?;
-    let decision = |to, target, grant, because| Decision {
+    let resolution_status = if dep.candidates.is_empty() {
+        ResolutionStatus::Unambiguous
+    } else {
+        let scopes: std::collections::BTreeSet<Option<&str>> =
+            dep.candidates.iter().map(|c| map.component_of(c)).collect();
+        if scopes.len() <= 1 {
+            ResolutionStatus::SameScope
+        } else {
+            ResolutionStatus::Ambiguous
+        }
+    };
+    let decision = |to, target, grant, because, resolution, candidates| Decision {
         from,
         to,
         target,
         grant,
         because,
+        resolution,
+        candidates,
     };
     let unit = match &dep.target {
         Target::External(module) => {
@@ -336,18 +369,65 @@ pub fn decide<'a>(
                     module.clone(),
                     Err(Clause::External(problem.what)),
                     problem.because.or_else(|| config.reason(from)),
+                    resolution_status,
+                    dep.candidates.clone(),
                 ),
-                None => decision(None, module.clone(), Ok(None), None),
+                None => decision(
+                    None,
+                    module.clone(),
+                    Ok(None),
+                    None,
+                    resolution_status,
+                    Vec::new(),
+                ),
             });
         }
-        Target::Internal(unit) => unit,
+        Target::Internal(unit) => unit.clone(),
+    };
+    let unit = if !dep.candidates.is_empty() {
+        let here = map.component_of(slash(&dep.file).as_str());
+        // Which copy an import means is not decided by the policy: take the copy
+        // in the importing file's component, otherwise the first by path. A copy
+        // `exclude` hides is not skipped, so the import fails as `excluded`
+        // rather than being taken for the copy that breaks no rule.
+        let own = dep
+            .candidates
+            .iter()
+            .map(String::as_str)
+            .filter(|c| here.is_some() && map.component_of(c) == here)
+            .min();
+        if let Some(chosen) = own {
+            Unit::from(chosen)
+        } else {
+            dep.candidates
+                .iter()
+                .min()
+                .map(|c| Unit::from(c.as_str()))
+                .unwrap_or(unit)
+        }
+    } else {
+        unit
     };
     let target = unit.key();
     if map.is_excluded(&target) {
-        return Ok(decision(None, target, Err(Clause::ExcludedTarget), None));
+        return Ok(decision(
+            None,
+            target,
+            Err(Clause::ExcludedTarget),
+            None,
+            resolution_status,
+            dep.candidates.clone(),
+        ));
     }
-    let Some(to) = map.component_of_unit(unit) else {
-        return Ok(decision(None, target, Ok(None), None));
+    let Some(to) = map.component_of_unit(&unit) else {
+        return Ok(decision(
+            None,
+            target,
+            Ok(None),
+            None,
+            resolution_status,
+            dep.candidates.clone(),
+        ));
     };
     let component = |name: &str| config.components[name].because.as_deref();
     let sliced = |clause| (Err(clause), component(to).or_else(|| config.reason(from)));
@@ -377,7 +457,14 @@ pub fn decide<'a>(
             (Ok(verdict.grant.ok()), verdict.because)
         }
     };
-    Ok(decision(Some(to), target, grant, because))
+    Ok(decision(
+        Some(to),
+        target,
+        grant,
+        because,
+        resolution_status,
+        dep.candidates.clone(),
+    ))
 }
 
 /// Where the policy writes the grant that lets `from` depend on `to`: none
@@ -717,5 +804,190 @@ mod tests {
             violations.sort();
             assert_eq!(rejected, violations, "{name}");
         });
+    }
+
+    /// The config of the matrix below: `app` imports a name that several
+    /// files may declare — in one component, in two, in none, or hidden by the
+    /// policy.
+    fn candidates_config() -> (Config, ComponentMap) {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  app: { in: app }
+  lib: { in: lib }
+  other: { in: other }
+rules:
+  app: { may_depend_on: [lib, other] }
+exclude: [\"legacy/**\", \"lib/legacy/**\"]
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        (config, map)
+    }
+
+    /// The dependency of `app` on a name that `candidates` may declare.
+    fn dep_of(candidates: &[&str]) -> Dep {
+        let mut dep = Dep::module(
+            "app/src/main/kotlin/com/acme/App.kt",
+            1,
+            "com.acme.thing.Thing",
+            Target::Internal(Unit::from("lib/src/main/kotlin/com/acme/thing/Thing.kt")),
+        );
+        dep.candidates = candidates.iter().map(|c| c.to_string()).collect();
+        dep
+    }
+
+    /// The scope of the candidates tells how certain the target is: the file of
+    /// one component, the file of no component, or a file the policy hides. The
+    /// target is the copy in the importing file's component, otherwise the first
+    /// by path, and a file the policy hides is not skipped, so its dependency
+    /// fails as `excluded`.
+    #[test]
+    fn the_scope_of_the_candidates_tells_how_certain_the_target_is() {
+        let (config, map) = candidates_config();
+        for (candidates, resolution, to, hidden) in [
+            (
+                ["lib/a/Thing.kt", "lib/b/Thing.kt"],
+                ResolutionStatus::SameScope,
+                Some("lib"),
+                false,
+            ),
+            (
+                ["lib/a/Thing.kt", "other/a/Thing.kt"],
+                ResolutionStatus::Ambiguous,
+                Some("lib"),
+                false,
+            ),
+            (
+                ["shared/a/Thing.kt", "shared/b/Thing.kt"],
+                ResolutionStatus::SameScope,
+                None,
+                false,
+            ),
+            (
+                ["shared/a/Thing.kt", "legacy/a/Thing.kt"],
+                ResolutionStatus::SameScope,
+                None,
+                true,
+            ),
+            (
+                ["legacy/a/Thing.kt", "legacy/b/Thing.kt"],
+                ResolutionStatus::SameScope,
+                None,
+                true,
+            ),
+            (
+                ["lib/a/Thing.kt", "legacy/a/Thing.kt"],
+                ResolutionStatus::Ambiguous,
+                None,
+                true,
+            ),
+            (
+                ["lib/a/Thing.kt", "shared/a/Thing.kt"],
+                ResolutionStatus::Ambiguous,
+                Some("lib"),
+                false,
+            ),
+            (
+                ["lib/a/Thing.kt", "lib/legacy/a/Thing.kt"],
+                ResolutionStatus::SameScope,
+                Some("lib"),
+                false,
+            ),
+        ] {
+            let decision = decide(&config, &map, &dep_of(&candidates)).unwrap();
+            assert_eq!(decision.resolution, resolution, "{candidates:?}");
+            assert_eq!(decision.to, to, "{candidates:?}");
+            assert_eq!(
+                matches!(decision.grant, Err(Clause::ExcludedTarget)),
+                hidden,
+                "{candidates:?}: {:?}",
+                decision.grant
+            );
+        }
+    }
+
+    /// The status is `snake_case` in the public format; the callers leave the
+    /// field out when it is `unambiguous`.
+    #[test]
+    fn the_status_serializes_as_snake_case() {
+        let json = |status| serde_json::to_value(status).unwrap();
+        assert_eq!(json(ResolutionStatus::SameScope), "same_scope");
+        assert_eq!(json(ResolutionStatus::Ambiguous), "ambiguous");
+        assert_eq!(json(ResolutionStatus::Unambiguous), "unambiguous");
+    }
+
+    /// A candidate the policy hides is not replaced by another one: the choice
+    /// is the first by path whatever `exclude` says, so the dependency fails as
+    /// `excluded` instead of being taken for the copy that breaks no rule.
+    #[test]
+    fn an_excluded_candidate_is_not_replaced_by_another() {
+        let (config, map) = candidates_config();
+        let decision = decide(
+            &config,
+            &map,
+            &dep_of(&["legacy/a/Thing.kt", "lib/a/Thing.kt"]),
+        )
+        .unwrap();
+        assert_eq!(decision.target, "legacy/a/Thing.kt");
+        assert_eq!(decision.to, None);
+        assert!(
+            matches!(decision.grant, Err(Clause::ExcludedTarget)),
+            "{:?}",
+            decision.grant
+        );
+    }
+
+    /// The copy in the component of the importing file is taken before the first
+    /// by path.
+    #[test]
+    fn a_candidate_of_the_importing_component_is_preferred() {
+        let (config, map) = candidates_config();
+        let decision = decide(
+            &config,
+            &map,
+            &dep_of(&["lib/a/Thing.kt", "app/z/Thing.kt"]),
+        )
+        .unwrap();
+        assert_eq!(decision.target, "app/z/Thing.kt");
+        assert_eq!(decision.to, Some("app"));
+    }
+
+    /// With no copy in the importing file's component, the first by path is
+    /// taken, and `exclude` does not reorder the candidates.
+    #[test]
+    fn without_a_candidate_of_the_importing_component_the_first_by_path_is_taken() {
+        let (config, map) = candidates_config();
+        let chosen =
+            |candidates: &[&str]| decide(&config, &map, &dep_of(candidates)).unwrap().target;
+        assert_eq!(
+            chosen(&["other/a/Thing.kt", "lib/a/Thing.kt"]),
+            "lib/a/Thing.kt"
+        );
+        assert_eq!(
+            chosen(&["lib/a/Thing.kt", "legacy/a/Thing.kt"]),
+            "legacy/a/Thing.kt"
+        );
+    }
+
+    /// When every candidate is hidden, the dependency fails as `excluded`: no
+    /// other candidate lets it pass.
+    #[test]
+    fn a_dependency_of_only_hidden_candidates_fails_as_excluded() {
+        let (config, map) = candidates_config();
+        let decision = decide(
+            &config,
+            &map,
+            &dep_of(&["legacy/a/Thing.kt", "legacy/b/Thing.kt"]),
+        )
+        .unwrap();
+        assert!(
+            matches!(decision.grant, Err(Clause::ExcludedTarget)),
+            "{:?}",
+            decision.grant
+        );
+        assert_eq!(decision.target, "legacy/a/Thing.kt");
+        assert_eq!(decision.to, None);
     }
 }

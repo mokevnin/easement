@@ -8,7 +8,6 @@ use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
 use crate::decision::{self, Refusal};
 use crate::lang::Dep;
-use crate::lang::Target;
 use crate::relpath;
 use crate::report::{self, EvidenceGap};
 
@@ -336,20 +335,25 @@ fn isolation_candidates(
         }
     }
     for dep in deps {
-        let Target::Internal(target) = &dep.target else {
+        let targets = dep.targets();
+        if targets.is_empty() {
             continue;
-        };
-        let (file, target) = (dep.from.key(), target.key());
+        }
+        let file = dep.from.key();
         let Some((key, here)) = locate(&file) else {
             continue;
         };
         let entry = groups.entry(key.clone()).or_default();
         entry.0.insert(here.clone());
-        if let Some((there_key, there)) = locate(&target)
-            && there_key == key
-            && there != here
-        {
-            entry.1 = true;
+        // Every copy the import may mean: an instance that reaches another
+        // through any of them depends on it.
+        for target in &targets {
+            if let Some((there_key, there)) = locate(&target.key())
+                && there_key == key
+                && there != here
+            {
+                entry.1 = true;
+            }
         }
     }
     groups
@@ -371,6 +375,7 @@ fn isolation_candidates(
 mod tests {
 
     use super::*;
+    use crate::lang::Target;
 
     fn dep(file: &str, target: &str) -> Dep {
         Dep::module(file, 1, "", Target::Internal(target.into()))

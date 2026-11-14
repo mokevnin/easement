@@ -118,6 +118,14 @@ impl From<&str> for Unit {
         }
     }
 }
+impl From<String> for Unit {
+    fn from(path: String) -> Self {
+        Self {
+            path: path.into(),
+            part: None,
+        }
+    }
+}
 
 /// Where an import points to after resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -147,7 +155,13 @@ pub struct Dep {
     pub file: PathBuf,
     pub line: usize,
     pub specifier: String,
+    /// The target the adapter found first by path, or the external module.
+    /// Readers that must not lose a copy read `candidates`; `decision::decide`
+    /// picks the copy an import means.
     pub target: Target,
+    /// All files or directories that may declare the imported name, in the
+    /// order of their paths. Empty when the declaration is unambiguous.
+    pub candidates: Vec<String>,
     /// The node it leaves: the file itself.
     pub from: Unit,
     /// Whether the code names a module or writes a name of one.
@@ -239,11 +253,30 @@ impl Dep {
             line,
             specifier: specifier.into(),
             target,
+            candidates: Vec::new(),
             written: Written::Module,
             mentions: Vec::new(),
             through: Through::Nothing,
             aliased: Vec::new(),
             routes: Vec::new(),
+        }
+    }
+
+    /// Every internal target the import may mean, with the part it names: all
+    /// `candidates` when several places may declare it, otherwise the file or
+    /// directory it resolves to. Empty for an external module. Readers that must
+    /// not lose a copy, or the part a target belongs to, ask here.
+    pub fn targets(&self) -> Vec<Unit> {
+        if !self.candidates.is_empty() {
+            return self
+                .candidates
+                .iter()
+                .map(|candidate| Unit::from(candidate.as_str()))
+                .collect();
+        }
+        match &self.target {
+            Target::Internal(unit) => vec![unit.clone()],
+            Target::External(_) => Vec::new(),
         }
     }
 }
@@ -274,13 +307,30 @@ pub struct Scope {
     pub last: usize,
 }
 
+/// The result of resolving an import: the deterministic target, every
+/// candidate that may declare the imported name, and the name that is
+/// ambiguous when more than one candidate may.
+#[derive(Debug, Clone)]
+pub struct Resolution {
+    /// The first candidate by path, or the external module: `decision::decide`
+    /// picks the copy an import means.
+    pub target: Target,
+    pub candidates: Vec<String>,
+    /// The name more than one candidate may declare, when they may: only a
+    /// declaration that one place should hold, never overloads or extensions.
+    pub ambiguity: Option<String>,
+}
+
 /// A language adapter: extracts imports from a file and resolves them, for a
 /// language no indexer reads (see `registry` for the rest of a language).
 pub trait Adapter {
     fn name(&self) -> &'static str;
     fn handles(&self, path: &Path) -> bool;
     fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>>;
-    fn resolve(&self, file: &Path, specifier: &str) -> Target;
+    /// The target of an import of `specifier`, every candidate that may
+    /// declare it, and the name that is ambiguous when more than one
+    /// candidate may.
+    fn resolve(&self, file: &Path, specifier: &str) -> Resolution;
 }
 
 /// The adapters of the languages that have a file among `files`, everything but
@@ -289,13 +339,15 @@ pub trait Adapter {
 /// resolves to. Each adapter reads
 /// what it needs from this list, so the tree is walked once.
 pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>> {
-    let has = |language: &registry::Language| files.iter().any(|f| registry::is(f, language));
     let mut adapters: Vec<Box<dyn Adapter>> = Vec::new();
-    if has(&registry::KOTLIN) {
-        adapters.push(Box::new(kotlin::Kotlin::new(root, files)?));
-    }
-    if has(&registry::SWIFT) {
-        adapters.push(Box::new(swift::Swift::new(root, files)?));
+    for &language in &registry::LANGUAGES {
+        let Some(build) = language.adapter else {
+            continue;
+        };
+        if !files.iter().any(|f| registry::is(f, language)) {
+            continue;
+        }
+        adapters.push(build(root, files)?);
     }
     Ok(adapters)
 }
@@ -347,6 +399,25 @@ mod tests {
             .iter()
             .map(|a| a.name())
             .collect()
+    }
+
+    /// A dependency on a part keeps it: a reader that asks for its targets must
+    /// not lose the part the policy judges.
+    #[test]
+    fn targets_keep_the_part_of_a_single_target() {
+        let part = parts::Part {
+            name: "feature/fake".into(),
+            kind: None,
+        };
+        let dep = Dep::module(
+            "crates/core/Cargo.toml",
+            6,
+            "fakes",
+            Target::Internal(Unit::in_part(Path::new("crates/core/Cargo.toml"), part)),
+        );
+        let targets = dep.targets();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].part_name(), Some("feature/fake"));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use easement::commands::Outcome;
 use serde_json::Value;
 
 use crate::common::{fixture, project};
-use crate::run::{check, composer_install, config, json, pinned, report_of};
+use crate::run::{check, composer_install, config, json, pinned, report_of, text};
 
 /// The unused-rule verdicts and gaps of the check of `root`, as data.
 fn unused_of(root: &Path) -> (Vec<Value>, Vec<Value>) {
@@ -252,6 +252,39 @@ fn unused_knows_go_programs_python_conventions_and_kotlin_beside_java() {
         said.contains("`unused` did not judge the java files: Kotlin beside it"),
         "{said}"
     );
+}
+
+/// The files that may declare an imported name are known to the languages an
+/// adapter reads, and `unused` judges the languages an indexer covers: the
+/// alternative declaration of a Kotlin file is never called unused.
+#[test]
+fn unused_never_calls_an_alternative_declaration_unused() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\nentry: [src/app/Main.kt]\n",
+        ),
+        (
+            "src/app/Main.kt",
+            "package app\n\nimport app.thing.Thing\n\nfun main() { Thing() }\n",
+        ),
+        (
+            "src/app/thing/Thing.kt",
+            "package app.thing\n\nclass Thing\n",
+        ),
+        (
+            "src/app/other/Thing.kt",
+            "package app.thing\n\nclass Thing\n",
+        ),
+    ]);
+    let checked = check(&root);
+    let report = json(&checked);
+    assert!(
+        report["violations"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+    let said = text(&checked);
+    assert!(said.contains("`unused` cannot judge .kt files"), "{said}");
 }
 
 /// C# and PHP: a class of the same namespace used without an import is

@@ -1,0 +1,16 @@
+---
+source: tests/library/declarations.rs
+expression: "gaps[0]"
+---
+{
+  "close": "give the name one home: keep it in one component, or rename it so that it is unique",
+  "count": 4,
+  "files": [
+    "desktop/src/test/kotlin/com/acme/test/DesktopFailureContext.kt",
+    "desktop/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt",
+    "shared/src/test/kotlin/com/acme/test/FailureContextExtension.kt",
+    "shared/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt"
+  ],
+  "kind": "declarations",
+  "message": "2 places declare `com.acme.test.helpers.CoroutineDiagnostics`: desktop/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt and shared/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt: an import of it is taken for the copy in the importing file's component, otherwise the first by path"
+}

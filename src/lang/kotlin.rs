@@ -34,15 +34,13 @@ const MODIFIERS: &[&str] = &[
     "external",
 ];
 
-const KEYWORDS: &[&str] = &[
-    "class",
-    "interface",
-    "object",
-    "typealias",
-    "fun",
-    "val",
-    "var",
-];
+/// How a top-level name is declared: a type, which only one place may hold, or
+/// a function or property, which overloads and extensions may repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeclKind {
+    Type,
+    Member,
+}
 
 /// Kotlin. Declarations are indexed by the `package` of their file, so source
 /// roots and files that hold several classes need no configuration.
@@ -55,10 +53,11 @@ const KEYWORDS: &[&str] = &[
 pub struct Kotlin {
     language: Language,
     query: Query,
-    /// `package.Name` of a top-level declaration -> file, relative to the root.
-    declarations: BTreeMap<String, PathBuf>,
+    /// `package.Name` of a top-level declaration -> file, relative to the root,
+    /// and how it is declared there.
+    declarations: BTreeMap<String, BTreeMap<String, DeclKind>>,
     /// Package -> directories holding it, relative to the root.
-    packages: BTreeMap<String, BTreeSet<PathBuf>>,
+    packages: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Kotlin {
@@ -66,8 +65,8 @@ impl Kotlin {
     pub fn new(root: &Path, files: &[PathBuf]) -> Result<Self> {
         let language: Language = tree_sitter_kotlin_ng::LANGUAGE.into();
         let query = Query::new(&language, QUERY)?;
-        let mut declarations = BTreeMap::new();
-        let mut packages: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
+        let mut declarations: BTreeMap<String, BTreeMap<String, DeclKind>> = BTreeMap::new();
+        let mut packages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for rel in files {
             if !super::registry::is(rel, &super::registry::KOTLIN) {
                 continue;
@@ -86,19 +85,25 @@ impl Kotlin {
                     format!("{package}.{name}")
                 }
             };
-            for name in top_level_names(&source) {
+            for (name, kind) in top_level_declarations(&source) {
                 declarations
                     .entry(qualify(&name))
-                    .or_insert_with(|| rel.clone());
+                    .or_default()
+                    .entry(crate::relpath::slash(rel))
+                    .or_insert(kind);
             }
+            // A file may be imported by its name alone, so two files of one
+            // name in one package are two places an import may mean.
             declarations
                 .entry(qualify(&stem.to_string_lossy()))
-                .or_insert_with(|| rel.clone());
+                .or_default()
+                .entry(crate::relpath::slash(rel))
+                .or_insert(DeclKind::Type);
             if let Some(dir) = rel.parent() {
                 packages
                     .entry(package)
                     .or_default()
-                    .insert(dir.to_path_buf());
+                    .insert(crate::relpath::slash(dir));
             }
         }
         Ok(Self {
@@ -108,6 +113,23 @@ impl Kotlin {
             packages,
         })
     }
+
+    /// The files that declare the longest name of `name` the project declares,
+    /// each with how it declares it.
+    fn declared(&self, name: &str) -> Option<&BTreeMap<String, DeclKind>> {
+        let parts: Vec<&str> = name.split('.').collect();
+        for k in (1..=parts.len()).rev() {
+            if let Some(files) = self.declarations.get(&parts[..k].join(".")) {
+                return Some(files);
+            }
+        }
+        None
+    }
+}
+
+/// The adapter of the Kotlin files, for the registry.
+pub fn adapter(root: &Path, files: &[PathBuf]) -> Result<Box<dyn Adapter>> {
+    Ok(Box::new(Kotlin::new(root, files)?))
 }
 
 /// The `package` header, read line by line without a full parse.
@@ -123,8 +145,9 @@ fn package_of(source: &str) -> Option<String> {
 }
 
 /// Names of declarations that start at the beginning of a line, which is where
-/// top-level ones are written: `data class User(`, `fun String.slug()`.
-fn top_level_names(source: &str) -> Vec<String> {
+/// top-level ones are written: `data class User(`, `fun String.slug()`, each
+/// with how it is declared.
+fn top_level_declarations(source: &str) -> Vec<(String, DeclKind)> {
     source
         .lines()
         .filter(|line| !line.starts_with(char::is_whitespace))
@@ -135,8 +158,14 @@ fn top_level_names(source: &str) -> Vec<String> {
                 .is_some()
             {}
             let keyword = words.next()?;
-            if !KEYWORDS.contains(&keyword) {
-                return None;
+            let mut kind = match keyword {
+                "class" | "interface" | "object" | "typealias" => DeclKind::Type,
+                "fun" | "val" | "var" => DeclKind::Member,
+                _ => return None,
+            };
+            // `fun interface Handler` declares a type.
+            if keyword == "fun" && words.peek().is_some_and(|w| *w == "interface") {
+                kind = DeclKind::Type;
             }
             let word = loop {
                 let word = words.next()?;
@@ -163,7 +192,7 @@ fn top_level_names(source: &str) -> Vec<String> {
                 })
                 .collect();
             let name = plain.rsplit('.').next()?.to_string();
-            (!name.is_empty()).then(|| name.trim_matches('`').to_string())
+            (!name.is_empty()).then(|| (name.trim_matches('`').to_string(), kind))
         })
         .collect()
 }
@@ -202,20 +231,46 @@ impl Adapter for Kotlin {
             .collect())
     }
 
-    fn resolve(&self, _file: &Path, specifier: &str) -> Target {
+    fn resolve(&self, _file: &Path, specifier: &str) -> super::Resolution {
         let name = specifier.trim_end_matches(".*");
-        if specifier.ends_with(".*")
-            && let Some(dir) = self.packages.get(name).and_then(|d| d.first())
-        {
-            return Target::Internal(dir.clone().into());
-        }
-        let parts: Vec<&str> = name.split('.').collect();
-        for k in (1..=parts.len()).rev() {
-            if let Some(file) = self.declarations.get(&parts[..k].join(".")) {
-                return Target::Internal(file.clone().into());
+        // One pass over the declarations of the project: the files that may
+        // declare the name, and whether an import of it may mean more than one
+        // place that should hold one declaration.
+        let (candidates, ambiguous): (Vec<String>, bool) = if specifier.ends_with(".*") {
+            // A wildcard import means every copy the package holds: several
+            // directories of one package (main and test source sets) are no
+            // duplicate declaration.
+            match self.packages.get(name) {
+                Some(dirs) => (dirs.iter().cloned().collect(), false),
+                None => match self.declared(name) {
+                    Some(files) => (files.keys().cloned().collect(), false),
+                    None => (Vec::new(), false),
+                },
             }
+        } else {
+            match self.declared(name) {
+                Some(files) => (
+                    files.keys().cloned().collect(),
+                    // A type one place should hold, declared in several files,
+                    // is a real duplicate. Overloads and extensions of one
+                    // function or property are not.
+                    files.len() > 1 && files.values().any(|kind| *kind == DeclKind::Type),
+                ),
+                None => (Vec::new(), false),
+            }
+        };
+        let target = candidates
+            .first()
+            .cloned()
+            .map(super::Unit::from)
+            .map(Target::Internal)
+            .unwrap_or_else(|| Target::External(specifier.to_string()));
+        let many = candidates.len() > 1;
+        super::Resolution {
+            target,
+            candidates: if many { candidates } else { Vec::new() },
+            ambiguity: ambiguous.then(|| name.to_string()),
         }
-        Target::External(specifier.to_string())
     }
 }
 
@@ -235,9 +290,29 @@ mod tests {
                       object Registry {\n    fun inner() {}\n}\nfun interface Handler { fun run() }\n\
                       typealias Id = Long\nconst val LIMIT = 3\n";
         assert_eq!(
-            top_level_names(source),
+            top_level_declarations(source)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
             [
                 "User", "second", "slug", "Registry", "Handler", "Id", "LIMIT"
+            ]
+        );
+        // A `fun` is repeatable, a type and its file-stem name are not.
+        let kinds: Vec<_> = top_level_declarations(source)
+            .into_iter()
+            .map(|(_, kind)| kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                DeclKind::Type,
+                DeclKind::Member,
+                DeclKind::Member,
+                DeclKind::Type,
+                DeclKind::Type,
+                DeclKind::Type,
+                DeclKind::Member
             ]
         );
     }
@@ -281,7 +356,7 @@ mod tests {
             std::fs::write(path, text).unwrap();
         }
         let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
-        let go = |spec: &str| kt.resolve(Path::new("A.kt"), spec);
+        let go = |spec: &str| kt.resolve(Path::new("A.kt"), spec).target;
         assert_eq!(
             go("com.acme.model.User"),
             Target::Internal("model/Models.kt".into())
@@ -302,6 +377,28 @@ mod tests {
         assert_eq!(
             go("kotlin.collections.List"),
             Target::External("kotlin.collections.List".into())
+        );
+    }
+
+    /// One pass over the declarations gives both the resolution and the
+    /// ambiguity: a type two files declare is resolved to the first by path and
+    /// named as ambiguous at the same time.
+    #[test]
+    fn resolves_and_finds_the_ambiguity_in_one_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for path in ["one/Thing.kt", "two/Thing.kt"] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "package com.acme.thing\n\nclass Thing\n").unwrap();
+        }
+        let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
+        let resolution = kt.resolve(Path::new("A.kt"), "com.acme.thing.Thing");
+        assert_eq!(resolution.target, Target::Internal("one/Thing.kt".into()));
+        assert_eq!(resolution.candidates, ["one/Thing.kt", "two/Thing.kt"]);
+        assert_eq!(
+            resolution.ambiguity.as_deref(),
+            Some("com.acme.thing.Thing")
         );
     }
 }

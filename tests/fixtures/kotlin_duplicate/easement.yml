@@ -1,0 +1,9 @@
+version: 1
+
+components:
+  shared: { in: shared }
+  desktop: { in: desktop }
+
+rules:
+  shared: { because: "the shared module stands on its own" }
+  desktop: { because: "the desktop module stands on its own" }

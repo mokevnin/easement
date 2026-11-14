@@ -1,0 +1,13 @@
+---
+source: tests/library/declarations.rs
+expression: report
+---
+Evidence gaps (a pass says nothing about this code):
+  2 places declare `com.acme.test.helpers.CoroutineDiagnostics`: desktop/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt and shared/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt: an import of it is taken for the copy in the importing file's component, otherwise the first by path
+    to close: give the name one home: keep it in one component, or rename it so that it is unique
+    desktop/src/test/kotlin/com/acme/test/DesktopFailureContext.kt
+    desktop/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt
+    shared/src/test/kotlin/com/acme/test/FailureContextExtension.kt
+    shared/src/test/kotlin/com/acme/test/helpers/CoroutineDiagnostics.kt
+
+easement passed: 0 violation(s), 0 stale, 0 legalized; 4 files, 2 internal deps

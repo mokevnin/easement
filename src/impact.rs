@@ -8,7 +8,7 @@ use crate::check::{Chain, Hop, Place, RuleId, Unjudged, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::decision;
 use crate::explain::{DependencyDecision, PairDecision};
-use crate::lang::{Dep, Target};
+use crate::lang::Dep;
 use crate::policy::Policy;
 use crate::relpath;
 use crate::report::{self, Coverage, EvidenceGap, GapKind};
@@ -291,10 +291,9 @@ pub fn why(policy: &Policy, graph: &Graph, from: &str, to: &str) -> Result<Why> 
                 at.get(&(file.to_string(), line))
                     .into_iter()
                     .flatten()
-                    .filter_map(|dep| match &dep.target {
-                        Target::Internal(unit) => Some((dep, unit.key())),
-                        Target::External(_) => None,
-                    })
+                    // Every copy the import may mean, not only the one the
+                    // adapter found first.
+                    .flat_map(|dep| dep.targets().into_iter().map(move |unit| (dep, unit.key())))
                     .filter(|(_, target)| of(target) == Some(to))
                     .flat_map(|(dep, target)| {
                         dep.aliased

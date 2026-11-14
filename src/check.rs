@@ -143,6 +143,9 @@ pub struct Violation {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub because: Option<String>,
+    /// How certainly the target of this dependency was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<decision::ResolutionStatus>,
     pub from: String,
     pub to: String,
     pub target: String,
@@ -290,6 +293,7 @@ impl Violation {
             line: 0,
             message: String::new(),
             because: None,
+            resolution: None,
             from: String::new(),
             to: String::new(),
             target: String::new(),
@@ -429,6 +433,10 @@ pub struct Stats {
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
     #[serde(skip)]
     pub packages_partial: Vec<Unjudged>,
+    /// Names declared in more than one place, so an import of one was taken for
+    /// the copy in the importing file's component, otherwise the first by path.
+    #[serde(skip)]
+    pub declarations_partial: Vec<Unjudged>,
     /// Imports a file writes that the indexer did not resolve.
     #[serde(skip)]
     pub imports_partial: Vec<Unjudged>,
@@ -516,6 +524,7 @@ pub fn evaluate(
                 stats.std_unknown.push(ext);
             }
         }
+        // Preferred edge (proven when unambiguous).
         if let Some(to) = decision.to.filter(|to| *to != decision.from) {
             edges.push(Edge {
                 from: decision.from.to_string(),
@@ -523,6 +532,28 @@ pub fn evaluate(
                 file: file.clone(),
                 line: dep.line,
             });
+        }
+        // Over-approximation for ambiguous/same-scope deps: contribute an edge
+        // for every other candidate target so potential paths are not lost.
+        if decision.resolution != decision::ResolutionStatus::Unambiguous
+            && !dep.candidates.is_empty()
+        {
+            for cand in &dep.candidates {
+                if let Some(to) = map.component_of(cand) {
+                    // skip the preferred target (already added above) to avoid dup
+                    if Some(to) == decision.to {
+                        continue;
+                    }
+                    if to != decision.from {
+                        edges.push(Edge {
+                            from: decision.from.to_string(),
+                            to: to.to_string(),
+                            file: file.clone(),
+                            line: dep.line,
+                        });
+                    }
+                }
+            }
         }
         if let Some(to) = decision.to
             && !dep.mentions.is_empty()
@@ -642,6 +673,7 @@ pub fn violation(decision: &Decision, dep: &Dep, reexport: &Reexport) -> Option<
         target,
         grant: Err(clause),
         because,
+        ..
     } = decision
     else {
         return None;
@@ -712,6 +744,11 @@ pub fn violation(decision: &Decision, dep: &Dep, reexport: &Reexport) -> Option<
         line: dep.line,
         message,
         because: because.map(str::to_string),
+        resolution: if decision.resolution == crate::decision::ResolutionStatus::Unambiguous {
+            None
+        } else {
+            Some(decision.resolution)
+        },
         from: from.to_string(),
         to: to.to_string(),
         target: target.clone(),
@@ -846,9 +883,13 @@ pub fn required(
             continue;
         };
         match &dep.target {
-            Target::Internal(target) => {
-                if let Some(to) = map.component_of_unit(target) {
-                    unit.components.insert(to.to_string());
+            Target::Internal(_) => {
+                // Every copy the import may mean: a path it may take is not lost
+                // from what the directory must depend on.
+                for target in dep.targets() {
+                    if let Some(to) = map.component_of_unit(&target) {
+                        unit.components.insert(to.to_string());
+                    }
                 }
             }
             Target::External(module) => {
@@ -1220,5 +1261,71 @@ rules:
         // Line 1 of a/x is old, so a -> b existed before; only a -> c is new.
         let got = new_dependencies(&edges, |_, line| line != 1);
         assert_eq!(got, ["a -> c"]);
+    }
+
+    /// The graph keeps an edge to every candidate of a component: a dependency
+    /// on a name several files may declare may reach any of them. A candidate
+    /// of no component has no place in a graph of components, and a candidate
+    /// of the component itself is no edge.
+    #[test]
+    fn the_graph_keeps_an_edge_to_every_candidate_of_a_component() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  app: { in: app }
+  lib: { in: lib }
+  other: { in: other }
+  third: { in: third }
+rules:
+  app: { may_depend_on: [lib, other, third] }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let dep_of = |candidates: &[&str]| {
+            let mut dep = Dep::module(
+                "app/src/main/kotlin/com/acme/App.kt",
+                1,
+                "com.acme.thing.Thing",
+                Target::Internal(crate::lang::Unit::from("lib/a/Thing.kt")),
+            );
+            dep.candidates = candidates.iter().map(|c| c.to_string()).collect();
+            dep
+        };
+        let pairs = |edges: &[Edge]| {
+            let mut pairs: Vec<(String, String)> = edges
+                .iter()
+                .map(|e| (e.from.clone(), e.to.clone()))
+                .collect();
+            pairs.sort();
+            pairs
+        };
+        let (violations, edges, _) = evaluate(
+            &config,
+            &map,
+            &[dep_of(&[
+                "lib/a/Thing.kt",
+                "other/a/Thing.kt",
+                "third/a/Thing.kt",
+                "shared/a/Thing.kt",
+            ])],
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            pairs(&edges),
+            [
+                ("app".to_string(), "lib".to_string()),
+                ("app".to_string(), "other".to_string()),
+                ("app".to_string(), "third".to_string()),
+            ]
+        );
+        // A candidate of the component itself is no edge.
+        let (violations, edges, _) = evaluate(
+            &config,
+            &map,
+            &[dep_of(&["app/a/Thing.kt", "lib/a/Thing.kt"])],
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(pairs(&edges), [("app".to_string(), "lib".to_string())]);
     }
 }

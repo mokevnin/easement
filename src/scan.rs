@@ -71,6 +71,9 @@ pub struct Scan {
     pub parts_doubts: Vec<(String, lang::parts::Doubt)>,
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
     pub packages_problems: Vec<crate::check::Unjudged>,
+    /// Names declared in more than one file, so an import of one could not be
+    /// told for certain.
+    pub declarations_problems: Vec<crate::check::Unjudged>,
     /// The qualifier and name of the symbols the index knows under a name that
     /// `forbid_symbol` lists.
     pub known_symbols: Vec<(String, String)>,
@@ -125,7 +128,7 @@ enum Compared {
     /// The index takes it to a source target: its dependency is the index's.
     Resolved,
     /// The index does not, but its text names a file of the project or a package.
-    Spelled(Dep),
+    Spelled(Box<Dep>),
     /// Neither does its text: its dependency is not in the graph.
     Unresolved(Unresolved),
 }
@@ -160,7 +163,12 @@ fn compare(
             };
             if let Some(target) = target {
                 let specifier = target.name();
-                return Compared::Spelled(Dep::module(file, import.line, specifier, target));
+                return Compared::Spelled(Box::new(Dep::module(
+                    file,
+                    import.line,
+                    specifier,
+                    target,
+                )));
             }
             match (resolution, form) {
                 (scip::Resolution::Wildcard, _) => Cause::Wildcard,
@@ -227,6 +235,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     // Excluded files the walk sees (not the ones .gitignore hides).
     let mut excluded = BTreeSet::new();
     let mut deps = Vec::new();
+    let mut ambiguities: std::collections::BTreeMap<String, (Vec<String>, Vec<String>)> =
+        std::collections::BTreeMap::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
     for (entry, rel) in walked {
@@ -269,15 +279,23 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         }
         let parsed = &cache.parsed[&rel];
         seen.insert(rel.clone());
-        paths.push(file);
+        paths.push(file.clone());
         suppressions.extend(parsed.suppressions.iter().cloned());
         for import in &parsed.imports {
-            deps.push(Dep::module(
-                rel.clone(),
-                import.line,
-                import.specifier.clone(),
-                adapter.resolve(path, &import.specifier),
-            ));
+            let lang::Resolution {
+                target,
+                candidates,
+                ambiguity,
+            } = adapter.resolve(path, &import.specifier);
+            let mut dep = Dep::module(rel.clone(), import.line, import.specifier.clone(), target);
+            if let Some(name) = ambiguity {
+                let entry = ambiguities
+                    .entry(name)
+                    .or_insert_with(|| (candidates.clone(), Vec::new()));
+                entry.1.push(file.clone());
+            }
+            dep.candidates = candidates;
+            deps.push(dep);
         }
     }
     cache.parsed.retain(|path, _| seen.contains(path));
@@ -374,7 +392,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
                     let resolved = |import: &Import| index.resolution(document, &lines, import);
                     match compare(&document.path, import, written, resolved, exists) {
                         Compared::Resolved => {}
-                        Compared::Spelled(dep) => spelled_deps.push(dep),
+                        Compared::Spelled(dep) => spelled_deps.push(*dep),
                         Compared::Unresolved(unresolved) => unresolved_imports.push(unresolved),
                     }
                 }
@@ -467,6 +485,20 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         unresolved_imports,
         parts_doubts,
         packages_problems,
+        declarations_problems: {
+            let mut out = Vec::new();
+            for (name, (files, importers)) in ambiguities {
+                let mut all = files.clone();
+                all.extend(importers);
+                out.push(crate::check::Unjudged::new(format!(
+                    "{} places declare `{}`: {}: an import of it is taken for the copy in the importing file's component, otherwise the first by path",
+                    files.len(),
+                    name,
+                    files.join(" and ")
+                )).in_files(all));
+            }
+            out
+        },
         known_symbols: facts.known,
         known_symbols_whole: facts.known_whole,
         indexed: indexed.ran,

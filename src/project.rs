@@ -201,6 +201,7 @@ impl Project {
         if self.config().packages {
             stats.packages_partial = scan.packages_problems.clone();
         }
+        stats.declarations_partial = scan.declarations_problems.clone();
         stats.symbols_partial =
             symbols::symbols_partial(self.config(), &map, &scan.unnamed_uses, &scip::UNNAMED);
         let paths: Vec<&str> = scan.paths.iter().map(String::as_str).collect();

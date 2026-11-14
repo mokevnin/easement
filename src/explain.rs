@@ -171,6 +171,13 @@ pub struct DependencyDecision {
     /// Where the policy writes the grant or the clause.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
+    /// How certainly the target was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<crate::decision::ResolutionStatus>,
+    /// Other files that may declare the same name, when resolution is not
+    /// unambiguous.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
 }
 
 impl DependencyDecision {
@@ -186,6 +193,12 @@ impl DependencyDecision {
             provenance: decision
                 .site(&policy.config)
                 .map(|site| policy.provenance(&site)),
+            resolution: if decision.resolution == crate::decision::ResolutionStatus::Unambiguous {
+                None
+            } else {
+                Some(decision.resolution)
+            },
+            candidates: decision.candidates.clone(),
         }
     }
 }
