@@ -6,6 +6,8 @@ local fast = new Mapping<String, Step> {
     ["typos"] = Builtins.typos
     ["rumdl"] = Builtins.rumdl
     ["jactionlint"] = Builtins.jactionlint
+    // Security issues of the GitHub workflows; .github/zizmor.yml holds its exceptions.
+    ["zizmor"] = Builtins.zizmor
     ["betterleaks"] = Builtins.betterleaks
 }
 
