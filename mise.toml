@@ -55,11 +55,12 @@ version_expr = 'reverse(map(filter(fromJSON(body), hasPrefix(#.name, "v")), trim
 
 # Where `composer global require` (macOS, Linux) and `dotnet tool install --global` put
 # scip-php and scip-dotnet, which the tests need; the CI workflow shows how to install them.
+# Windows has no HOME, so the home directory falls back to USERPROFILE there.
 [env]
 _.path = [
-  "{{env.HOME}}/.composer/vendor/bin",
-  "{{env.HOME}}/.config/composer/vendor/bin",
-  "{{env.HOME}}/.dotnet/tools",
+  '{{ get_env(name="HOME", default=get_env(name="USERPROFILE", default="")) }}/.composer/vendor/bin',
+  '{{ get_env(name="HOME", default=get_env(name="USERPROFILE", default="")) }}/.config/composer/vendor/bin',
+  '{{ get_env(name="HOME", default=get_env(name="USERPROFILE", default="")) }}/.dotnet/tools',
 ]
 
 # Resources shipped by the pinned tools (hk, ...): agent skills are linked into .agents/skills and
