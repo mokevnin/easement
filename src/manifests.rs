@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::lang::Dep;
 use crate::lang::Target;
 use crate::lang::registry::{self, Manifest};
-use crate::packages::Declares;
+use crate::packages::{Declares, Named};
 use crate::relpath;
 
 pub struct Undeclared {
@@ -38,8 +38,8 @@ pub fn undeclared(
     // Manifest -> what it declares; `None` when it declares no package.
     let mut manifests: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
     let mut unreadable: BTreeSet<String> = BTreeSet::new();
-    // A source file -> its text, `None` when it cannot be read.
-    let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // A source file -> the packages it names, `None` when it cannot be read.
+    let mut sources: BTreeMap<String, Option<Named>> = BTreeMap::new();
     let mut unread_sources: BTreeSet<String> = BTreeSet::new();
     let mut violations = Vec::new();
     let mut unjudged = BTreeSet::new();
@@ -77,16 +77,16 @@ pub fn undeclared(
             continue;
         }
         // Read as text whatever its encoding: an import is ASCII.
-        let source = sources.entry(file.clone()).or_insert_with(|| {
+        let named = sources.entry(file.clone()).or_insert_with(|| {
             std::fs::read(root.join(&file))
                 .ok()
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .map(|bytes| kind.named_in_source(&String::from_utf8_lossy(&bytes)))
         });
-        let Some(source) = source else {
+        let Some(named) = named else {
             unread_sources.insert(file);
             continue;
         };
-        if !kind.named_in_source(source, &package) {
+        if !named.names(&package) {
             continue;
         }
         violations.push(Violation {

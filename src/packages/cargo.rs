@@ -1,7 +1,8 @@
 //! `Cargo.toml`: the dependency tables, the features, and the workspace.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use toml::Spanned;
@@ -410,12 +411,14 @@ pub(super) fn importable(text: &str) -> Declares {
     Declares::Package(names)
 }
 
-/// Whether Rust source names the crate `package` in a path or an `extern crate`.
-pub(super) fn named_in_source(source: &str, package: &str) -> bool {
-    let name = regex::escape(package);
-    Regex::new(&format!(
-        r"(?:^|[^\w:]){name}::|\bextern\s+crate\s+{name}\b"
-    ))
-    .expect("valid regex")
-    .is_match(source)
+/// The crates Rust source names as the root of a path or in an `extern crate`.
+pub(super) fn named_in_source(source: &str) -> BTreeSet<String> {
+    static NAMED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[^\w:])(\w+)::|\bextern\s+crate\s+(\w+)\b").expect("valid regex")
+    });
+    NAMED
+        .captures_iter(source)
+        .filter_map(|c| c.get(1).or_else(|| c.get(2)))
+        .map(|name| name.as_str().to_string())
+        .collect()
 }

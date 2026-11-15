@@ -210,18 +210,20 @@ pub(crate) fn npm_name(package: &str) -> String {
     }
 }
 
-/// Whether TypeScript or JavaScript source names `package` in an import, a
-/// `require` or an `import()`; a relative or absolute path names a file instead.
-pub(super) fn named_in_source(source: &str, package: &str) -> bool {
+/// The packages TypeScript or JavaScript source names in an import, a `require`
+/// or an `import()`; a relative or absolute path names a file instead.
+pub(super) fn named_in_source(source: &str) -> BTreeSet<String> {
     static QUOTED: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"(?:\bfrom|\bimport|\brequire\s*\(|\bimport\s*\()\s*["']([^"']+)["']"#)
             .expect("valid regex")
     });
     QUOTED
         .captures_iter(source)
-        .map(|c| c[1].to_string())
+        .filter_map(|c| c.get(1))
+        .map(|specifier| specifier.as_str())
         .filter(|specifier| !specifier.starts_with(['.', '/']))
-        .any(|specifier| self::package(&specifier) == package)
+        .map(self::package)
+        .collect()
 }
 
 #[cfg(test)]
