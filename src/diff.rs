@@ -468,4 +468,69 @@ diff --git src/old.ts src/old.ts
         assert!(!changes.contains("src/a.ts", 23));
         assert!(!changes.contains("src/old.ts", 1));
     }
+
+    /// The lines of `text`, a `\n` after each but the last when `newline` is false.
+    fn file(lines: &[String], newline: bool) -> String {
+        let mut text = lines.join("\n");
+        if newline && !lines.is_empty() {
+            text.push('\n');
+        }
+        text
+    }
+
+    proptest::proptest! {
+        // Each case runs git.
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// Whatever git writes for an edit, the lines `contains` names in the new
+        /// file are the ones git added, and the others are the old file's
+        /// lines that git kept, in their order.
+        #[test]
+        fn a_changed_line_is_one_git_added(
+            old in proptest::collection::vec("[abc]?", 0..12),
+            new in proptest::collection::vec("[abc]?", 0..12),
+            old_newline: bool,
+            new_newline: bool,
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let (old, new) = (file(&old, old_newline), file(&new, new_newline));
+            for (side, text) in [("old", &old), ("new", &new)] {
+                std::fs::create_dir(dir.path().join(side)).unwrap();
+                std::fs::write(dir.path().join(side).join("f"), text).unwrap();
+            }
+            // The lines as git counts them: a last line with no `\n` is one too.
+            let (old, new): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+            let output = std::process::Command::new("git")
+                .args(["-c", "core.quotePath=false", "diff", "--no-index", "--unified=0",
+                    "--no-renames", "--no-color", "--no-ext-diff", "--no-prefix", "old/f", "new/f"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            let diff = String::from_utf8(output.stdout).unwrap();
+            let changes = Changes::parse(&diff).unwrap();
+            proptest::prop_assert!(changes.deleted.is_empty(), "{:?}", changes.deleted);
+
+            let mut added = vec![false; new.len()];
+            let mut line = 0;
+            for text in diff.lines() {
+                if let Some(header) = text.strip_prefix("@@ ") {
+                    // `+start,count`: the line before the hunk when it adds none.
+                    let target = header.split(' ').nth(1).unwrap().trim_start_matches('+');
+                    line = target.split(',').next().unwrap().parse::<usize>().unwrap();
+                } else if text.starts_with('+') && !text.starts_with("+++") {
+                    added[line - 1] = true;
+                    line += 1;
+                }
+            }
+            for (i, was_added) in added.iter().enumerate() {
+                proptest::prop_assert_eq!(changes.contains("new/f", i + 1), *was_added, "line {}\n{}", i + 1, diff);
+            }
+            proptest::prop_assert!(!changes.contains("new/f", new.len() + 1), "{}", diff);
+
+            let mut rest = old.iter();
+            for (text, _) in new.iter().zip(&added).filter(|(_, added)| !**added) {
+                proptest::prop_assert!(rest.any(|o| o == text), "kept line {:?} is not in the old file\n{}", text, diff);
+            }
+        }
+    }
 }
