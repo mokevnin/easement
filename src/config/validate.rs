@@ -104,27 +104,29 @@ impl Config {
             }
         }
         for (from, rule) in &self.rules {
+            // As written: a glob or a set may be the key that gives the component its rule.
+            let at = format!("rules.{}", field_key(self.rule_key(from)));
             check(from, "rules")?;
             for to in rule.may_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.may_depend_on"))?;
+                check(to, &format!("{at}.may_depend_on"))?;
             }
             for to in rule.must_not_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_not_depend_on"))?;
+                check(to, &format!("{at}.must_not_depend_on"))?;
                 if rule.may_depend_on.iter().any(|c| c.name() == to) {
-                    bail!("rules.{from} both allows and forbids `{to}`");
+                    bail!("{at} both allows and forbids `{to}`");
                 }
             }
             for to in rule.must_not_reach.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_not_reach"))?;
+                check(to, &format!("{at}.must_not_reach"))?;
                 if to == from {
-                    bail!("rules.{from}.must_not_reach names `{from}` itself");
+                    bail!("{at}.must_not_reach names `{from}` itself");
                 }
                 if rule.may_depend_on.iter().any(|c| c.name() == to) {
-                    bail!("rules.{from} both allows `{to}` and forbids reaching it");
+                    bail!("{at} both allows `{to}` and forbids reaching it");
                 }
             }
             for to in rule.must_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_depend_on"))?;
+                check(to, &format!("{at}.must_depend_on"))?;
             }
             if let Some(name) = rule
                 .may_use_external
@@ -134,13 +136,11 @@ impl Config {
                 .map(Listed::name)
                 .find(|n| n.starts_with('$') && *n != STD)
             {
-                bail!(
-                    "rules.{from}: unknown `{name}`; the only `$` name is `$std`, the standard library"
-                );
+                bail!("{at}: unknown `{name}`; the only `$` name is `$std`, the standard library");
             }
             if rule.must_use_external.iter().any(|l| l.name() == STD) {
                 bail!(
-                    "rules.{from}.must_use_external: `$std` works only in may_use_external and forbid_external"
+                    "{at}.must_use_external: `$std` works only in may_use_external and forbid_external"
                 );
             }
             for pattern in rule
@@ -151,12 +151,12 @@ impl Config {
                 .map(Listed::name)
             {
                 globset::Glob::new(pattern)
-                    .with_context(|| format!("bad pattern `{pattern}` in rules.{from}"))?;
+                    .with_context(|| format!("bad pattern `{pattern}` in {at}"))?;
             }
             for listed in &rule.forbid_symbol {
                 let symbol = listed.name();
                 if !symbol.contains('.') {
-                    bail!("rules.{from}.forbid_symbol `{symbol}` must look like `package.Name`");
+                    bail!("{at}.forbid_symbol `{symbol}` must look like `package.Name`");
                 }
                 // A component's own list binds only its files, so it has no one to let in.
                 for (key, set) in [
@@ -165,21 +165,21 @@ impl Config {
                 ] {
                     if set {
                         bail!(
-                            "rules.{from}.forbid_symbol `{symbol}` has `{key}`, which works only in the top-level forbid_symbol"
+                            "{at}.forbid_symbol `{symbol}` has `{key}`, which works only in the top-level forbid_symbol"
                         );
                     }
                 }
             }
             for pattern in rule.requires_directive.iter().map(Listed::name) {
                 regex::Regex::new(pattern).with_context(|| {
-                    format!("bad regular expression `{pattern}` in rules.{from}.requires_directive")
+                    format!("bad regular expression `{pattern}` in {at}.requires_directive")
                 })?;
             }
             if rule
                 .max_instability
                 .is_some_and(|i| !(0.0..=1.0).contains(&i))
             {
-                bail!("rules.{from}.max_instability must be between 0 and 1");
+                bail!("{at}.max_instability must be between 0 and 1");
             }
         }
         self.validate_forbid_symbol_allow(&check)?;

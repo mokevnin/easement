@@ -614,6 +614,25 @@ components:
         }
     }
 
+    /// An error in a rule a glob or a set gives a component names the key as written.
+    #[test]
+    fn an_error_in_a_rule_under_a_glob_names_the_key_as_written() {
+        let err = with(
+            "rules:\n  'api-*': { may_depend_on: [usecase], must_not_depend_on: [usecase] }\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "rules.'api-*' both allows and forbids `usecase`"
+        );
+        let err = with("rules:\n  'api-*': { must_not_reach: ['api-*'] }\n").unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("rules.'api-*'.must_not_reach names `api-"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn what_covers_nothing_is_kept_to_fail_as_unmatched() {
         let config = with(
