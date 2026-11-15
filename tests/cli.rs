@@ -78,10 +78,12 @@ fn the_output_of_suggest_graph_baseline_and_init_is_pinned() {
             String::from_utf8_lossy(&out.stderr)
         );
         // Where the temporary directory is differs by machine, and so does whether a
-        // symbolic link leads to it (`/var` of macOS).
-        let real = fs::canonicalize(&root).unwrap();
+        // symbolic link leads to it (`/var` of macOS) or a short name does (`RUNNER~1`
+        // of Windows); a file directly in it is joined with `\` on Windows.
+        let real = dunce::canonicalize(&root).unwrap();
         text.replace(real.to_str().unwrap(), "<root>")
             .replace(root.to_str().unwrap(), "<root>")
+            .replace("<root>\\", "<root>/")
     };
     easement_cached(&root, &["check"], cache.path()).code(1);
     insta::assert_snapshot!("suggest_text", run(&["suggest"]));
