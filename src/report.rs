@@ -281,15 +281,32 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
             "name the standard modules the rule means instead of `$std`",
         );
     }
-    if !unread.is_empty() {
+    // A file easement could not read is told apart from one no indexer covered,
+    // since what closes the gap differs.
+    let uncovered: Vec<&String> = unread
+        .iter()
+        .filter(|f| !stats.unreadable.contains(f))
+        .collect();
+    if !uncovered.is_empty() {
         add(
             GapKind::Uncovered,
             &[Unjudged::new(format!(
                 "{} source files were not covered by an indexer, so the dependencies in or on them were not checked",
-                unread.len()
+                uncovered.len()
             ))
-            .in_files(unread.iter().cloned())],
+            .in_files(uncovered.into_iter().cloned())],
             CLOSE_UNCOVERED,
+        );
+    }
+    if !stats.unreadable.is_empty() {
+        add(
+            GapKind::Uncovered,
+            &[Unjudged::new(format!(
+                "{} source files could not be read, so what they import, and what they suppress, was not checked in full",
+                stats.unreadable.len()
+            ))
+            .in_files(stats.unreadable.iter().cloned())],
+            "make the files readable (their permissions, a broken link), or `exclude` them",
         );
     }
     gaps

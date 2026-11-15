@@ -57,8 +57,12 @@ pub struct Scan {
     pub types: Vec<TypeDef>,
     pub suppressions: Vec<Suppression>,
     /// Source files of an indexed language that the indexer did not cover,
-    /// for example files outside every `tsconfig.json`.
+    /// for example files outside every `tsconfig.json`, and the source files an
+    /// adapter could not read.
     pub uncovered: Vec<String>,
+    /// Source files easement could not read: what they import beyond the index,
+    /// and what they suppress, is unknown.
+    pub unreadable: Vec<String>,
     /// Checked files that use a name of a package the indexer left unnamed,
     /// which no rule on names judged.
     pub unnamed_uses: Vec<String>,
@@ -241,6 +245,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let mut seen = HashSet::new();
     // Source files an adapter would parse that cannot be read.
     let mut unread_sources: Vec<String> = Vec::new();
+    // Every source file that cannot be read, those of the index too.
+    let mut unreadable: Vec<String> = Vec::new();
     for (entry, rel) in walked {
         let path = entry.path();
         let file = slash(&rel);
@@ -406,6 +412,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
                     }
                 }
             }
+        } else {
+            unreadable.push(document.path.clone());
         }
         types.extend(document.types.iter().map(|(name, line)| TypeDef {
             file: document.path.clone(),
@@ -491,10 +499,16 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         suppressions,
         uncovered: {
             let mut uncovered = indexed.uncovered;
-            uncovered.extend(unread_sources);
+            uncovered.extend(unread_sources.iter().cloned());
             uncovered.sort();
             uncovered.dedup();
             uncovered
+        },
+        unreadable: {
+            unreadable.extend(unread_sources);
+            unreadable.sort();
+            unreadable.dedup();
+            unreadable
         },
         unnamed_uses,
         unresolved_imports,

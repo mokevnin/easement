@@ -49,6 +49,29 @@ fn an_import_the_indexer_did_not_resolve_is_an_evidence_gap() {
     );
 }
 
+/// A source file easement cannot read leaves out what it imports: the gap says
+/// it could not be read, not that no indexer covered it, and how to close it.
+#[test]
+#[cfg(unix)]
+fn a_source_file_that_cannot_be_read_is_an_evidence_gap_that_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, root) = fixture("kotlin");
+    let controller = root.join("src/main/kotlin/com/acme/shop/web/OrderController.kt");
+    fs::set_permissions(&controller, fs::Permissions::from_mode(0o000)).unwrap();
+    let checked = check(&root);
+    fs::set_permissions(&controller, fs::Permissions::from_mode(0o644)).unwrap();
+    let [gap] = checked.coverage.evidence_gaps.as_slice() else {
+        panic!("one gap: {:?}", checked.coverage.evidence_gaps);
+    };
+    assert_eq!(gap.kind, GapKind::Uncovered);
+    assert_eq!(
+        gap.files,
+        ["src/main/kotlin/com/acme/shop/web/OrderController.kt"]
+    );
+    assert!(gap.message.contains("could not be read"), "{}", gap.message);
+    assert!(!gap.message.contains("indexer"), "{}", gap.message);
+}
+
 /// An import the indexer dropped is a dependency missing from the graph, so
 /// every answer about the graph says it may be short.
 #[test]

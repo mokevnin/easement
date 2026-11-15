@@ -74,7 +74,8 @@ impl Kotlin {
             let Some(stem) = rel.file_stem() else {
                 continue;
             };
-            // Declarations are read whatever the encoding of the file.
+            // Declarations are read whatever the encoding of the file. One that cannot
+            // be read declares nothing known; the scan reports it as unreadable.
             let Ok(bytes) = std::fs::read(root.join(rel)) else {
                 continue;
             };

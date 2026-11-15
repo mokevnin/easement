@@ -286,7 +286,8 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
                 let spelled = match occurrence.symbol.starts_with(UNNAMED_NPM) {
                     true => {
                         let lines = source.get_or_insert_with(|| {
-                            // An import is ASCII, whatever the encoding of the file.
+                            // An import is ASCII, whatever the encoding of the file. One
+                            // that cannot be read spells nothing; the scan reports it.
                             String::from_utf8_lossy(
                                 &std::fs::read(root.join(&parsed.path)).unwrap_or_default(),
                             )
