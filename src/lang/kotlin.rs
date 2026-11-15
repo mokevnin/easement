@@ -167,15 +167,32 @@ fn top_level_declarations(source: &str) -> Vec<(String, DeclKind)> {
             if keyword == "fun" && words.peek().is_some_and(|w| *w == "interface") {
                 kind = DeclKind::Type;
             }
-            let word = loop {
-                let word = words.next()?;
-                // `fun <T> name`, `fun interface Name`, `companion object` are skipped over.
-                if !word.starts_with('<') && word != "interface" {
-                    break word;
-                }
+            // `fun interface Name` is skipped over.
+            words.next_if(|w| *w == "interface");
+            let rest = words.collect::<Vec<_>>().join(" ");
+            // `fun <reified T> name`: the type parameters, spaces and all, come first.
+            let rest = match rest.strip_prefix('<') {
+                Some(_) => after_type_parameters(&rest)?,
+                None => &rest,
             };
-            // `List<T>.second(` -> `List.second` -> `second`
-            let head = word.split(['(', ':', '=', '{']).next()?;
+            // The name with its receiver, `Map<K, V>.firstKey`: up to what follows it,
+            // where a space inside `<…>` is no end.
+            let mut depth = 0;
+            let mut previous = ' ';
+            let head: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|&c| {
+                    match c {
+                        '<' => depth += 1,
+                        '>' if previous != '-' => depth -= 1,
+                        _ => {}
+                    }
+                    previous = c;
+                    depth > 0 || !(c.is_whitespace() || matches!(c, '(' | ':' | '=' | '{'))
+                })
+                .collect();
+            // `List<T>.second` -> `List.second` -> `second`
             let mut depth = 0;
             let plain: String = head
                 .chars()
@@ -195,6 +212,29 @@ fn top_level_declarations(source: &str) -> Vec<(String, DeclKind)> {
             (!name.is_empty()).then(|| (name.trim_matches('`').to_string(), kind))
         })
         .collect()
+}
+
+/// What follows the type parameters `text` starts with: `<K, V> Map` -> ` Map`.
+fn after_type_parameters(text: &str) -> Option<&str> {
+    let mut depth = 0;
+    let mut previous = ' ';
+    for (at, c) in text.char_indices() {
+        // The `>` of a function type's `->` closes nothing.
+        let arrow = previous == '-';
+        previous = c;
+        match c {
+            '<' => depth += 1,
+            '>' if arrow => {}
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[at + 1..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `import a.b.C as D` -> `a.b.C`
@@ -277,6 +317,23 @@ impl Adapter for Kotlin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Type parameters may hold spaces (`reified`, bounds, a list), and so may
+    /// the receiver of an extension: the name is what follows them.
+    #[test]
+    fn type_parameters_and_a_receiver_with_spaces_are_no_name() {
+        let source = "inline fun <reified T> decode(text: String): T = TODO()\n\
+                      fun <K, V> Map<K, V>.firstKey(): K = keys.first()\n\
+                      fun <T : Comparable<T>> largest(a: T, b: T) = maxOf(a, b)\n\
+                      fun <F : (Int) -> Unit> each(f: F) = f(1)\n";
+        assert_eq!(
+            top_level_declarations(source)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            ["decode", "firstKey", "largest", "each"]
+        );
+    }
 
     #[test]
     fn reads_package_and_top_level_names() {
