@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use serde_norway::{Mapping, Value};
 
-use crate::config::Config;
+use crate::config::{Config, field_key};
 use crate::relpath::real;
 
 /// What a policy input is to the policy.
@@ -144,8 +144,8 @@ impl Policy {
         Some((input, item_line(&input.content, "examples", origin.item)))
     }
 
-    /// The input that last defined `name` under `key`, `components` or
-    /// `rules`: an extending file replaces a whole entry of that name. Under
+    /// The input that last defined `name` under `key`, `components`, `rules`
+    /// or `sets`: an extending file replaces a whole entry of that name. Under
     /// `common`, the input that first listed `name`; under an empty key, the
     /// last that wrote the top-level key `name`.
     pub fn defined_by(&self, key: &str, name: &str) -> Option<&PolicyInput> {
@@ -159,18 +159,32 @@ impl Policy {
     /// a file it extends defines the entry that holds it, as reports then name the
     /// configuration.
     pub fn config_line(&self, path: &[&str], value: &str) -> usize {
-        let (key, name) = match path {
-            [section @ ("components" | "rules"), name, ..] => (*section, *name),
-            [key, ..] => ("", *key),
-            [] => return 1,
-        };
-        if !self
-            .defined_by(key, name)
-            .is_some_and(|by| by.kind == InputKind::Config)
-        {
+        if !self.written_in_config(path) {
             return 1;
         }
         written_line(&self.config_input().content, path, value)
+    }
+
+    /// The line, counted from 1, where the configuration writes the key `key` of the
+    /// mapping at `path` (`rules`, `sets`); 1 when a file it extends defines it.
+    pub fn config_key_line(&self, path: &[&str], key: &str) -> usize {
+        let full: Vec<&str> = path.iter().copied().chain([key]).collect();
+        if !self.written_in_config(&full) {
+            return 1;
+        }
+        written_key_line(&self.config_input().content, path, key)
+    }
+
+    /// Whether the configuration itself, not a file it extends, defines the entry
+    /// that holds what is written at `path`.
+    fn written_in_config(&self, path: &[&str]) -> bool {
+        let (key, name) = match path {
+            [section @ ("components" | "rules" | "sets"), name, ..] => (*section, *name),
+            [key, ..] => ("", *key),
+            [] => return false,
+        };
+        self.defined_by(key, name)
+            .is_some_and(|by| by.kind == InputKind::Config)
     }
 }
 
@@ -183,6 +197,9 @@ pub struct Site {
     /// `components` or `rules` and the name of the entry, `common` and the
     /// name it lists, or an empty key and a top-level key.
     entry: (&'static str, String),
+    /// The globs and sets that bring the clause to the component it is about:
+    /// the key of its rule, then the item of its list.
+    through: Vec<String>,
 }
 
 impl Site {
@@ -191,7 +208,41 @@ impl Site {
         Self {
             field,
             entry: (section, name.to_string()),
+            through: Vec::new(),
         }
+    }
+
+    /// The rule of `component`, or the clause of it at `rest` (`.because`), under
+    /// the key of `rules` that writes it: a glob or a set may cover the component.
+    pub fn of_rule(config: &Config, component: &str, rest: &str) -> Self {
+        let key = config.rule_key(component);
+        Self {
+            field: format!("rules.{}{rest}", field_key(key)),
+            entry: ("rules", key.to_string()),
+            through: (key != component)
+                .then(|| key.to_string())
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// The item that names `name` in the list `list` (`may_depend_on`) of the rule
+    /// of `component`: the name itself, or the glob or set it comes through.
+    pub fn of_rule_item(config: &Config, component: &str, list: &str, name: &str) -> Option<Self> {
+        let written = config.written(&format!("rules.{component}.{list}"), name)?;
+        let mut site = Self::of_rule(config, component, &format!(".{list}[{}]", written.index));
+        // `'ee-*': { may_depend_on: ['ee-*'] }` brings both through one glob.
+        if let Some(through) = &written.through
+            && !site.through.contains(through)
+        {
+            site.through.push(through.clone());
+        }
+        Some(site)
+    }
+
+    /// The globs and sets that bring the clause to the component it is about.
+    pub fn through(&self) -> &[String] {
+        &self.through
     }
 
     /// The top-level `key`, a clause in itself.
@@ -205,15 +256,22 @@ impl Site {
         Self {
             field,
             entry: ("", key.to_string()),
+            through: Vec::new(),
         }
     }
 
-    /// The item `name` of `common`, at `index` of the merged list.
-    pub fn of_common(name: &str, index: usize) -> Self {
-        Self {
-            field: format!("common[{index}]"),
-            entry: ("common", name.to_string()),
-        }
+    /// The item of `common` that names `name`, itself or the glob or set it comes
+    /// through, at its index in the merged list.
+    pub fn of_common(config: &Config, name: &str) -> Option<Self> {
+        let written = config.written("common", name)?;
+        Some(Self {
+            field: format!("common[{}]", written.index),
+            entry: (
+                "common",
+                written.through.clone().unwrap_or_else(|| name.to_string()),
+            ),
+            through: written.through.clone().into_iter().collect(),
+        })
     }
 }
 
@@ -226,6 +284,11 @@ pub struct Provenance {
     /// or absolute when it is outside the root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
+    /// The globs and sets, as written, that bring the clause to the component it is
+    /// about: `api-*` for a rule under `rules.'api-*'`, then `@drivers` for an item
+    /// of its list; empty when the policy names the component.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub through: Vec<String>,
 }
 
 impl Policy {
@@ -235,6 +298,7 @@ impl Policy {
         Provenance {
             field: site.field.clone(),
             input: self.defined_by(section, name).map(|i| self.input_name(i)),
+            through: site.through.clone(),
         }
     }
 
@@ -322,7 +386,7 @@ impl Loader {
     /// `extends` is a path or a list of paths, relative to the file that names them.
     /// Patterns in every file stay relative to the root of the config being loaded.
     /// Keys that start with `x-` are dropped, so they can hold anchors for `<<`.
-    /// `components` and `rules` merge by name, the later definition replacing the
+    /// `components`, `rules` and `sets` merge by name, the later definition replacing the
     /// earlier one; `common`, `exclude` and `target_only` are concatenated, and so is
     /// `examples`, the bases' first and without dropping repeats; any other key is
     /// replaced by the extending file.
@@ -386,7 +450,7 @@ impl Loader {
             let key = key.as_str().unwrap_or_default();
             self.origins.insert((String::new(), key.to_string()), at);
             match (key, value) {
-                ("components" | "rules", Value::Mapping(entries)) => {
+                ("components" | "rules" | "sets", Value::Mapping(entries)) => {
                     for name in entries.keys().filter_map(Value::as_str) {
                         self.origins.insert((key.to_string(), name.to_string()), at);
                     }
@@ -412,7 +476,7 @@ fn merge(into: &mut Mapping, from: Mapping) {
         let name = key.as_str().unwrap_or_default();
         match (into.get_mut(&key), value) {
             (Some(Value::Mapping(old)), Value::Mapping(new))
-                if name == "components" || name == "rules" =>
+                if matches!(name, "components" | "rules" | "sets") =>
             {
                 for (k, v) in new {
                     old.insert(k, v);
@@ -630,6 +694,32 @@ fn written_line(text: &str, path: &[&str], value: &str) -> usize {
     node.flatten()
         .and_then(|node| holding(&node, value))
         .map_or(1, |at| line_at(text, at))
+}
+
+/// The line, counted from 1, where `text` writes the key `key` of the mapping at the
+/// keys `path`; 1 when it does not.
+fn written_key_line(text: &str, path: &[&str], key: &str) -> usize {
+    let Ok(document) = yaml_edit::Document::from_str(text) else {
+        return 1;
+    };
+    let Some((first, rest)) = path.split_first() else {
+        return 1;
+    };
+    let mapping = rest
+        .iter()
+        .try_fold(document.get(*first), |node, k| {
+            Some(node?.as_mapping()?.get(*k))
+        })
+        .flatten();
+    mapping
+        .as_ref()
+        .and_then(|node| node.as_mapping())
+        .and_then(|mapping| {
+            mapping
+                .keys()
+                .find(|k| k.as_scalar().is_some_and(|k| k.as_string() == key))
+        })
+        .map_or(1, |k| line_at(text, k.byte_range().start))
 }
 
 /// Where the scalar of `node` that reads `value` starts.
@@ -1131,19 +1221,52 @@ rules:
         assert_eq!(from("components", "tests"), "base.yml");
         // An item of a merged list is where it was first written, though the
         // extending file writes the key last.
-        let common = |name: &str, at| policy.provenance(&Site::of_common(name, at));
+        let common =
+            |name: &str| policy.provenance(&Site::of_common(&policy.config, name).unwrap());
         assert_eq!(
-            common("b", 0),
+            common("b"),
             Provenance {
                 field: "common[0]".to_string(),
-                input: Some("base.yml".to_string())
+                input: Some("base.yml".to_string()),
+                through: Vec::new(),
             }
         );
-        assert_eq!(common("c", 1).input.as_deref(), Some("easement.yml"));
+        assert_eq!(common("c").input.as_deref(), Some("easement.yml"));
 
         write(dir.path(), "loop.yml", "extends: loop.yml\nversion: 1\n");
         let err = Policy::load(&dir.path().join("loop.yml"), None).unwrap_err();
         assert!(err.to_string().contains("extends itself"));
+    }
+
+    /// `sets` merge by name as `components` do, and an unmatched glob of a set
+    /// is found at its line in the file that writes it, or at line 1 when a file
+    /// the configuration extends does.
+    #[test]
+    fn sets_merge_by_name_through_extends() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "base.yml",
+            "version: 1\ncomponents:\n  api-a: { in: a }\n  api-b: { in: b }\n  cli: { in: c }\nsets:\n  drivers: [cli]\n  apis: ['api-*', 'gone-*']\n",
+        );
+        write(
+            dir.path(),
+            "easement.yml",
+            "extends: base.yml\nsets:\n  drivers: [cli, 'api-*', 'web-*']\ncommon: ['@drivers', '@apis']\n",
+        );
+        let policy = Policy::load(&dir.path().join("easement.yml"), None).unwrap();
+        assert_eq!(policy.config.common, ["cli", "api-a", "api-b"]);
+        let lines: Vec<(&str, usize)> = policy
+            .config
+            .expansion
+            .unmatched
+            .iter()
+            .map(|u| {
+                let path: Vec<&str> = u.path.iter().map(String::as_str).collect();
+                (u.item.as_str(), policy.config_line(&path, &u.item))
+            })
+            .collect();
+        assert_eq!(lines, [("gone-*", 1), ("web-*", 3)]);
     }
 
     #[test]

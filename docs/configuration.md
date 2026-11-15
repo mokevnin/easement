@@ -77,7 +77,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `symbol` | a component uses a name its `forbid_symbol` rule forbids, or one outside the `public_symbols` of another component |
 | `suppression-reason` | an inline suppression has no reason |
 | `unused-suppression` | an inline suppression matches no violation, or names a rule that cannot be suppressed (`dependency`, `privacy`, `external`, `isolation`, `symbol` and `excluded` can be) |
-| `unmatched` | an `in` pattern of a component matches no file of the project, a `part` names no part the scan found, an `entry` pattern matches no file, or a `forbid_symbol` name can never fire |
+| `unmatched` | an `in` pattern of a component matches no file of the project, a `part` names no part the scan found, an `entry` pattern matches no file, a `forbid_symbol` name can never fire, a glob or a set of components covers none, or a set is never named |
 | `excluded` | a component imports a file that `exclude` hides |
 | `reach` | a component reaches one its `must_not_reach` names through a chain of imports |
 | `unused` | with `entry`, a file of a component that no chain of imports from an entry reaches |
@@ -86,7 +86,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `undeclared` | with `manifests`, a file imports an external module the nearest manifest does not declare |
 | `example` | a policy example in `examples` gets another decision than it expects, or names a path no component owns |
 
-In `--format json` each violation carries `rule`, `file`, `line`, `from`, `to`, `target` and `message`, and, where they apply: `evidence`, every dependency behind it as `{file, line}`; `reexported_by`, for a name written through a module of another component that re-exports it, or through an alias another component defines, those components; `chain`, for a `reach` or a `cycle`, the shortest chain of dependencies that shows it as typed `hops` `{file, line, from_component, to_component}` (`null` for a file of no component), labelled `witness: shortest` because it is one chain among those that may exist; and `provenance`, where the policy writes the clause it breaks: the field path in the merged policy, such as `rules.web.must_not_depend_on[1]`, and the policy `input` that defines it, relative to the root (a file `extends` names, for one).
+In `--format json` each violation carries `rule`, `file`, `line`, `from`, `to`, `target` and `message`, and, where they apply: `evidence`, every dependency behind it as `{file, line}`; `reexported_by`, for a name written through a module of another component that re-exports it, or through an alias another component defines, those components; `chain`, for a `reach` or a `cycle`, the shortest chain of dependencies that shows it as typed `hops` `{file, line, from_component, to_component}` (`null` for a file of no component), labelled `witness: shortest` because it is one chain among those that may exist; and `provenance`, where the policy writes the clause it breaks: the field path in the merged policy, such as `rules.web.must_not_depend_on[1]`, the policy `input` that defines it, relative to the root (a file `extends` names, for one), and, when a glob or a set brings the clause to the component, `through`: those globs and sets as written, the key of the rule first (`["api-*", "@drivers"]`).
 
 ### Public API
 
@@ -162,6 +162,31 @@ components:
 ```
 
 Only the listed components (and `ee` itself) may import `ee`, even when `common` or `layers` would let everyone in. This is the other side of `may_depend_on`: write it where the rule is about the one being imported. The violation reads `pages -> ee: ee may be imported only from wiring`.
+
+### Globs and sets of components
+
+Where the policy lists components, it may write a glob over component names, or a named set from `sets`:
+
+```yaml
+sets:
+  drivers: [api-site, api-external, runner, 'cli-*']
+components:
+  usecase:
+    in: internal/usecase
+    allow_importers: ['@drivers', wiring]
+  ee-licensekey:
+    in: internal/ee/licensekey
+    allow_importers: [wiring, 'ee-*']
+rules:
+  'api-*':
+    may_depend_on: [usecase]
+```
+
+A glob (`*`, `?`, `[ab]`, `{a,b}`) covers the components whose names match it; `'@drivers'` covers the components the set lists. A set lists component names and globs, never another set. They work in `common`, the rows of `layers`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on` and `must_not_reach`, `allow_importers`, the `importers` of a named surface, and the `allow` of a top-level `forbid_symbol` item; anywhere else they fail to load. Quote them: YAML reads a bare `*` or `@` as something else. So that a name in a list always reads one way, a component's own name cannot start with `@` or hold `*`, `?`, `[` or `{`.
+
+They expand when the policy loads, so every rule judges the names as if they were written out: a new `ee-sso` component is let into `ee-licensekey` with no edit. An item keeps its `because` for every component it covers. A rule key that is a glob or a set gives its rule to each component it covers; a component that two keys cover (its own name and a glob, two globs, a set and its member) fails to load, naming both. In `layers`, a glob or a set in place of a name holds the siblings it covers; a closed layer must cover one component.
+
+A glob or a set that covers no component, and a set that nothing names, fails as `unmatched` at its line, as an `in` pattern that matches no file does. `explain` and `why` say which glob or set a clause comes through (``may_depend_on through `api-*` ``), and `provenance` in `--format json` gives the field as written (`rules.'api-*'.may_depend_on[0]`) with the globs and sets in `through`. `review` compares the expanded lists, so what changes is who is let in, not how the list is spelled: a new component a glob takes in is named with the glob it comes through. `suggest --patch` never edits a glob or a set; it names it on stderr, with the allowances no import uses, to remove by hand.
 
 ### Layers and forbidden dependencies
 

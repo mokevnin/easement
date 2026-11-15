@@ -29,6 +29,7 @@ mod reach;
 mod reexports;
 mod review;
 mod rules;
+mod sets;
 mod suggest;
 mod surfaces;
 mod symbols;

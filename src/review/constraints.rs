@@ -128,12 +128,12 @@ impl At<'_> {
         }
     }
 
-    /// The site of `key`, or of its item at `index`.
-    fn site(self, key: &str, index: Option<usize>) -> Site {
+    /// The site of `key`, or of its item at `index`, in `config`.
+    fn site(self, config: &Config, key: &str, index: Option<usize>) -> Site {
         let item = index.map(|i| format!("[{i}]")).unwrap_or_default();
         match self {
             At::Top => Site::in_key(key, format!("{key}{item}")),
-            At::Rule(name) => Site::of_entry("rules", name, format!("rules.{name}.{key}{item}")),
+            At::Rule(name) => Site::of_rule(config, name, &format!(".{key}{item}")),
             At::Component(name) => {
                 Site::of_entry("components", name, format!("components.{name}.{key}{item}"))
             }
@@ -231,7 +231,7 @@ impl Diff<'_> {
             paths: Vec::new(),
             change: found.change,
             because: found.because.map(str::to_string),
-            provenance: policy.provenance(&at.site(key, found.index)),
+            provenance: policy.provenance(&at.site(&policy.config, key, found.index)),
         });
     }
 
@@ -488,6 +488,10 @@ impl Diff<'_> {
             // The decision on pairs of components: `permissions`.
             common: _,
             layers: _,
+            // How lists of components are spelled: compared expanded, where they name
+            // components.
+            sets: _,
+            expansion: _,
             // Which files are judged as the source of a dependency: the debt section.
             exclude: _,
             target_only: _,
@@ -889,6 +893,7 @@ fn drawn_in(policy: &Policy) -> Provenance {
             .ok()
             .flatten()
             .map(|input| policy.input_name(input)),
+        through: Vec::new(),
     }
 }
 

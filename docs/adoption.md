@@ -24,7 +24,7 @@ components:
   api: { in: src }
 ```
 
-`components` and `rules` merge by name, and a definition in the extending file replaces the one it extends as a whole; `common`, `exclude`, `target_only` and `examples` are joined; any other key is replaced. Patterns in the extended file stay relative to the config being loaded.
+`components`, `rules` and `sets` merge by name, and a definition in the extending file replaces the one it extends as a whole; `common`, `exclude`, `target_only` and `examples` are joined; any other key is replaced. Patterns in the extended file stay relative to the config being loaded.
 
 The same part of a rule in several components is written once with a YAML anchor and merged with `<<`. A top-level key that starts with `x-` is only a place for such an anchor, easement ignores it:
 

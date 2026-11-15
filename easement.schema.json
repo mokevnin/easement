@@ -14,7 +14,7 @@
       "default": null
     },
     "common": {
-      "description": "Components every other component may depend on.",
+      "description": "Components every other component may depend on. As in every list of components, an item may be a glob over component names (`'ee-*'`) or a set (`'@drivers'`); one that covers no component fails as `unmatched`.",
       "type": "array",
       "default": [],
       "items": {
@@ -97,7 +97,7 @@
       "default": {}
     },
     "layers": {
-      "description": "Components from the top layer to the bottom one: a layer may depend on any layer below it, never on one above. A list in place of a name holds sibling components of one layer, which do not depend on each other; {name, closed: true} is a layer the ones above cannot reach past.",
+      "description": "Components from the top layer to the bottom one: a layer may depend on any layer below it, never on one above. A list in place of a name holds sibling components of one layer, which do not depend on each other; {name, closed: true} is a layer the ones above cannot reach past. A glob or a set in place of a name holds the siblings it covers; a closed layer must cover one component.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Layer"
@@ -130,11 +130,22 @@
       ]
     },
     "rules": {
-      "description": "Per component: what it may depend on and use.",
+      "description": "Per component: what it may depend on and use. A key may be a glob over component names (`'api-*'`) or a set (`'@drivers'`): its rule is the rule of each component it covers. A component two keys cover fails to load.",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/definitions/Rule"
       }
+    },
+    "sets": {
+      "description": "Named sets of components, each a list of component names and globs over them (`drivers: [api-*, runner, cli]`), never another set. A list of components names a set as `'@drivers'`; a set no list or rule key names fails as `unmatched`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "default": {}
     },
     "strict": {
       "description": "Fail on checked files that belong to no component, except those matching `unowned`.",
@@ -257,7 +268,7 @@
       "type": "object",
       "properties": {
         "allow_importers": {
-          "description": "When set, only these components (and the component itself) may import it.",
+          "description": "When set, only these components (and the component itself) may import it. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
           "type": [
             "array",
             "null"
@@ -461,7 +472,7 @@
       "type": "object",
       "properties": {
         "allow": {
-          "description": "Only in the top-level `forbid_symbol`: the components that may use the name. Every other use is a violation, in the component that defines the name too.",
+          "description": "Only in the top-level `forbid_symbol`: the components that may use the name. Every other use is a violation, in the component that defines the name too. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
           "type": [
             "array",
             "null"
@@ -668,7 +679,7 @@
           "default": null
         },
         "may_depend_on": {
-          "description": "Components this one may depend on. An item may carry its own reason, shown by `explain`.",
+          "description": "Components this one may depend on. An item may carry its own reason, shown by `explain`, and may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
           "type": "array",
           "items": {
             "$ref": "#/definitions/Listed"
@@ -692,14 +703,14 @@
           }
         },
         "must_not_depend_on": {
-          "description": "Components that are never allowed, even if common or layers would allow them. An item may carry its own reason.",
+          "description": "Components that are never allowed, even if common or layers would allow them. An item may carry its own reason, and may be a glob or a set.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/Listed"
           }
         },
         "must_not_reach": {
-          "description": "Components this component must not depend on, directly or through any chain of imports, even when every hop is allowed. An item may carry its own reason.",
+          "description": "Components this component must not depend on, directly or through any chain of imports, even when every hop is allowed. An item may carry its own reason, and may be a glob or a set.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/Listed"
@@ -742,7 +753,7 @@
           "default": null
         },
         "importers": {
-          "description": "The components that may import these paths; each must be in `allow_importers` when the component has one.",
+          "description": "The components that may import these paths; each must be in `allow_importers` when the component has one. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
           "type": "array",
           "items": {
             "type": "string"

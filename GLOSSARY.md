@@ -16,6 +16,10 @@ _Avoid_: config files
 A named set of files that the policy treats as one owner; a file belongs to at most one component.
 _Avoid_: module, package, layer
 
+**Set**:
+A named list of components in the policy (`sets`), of their names and globs over them, never another set; a list of components or a rule key names it as `'@drivers'`. Like a glob over component names, it stands for the components it covers, and every rule judges them as if they were written out.
+_Avoid_: group, alias (an alias is a name in the code)
+
 **Grant**:
 What permits one component to depend on another: an explicit allowance, a common component, a lower layer, being test code, or being the same component.
 _Avoid_: allow source, permission

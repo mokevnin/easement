@@ -378,9 +378,12 @@ impl Why {
 pub fn render_why(why: &Why) -> String {
     let Why { from, to, .. } = why;
     let decision = &why.decision;
+    let through = crate::explain::through(decision.provenance.as_ref());
     let said = match (decision.grant, decision.rejected_by) {
-        (_, Some(clause)) if clause.prohibits() => format!("is forbidden ({})", clause.as_str()),
-        (Some(grant), _) => format!("is allowed ({})", grant.as_str()),
+        (_, Some(clause)) if clause.prohibits() => {
+            format!("is forbidden ({}{through})", clause.as_str())
+        }
+        (Some(grant), _) => format!("is allowed ({}{through})", grant.as_str()),
         (None, _) => match &decision.layers {
             Some(why) => format!("is not allowed: {why}"),
             None => "is not allowed".to_string(),

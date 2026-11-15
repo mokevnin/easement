@@ -5,6 +5,51 @@
 use super::*;
 
 impl Config {
+    /// Rejects what is wrong in a list as written, before its globs and sets expand: a
+    /// list that lets no one in, a row of siblings with one name, and a component whose
+    /// name reads as a glob or a set.
+    pub(super) fn check_written(&self) -> Result<()> {
+        for name in self.components.keys() {
+            if is_pattern(name) {
+                bail!(
+                    "component `{name}` has a name that reads as a glob or a set (`*?[{{` or a leading `@`), which lists of components use to name several; rename it"
+                );
+            }
+        }
+        if let Some(Layer::Siblings(names)) = self
+            .layers
+            .iter()
+            // A glob or a set alone may name several.
+            .find(|l| matches!(l, Layer::Siblings(n) if n.len() < 2 && !n.iter().any(|n| is_pattern(n))))
+        {
+            bail!(
+                "layers: `{names:?}` lists fewer than two siblings; write a lone layer as its name"
+            );
+        }
+        for (name, component) in &self.components {
+            for (surface, declared) in &component.surfaces {
+                if declared.importers.is_empty() {
+                    bail!(
+                        "components.{name}.surfaces.{surface} has no importers; list the components that may use it"
+                    );
+                }
+            }
+        }
+        for (i, listed) in self.forbid_symbol.iter().enumerate() {
+            let symbol = listed.name();
+            match (listed.allow(), listed.allow_in()) {
+                (Some([]), Some([])) => bail!(
+                    "forbid_symbol[{i}] lets no one use `{symbol}`: `allow` and `allow_in` are both empty; leave them out instead"
+                ),
+                (Some([]), None) => {
+                    bail!("forbid_symbol[{i}].allow lists no component; leave the key out instead")
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Rejects a config whose keys contradict each other or name what does not exist.
     pub(super) fn validate(&self) -> Result<()> {
         if self.version != 1 {
@@ -35,6 +80,12 @@ impl Config {
         crate::lang::registry::check_settings(&self.indexers).map_err(anyhow::Error::msg)?;
         let known: BTreeSet<&str> = self.components.keys().map(String::as_str).collect();
         let check = |name: &str, place: &str| -> Result<()> {
+            // Every list that takes a glob or a set has expanded it by now.
+            if is_pattern(name) {
+                bail!(
+                    "`{name}` in {place}: a glob or a set of components works only in `common`, `layers`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on` and `must_not_reach`, `allow_importers`, the `importers` of a surface and the `allow` of a top-level `forbid_symbol` item"
+                );
+            }
             if !known.contains(name) {
                 return Err(unknown_component(
                     name,
@@ -53,27 +104,29 @@ impl Config {
             }
         }
         for (from, rule) in &self.rules {
+            // As written: a glob or a set may be the key that gives the component its rule.
+            let at = format!("rules.{}", field_key(self.rule_key(from)));
             check(from, "rules")?;
             for to in rule.may_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.may_depend_on"))?;
+                check(to, &format!("{at}.may_depend_on"))?;
             }
             for to in rule.must_not_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_not_depend_on"))?;
+                check(to, &format!("{at}.must_not_depend_on"))?;
                 if rule.may_depend_on.iter().any(|c| c.name() == to) {
-                    bail!("rules.{from} both allows and forbids `{to}`");
+                    bail!("{at} both allows and forbids `{to}`");
                 }
             }
             for to in rule.must_not_reach.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_not_reach"))?;
+                check(to, &format!("{at}.must_not_reach"))?;
                 if to == from {
-                    bail!("rules.{from}.must_not_reach names `{from}` itself");
+                    bail!("{at}.must_not_reach names `{from}` itself");
                 }
                 if rule.may_depend_on.iter().any(|c| c.name() == to) {
-                    bail!("rules.{from} both allows `{to}` and forbids reaching it");
+                    bail!("{at} both allows `{to}` and forbids reaching it");
                 }
             }
             for to in rule.must_depend_on.iter().map(Listed::name) {
-                check(to, &format!("rules.{from}.must_depend_on"))?;
+                check(to, &format!("{at}.must_depend_on"))?;
             }
             if let Some(name) = rule
                 .may_use_external
@@ -83,13 +136,11 @@ impl Config {
                 .map(Listed::name)
                 .find(|n| n.starts_with('$') && *n != STD)
             {
-                bail!(
-                    "rules.{from}: unknown `{name}`; the only `$` name is `$std`, the standard library"
-                );
+                bail!("{at}: unknown `{name}`; the only `$` name is `$std`, the standard library");
             }
             if rule.must_use_external.iter().any(|l| l.name() == STD) {
                 bail!(
-                    "rules.{from}.must_use_external: `$std` works only in may_use_external and forbid_external"
+                    "{at}.must_use_external: `$std` works only in may_use_external and forbid_external"
                 );
             }
             for pattern in rule
@@ -100,12 +151,12 @@ impl Config {
                 .map(Listed::name)
             {
                 globset::Glob::new(pattern)
-                    .with_context(|| format!("bad pattern `{pattern}` in rules.{from}"))?;
+                    .with_context(|| format!("bad pattern `{pattern}` in {at}"))?;
             }
             for listed in &rule.forbid_symbol {
                 let symbol = listed.name();
                 if !symbol.contains('.') {
-                    bail!("rules.{from}.forbid_symbol `{symbol}` must look like `package.Name`");
+                    bail!("{at}.forbid_symbol `{symbol}` must look like `package.Name`");
                 }
                 // A component's own list binds only its files, so it has no one to let in.
                 for (key, set) in [
@@ -114,21 +165,21 @@ impl Config {
                 ] {
                     if set {
                         bail!(
-                            "rules.{from}.forbid_symbol `{symbol}` has `{key}`, which works only in the top-level forbid_symbol"
+                            "{at}.forbid_symbol `{symbol}` has `{key}`, which works only in the top-level forbid_symbol"
                         );
                     }
                 }
             }
             for pattern in rule.requires_directive.iter().map(Listed::name) {
                 regex::Regex::new(pattern).with_context(|| {
-                    format!("bad regular expression `{pattern}` in rules.{from}.requires_directive")
+                    format!("bad regular expression `{pattern}` in {at}.requires_directive")
                 })?;
             }
             if rule
                 .max_instability
                 .is_some_and(|i| !(0.0..=1.0).contains(&i))
             {
-                bail!("rules.{from}.max_instability must be between 0 and 1");
+                bail!("{at}.max_instability must be between 0 and 1");
             }
         }
         self.validate_forbid_symbol_allow(&check)?;
@@ -222,9 +273,6 @@ impl Config {
                         );
                     }
                 }
-                if surface.importers.is_empty() {
-                    bail!("{place} has no importers; list the components that may use it");
-                }
                 for importer in &surface.importers {
                     check(importer, &format!("{place}.importers"))?;
                     if let Some(admitted) = &component.allow_importers
@@ -249,15 +297,6 @@ impl Config {
             }
         }
         let mut layers = BTreeSet::new();
-        if let Some(Layer::Siblings(names)) = self
-            .layers
-            .iter()
-            .find(|l| matches!(l, Layer::Siblings(n) if n.len() < 2))
-        {
-            bail!(
-                "layers: `{names:?}` lists fewer than two siblings; write a lone layer as its name"
-            );
-        }
         for name in self.layers.iter().flat_map(Layer::names) {
             check(name, "layers")?;
             if !layers.insert(name) {
@@ -307,13 +346,9 @@ impl Config {
             let symbol = listed.name();
             if let Some(paths) = listed.allow_in() {
                 let place = format!("forbid_symbol[{i}].allow_in");
-                match listed.allow() {
-                    _ if !paths.is_empty() => {}
-                    Some([]) => bail!(
-                        "forbid_symbol[{i}] lets no one use `{symbol}`: `allow` and `allow_in` are both empty; leave them out instead"
-                    ),
-                    None => bail!("{place} lists no path; leave the key out instead"),
-                    Some(_) => {}
+                // An empty `allow` beside it is refused as written (`check_written`).
+                if paths.is_empty() && listed.allow().is_none() {
+                    bail!("{place} lists no path; leave the key out instead");
                 }
                 for pattern in paths {
                     if pattern.contains('<') {
@@ -329,9 +364,6 @@ impl Config {
                 continue;
             };
             let place = format!("forbid_symbol[{i}].allow");
-            if allowed.is_empty() && listed.allow_in().is_none() {
-                bail!("{place} lists no component; leave the key out instead");
-            }
             for component in allowed {
                 check(component, &place)?;
                 if let Some(spelled) = crate::symbols::own_ban(self, component, symbol) {
@@ -399,10 +431,7 @@ mod tests {
     use super::*;
 
     fn parse(yaml: &str) -> Result<Config> {
-        let config: Config = serde_norway::from_str(yaml)?;
-        let config = config.with_tests()?;
-        config.validate()?;
-        Ok(config)
+        serde_norway::from_str::<Config>(yaml)?.checked()
     }
 
     #[test]

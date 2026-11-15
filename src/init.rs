@@ -59,23 +59,30 @@ pub fn discover(files: &[String]) -> Vec<Found> {
     for base in SOURCE_ROOTS {
         let dirs = dirs_under(base);
         if dirs.len() >= 2 {
-            return dirs
-                .into_iter()
-                .map(|d| Found {
-                    pattern: format!("{base}/{d}"),
-                    name: d,
-                })
-                .collect();
+            return named(dirs.into_iter().map(|d| (format!("{base}/{d}"), d)));
         }
     }
-    dirs_under("")
-        .into_iter()
-        .filter(|d| !d.starts_with('.') && !NOT_COMPONENTS.contains(&d.as_str()))
-        .map(|d| Found {
-            pattern: d.clone(),
-            name: d,
-        })
-        .collect()
+    named(
+        dirs_under("")
+            .into_iter()
+            .filter(|d| !d.starts_with('.') && !NOT_COMPONENTS.contains(&d.as_str()))
+            .map(|d| (d.clone(), d)),
+    )
+}
+
+/// A component for each `(pattern, directory)`, named after the directory without
+/// the characters that make a name read as a glob or a set in a list of components
+/// (`@acme` is `acme`); a directory whose name is left empty, or taken, is none.
+fn named(dirs: impl Iterator<Item = (String, String)>) -> Vec<Found> {
+    let mut taken = BTreeSet::new();
+    dirs.filter_map(|(pattern, dir)| {
+        let name: String = dir
+            .chars()
+            .filter(|c| !matches!(c, '@' | '*' | '?' | '[' | ']' | '{' | '}'))
+            .collect();
+        (!name.is_empty() && taken.insert(name.clone())).then_some(Found { name, pattern })
+    })
+    .collect()
 }
 
 /// A YAML key or scalar, quoted when plain style would be read as something else.
@@ -243,6 +250,26 @@ mod tests {
         ]));
         assert_eq!(names(&found), [("api", "api"), ("billing", "billing")]);
         assert!(discover(&files(&["main.go"])).is_empty());
+    }
+
+    /// A directory such as `@acme` or `[id]` would make a name that reads as a set
+    /// or a glob in a list of components, which a policy refuses: the name keeps
+    /// its other characters, and the pattern the directory.
+    #[test]
+    fn names_a_component_after_a_directory_without_glob_or_set_characters() {
+        let found = discover(&files(&[
+            "packages/@acme/a.ts",
+            "packages/[id]/b.ts",
+            "packages/web/c.ts",
+        ]));
+        assert_eq!(
+            names(&found),
+            [
+                ("acme", "packages/@acme"),
+                ("id", "packages/[id]"),
+                ("web", "packages/web")
+            ]
+        );
     }
 
     #[test]
