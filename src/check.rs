@@ -1171,8 +1171,8 @@ rules:
         let map = ComponentMap::new(&config).unwrap();
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("mappers")).unwrap();
-        // "// café" in Latin-1, then the directive.
-        let mut source = b"// calf\xe9\n".to_vec();
+        // An "é" in Latin-1, which is no UTF-8, then the directive.
+        let mut source = b"// \xe9\n".to_vec();
         source.extend_from_slice(b"// goverter:converter\npackage mappers\n");
         std::fs::write(dir.path().join("mappers/m.go"), source).unwrap();
         let files = vec!["mappers/m.go".to_string()];
