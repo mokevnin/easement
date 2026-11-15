@@ -178,15 +178,17 @@ fn top_level_declarations(source: &str) -> Vec<(String, DeclKind)> {
             // The name with its receiver, `Map<K, V>.firstKey`: up to what follows it,
             // where a space inside `<…>` is no end.
             let mut depth = 0;
+            let mut previous = ' ';
             let head: String = rest
                 .trim_start()
                 .chars()
-                .take_while(|c| {
+                .take_while(|&c| {
                     match c {
                         '<' => depth += 1,
-                        '>' => depth -= 1,
+                        '>' if previous != '-' => depth -= 1,
                         _ => {}
                     }
+                    previous = c;
                     depth > 0 || !(c.is_whitespace() || matches!(c, '(' | ':' | '=' | '{'))
                 })
                 .collect();
@@ -215,9 +217,14 @@ fn top_level_declarations(source: &str) -> Vec<(String, DeclKind)> {
 /// What follows the type parameters `text` starts with: `<K, V> Map` -> ` Map`.
 fn after_type_parameters(text: &str) -> Option<&str> {
     let mut depth = 0;
+    let mut previous = ' ';
     for (at, c) in text.char_indices() {
+        // The `>` of a function type's `->` closes nothing.
+        let arrow = previous == '-';
+        previous = c;
         match c {
             '<' => depth += 1,
+            '>' if arrow => {}
             '>' => {
                 depth -= 1;
                 if depth == 0 {
@@ -317,13 +324,14 @@ mod tests {
     fn type_parameters_and_a_receiver_with_spaces_are_no_name() {
         let source = "inline fun <reified T> decode(text: String): T = TODO()\n\
                       fun <K, V> Map<K, V>.firstKey(): K = keys.first()\n\
-                      fun <T : Comparable<T>> largest(a: T, b: T) = maxOf(a, b)\n";
+                      fun <T : Comparable<T>> largest(a: T, b: T) = maxOf(a, b)\n\
+                      fun <F : (Int) -> Unit> each(f: F) = f(1)\n";
         assert_eq!(
             top_level_declarations(source)
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect::<Vec<_>>(),
-            ["decode", "firstKey", "largest"]
+            ["decode", "firstKey", "largest", "each"]
         );
     }
 
