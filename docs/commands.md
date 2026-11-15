@@ -7,6 +7,7 @@
 - [suggest](#suggest)
 - [impact and why](#impact-and-why)
 - [propose](#propose)
+- [policy](#policy)
 - [doctor](#doctor)
 
 ## Everyday commands
@@ -53,6 +54,7 @@ easement check                # check the project
 easement check --diff main    # only what this branch adds, see Diff mode
 easement baseline             # record today's violations; later runs only shrink it
 easement explain <file>       # which component a file is in and what it may do
+easement policy               # the policy as loaded: extends merged, globs and sets expanded
 easement why <a> <b>          # the imports, or the chain, behind a -> b
 easement propose <file> <target>  # the decision on an import not written yet, and what it does to the graph
 easement impact --diff main   # every file that depends on what this branch changed
@@ -109,6 +111,21 @@ What they do to the graph:
 `--plan <file>` (or `-` for stdin) judges several at once, a JSON list of `{"from": ..., "to": ...}` and `{"from": ..., "external": ...}`, and lays them over the graph together: two proposals that are allowed alone can close a cycle together, and the consequence names both. `--format json` gives `proposals` (one decision each: `allowed`, `rejected`, `unowned`, `excluded` or `target_only`, with `grant`, `rule`, `message`, `because` and `public_surface`) and `consequences` (each with `witness` and the indexes of its `proposals`), with `narrowed`, `evidence_gaps`, `accepted_gaps` and `cached` as in `check`.
 
 The baseline and suppressions never apply: they are for code that is already written. A source no component owns is `unowned`, a rejection (`orphan`) under `strict` unless `unowned` lists it; a source `exclude` hides is `excluded`, and one `target_only` names is `target_only`: `check` never reads their imports, so no rule judges them. A cycle names every proposal that makes an edge of its group of components, not only those on the shortest cycle shown. A test-only part of a file (Rust's `#[cfg(test)]`) cannot be proposed: only the test globs make a path test code, and the report notes it for such a file. The graph's evidence gaps (files no indexer read, test code not told apart) carry over. `--no-graph` judges the decisions alone, without scanning the project, and the report is `partial` for it. It exits 0 when every decision and consequence passes, 1 when one fails (a rule in `warn` is reported but does not fail), and 2 and 3 as `check` does; it takes `--config`, `--no-cache` and `--cache-only` like `check`.
+
+## policy
+
+`easement policy` prints the policy as loaded: `extends` merged, the YAML anchors, the globs and the sets expanded. It reads no code and runs no indexer, so it answers at once. Check a document of the project, such as a list of who may use a client, against `easement policy --format json` instead of reading `easement.yml` again by hand.
+
+`--format json` gives:
+
+- `inputs`: each policy input, its `path` and its `kind` (`config`, `extended`, `diagram`), the configuration first;
+- `components`: each component with its `name`, its `in` and `except` patterns, its `public` surface, `public_symbols`, `surfaces`, `allow_importers`, `isolated`, `optional`, `priority`, `owner`, `defines`, `part` and `because`, its `rule` (the fields of `explain`'s `rule`, and its own `forbid_symbol`; each item of its `forbid_symbol` and `forbid_external` with its own `provenance`), and its `grants` and `prohibitions` on the other components with the decision fields of `explain`;
+- `common`, each with its `name`, and `layers`, from the top one down, each row with its `components` and whether it is `closed`;
+- `forbid_symbol` and `forbid_external`: each top-level item with its `name`, its `because`, the components its `allow` lets use it (globs and sets expanded) and the paths of its `allow_in`, apart;
+- `examples`: each with `from`, `to` or `external`, `expect`, `rule` and `because`;
+- the settings `no_cycles` (`true`, `false` or the components), `strict`, `unowned`, `tests` (whether `tests: auto` is on), `entry`, `exclude`, `target_only`, `uncovered_ok`, `reach`, `manifests`, `packages` and `warn`.
+
+Each component, rule, decision and item carries its `provenance` (the settings carry none): the `field` in the merged policy (`rules.web.may_depend_on[0]`, `examples[1]`), the `input` that writes it, and the globs and sets it comes `through`. The component `tests: auto` makes is written at `tests`.
 
 ## doctor
 

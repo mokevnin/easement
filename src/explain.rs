@@ -7,10 +7,11 @@ use serde::Serialize;
 
 use crate::check::RuleId;
 use crate::components::ComponentMap;
-use crate::config::{Ban, ForbiddenName, Listed, TESTS};
-use crate::decision::{self, Clause, ClauseId, Decision, Grant, Outside, Refusal};
+use crate::config::{Ban, ForbiddenName, TESTS};
+use crate::decision::{self, Clause, ClauseId, Decision, Grant, Outside};
 use crate::lang::registry;
 use crate::policy::{Policy, Provenance, Site};
+use crate::resolved::{self, Dependencies, RuleView, SurfaceView, Toward};
 use crate::symbols::own_ban;
 
 /// A path as the config sees it: relative to the project root, `/`-separated.
@@ -62,92 +63,6 @@ pub struct Ownership {
     /// Where the policy defines the component.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
-}
-
-/// The decision on every dependency of one component on another, before
-/// the paths of a dependency are known.
-#[derive(Debug, Serialize)]
-pub struct PairDecision {
-    /// Whether the policy lets the dependency stand, the paths of each
-    /// import aside (see `conditions`).
-    pub allowed: bool,
-    /// The grant that permits it, even when `allow_importers` then rejects it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub grant: Option<Grant>,
-    /// The clause that rejects it: `must_not_depend_on`, `must_not_reach`,
-    /// `not_granted` or `allow_importers`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rejected_by: Option<ClauseId>,
-    /// The rules a rejected dependency breaks: `dependency` for a direct
-    /// dependency, and `reach` for a chain of them when `must_not_reach` rejects it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub rules: Vec<RuleId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-    /// Where the policy writes the clause that rejects it, or else the grant.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<Provenance>,
-    /// Why `layers` keep the two apart, when they do.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub layers: Option<String>,
-    /// `allow_importers` of the target, when it does not list the source.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_importers: Option<Vec<String>>,
-    /// What an allowed dependency leaves to the paths of each import.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<String>,
-}
-
-impl PairDecision {
-    /// The decision on `from` depending on `to`.
-    pub fn of(policy: &Policy, map: &ComponentMap, from: &str, to: &str) -> Self {
-        let config = &policy.config;
-        let verdict = decision::pair(config, map, from, to);
-        let importers = verdict.importers.map(<[String]>::to_vec);
-        let (rejected_by, site) = match (&verdict.grant, &importers) {
-            (Err(refusal), _) => (
-                Some(refusal.id()),
-                decision::refusal_site(config, from, to, refusal),
-            ),
-            (Ok(_), Some(_)) => (
-                Some(ClauseId::AllowImporters),
-                Some(Site::of_entry(
-                    "components",
-                    to,
-                    format!("components.{to}.allow_importers"),
-                )),
-            ),
-            (Ok(grant), None) => (None, decision::grant_site(config, from, to, *grant)),
-        };
-        let allowed = !verdict.rejected();
-        Self {
-            allowed,
-            grant: verdict.grant.as_ref().ok().copied(),
-            rejected_by,
-            rules: match (allowed, rejected_by) {
-                (true, _) => Vec::new(),
-                (false, Some(ClauseId::MustNotReach)) => vec![RuleId::Dependency, RuleId::Reach],
-                (false, _) => vec![RuleId::Dependency],
-            },
-            because: verdict.because.map(str::to_string),
-            provenance: site.map(|site| policy.provenance(&site)),
-            layers: match &verdict.grant {
-                Err(Refusal::NotGranted { layers }) => layers.clone(),
-                _ => None,
-            },
-            allow_importers: importers,
-            conditions: if allowed {
-                verdict.conditions(to)
-            } else {
-                Vec::new()
-            },
-        }
-    }
-
-    /// Whether a prohibition rejects it.
-    fn prohibited(&self) -> bool {
-        self.rejected_by.is_some_and(ClauseId::prohibits)
-    }
 }
 
 /// The decision on one dependency, with its paths.
@@ -202,69 +117,6 @@ impl DependencyDecision {
             candidates: decision.candidates.clone(),
         }
     }
-}
-
-/// The decision on depending on one other component.
-#[derive(Debug, Serialize)]
-pub struct Toward {
-    pub to: String,
-    #[serde(flatten)]
-    pub decision: PairDecision,
-}
-
-/// A named surface of the component.
-#[derive(Debug, Serialize)]
-pub struct SurfaceView {
-    pub name: String,
-    pub paths: Vec<String>,
-    pub importers: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-    pub provenance: Provenance,
-}
-
-/// An item of a rule list, with the reason given for it.
-#[derive(Debug, Serialize)]
-pub struct Named {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-}
-
-fn named(items: &[Listed]) -> Vec<Named> {
-    items
-        .iter()
-        .map(|l| Named {
-            name: l.name().to_string(),
-            because: l.because().map(str::to_string),
-        })
-        .collect()
-}
-
-/// What the rule of the component asks besides its dependencies on others.
-#[derive(Debug, Serialize)]
-pub struct RuleView {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub may_use_external: Option<Vec<Named>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub forbid_external: Vec<Named>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub must_depend_on: Vec<Named>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub must_use_external: Vec<Named>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub requires_file: Vec<Named>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub forbid_file: Vec<Named>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub requires_directive: Vec<Named>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_fan_out: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_instability: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-    pub provenance: Provenance,
 }
 
 /// What the owning component may do.
@@ -473,25 +325,12 @@ pub fn explain(policy: &Policy, map: &ComponentMap, rel: &str) -> Explanation {
 }
 
 fn component_policy(policy: &Policy, map: &ComponentMap, name: &str) -> ComponentPolicy {
-    let config = &policy.config;
-    let component = &config.components[name];
-    let mut grants = Vec::new();
-    let mut prohibitions = Vec::new();
-    let mut not_allowed = Vec::new();
-    for to in config.components.keys().filter(|c| c.as_str() != name) {
-        let decision = PairDecision::of(policy, map, name, to);
-        let list = if decision.allowed {
-            &mut grants
-        } else if decision.prohibited() {
-            &mut prohibitions
-        } else {
-            &mut not_allowed
-        };
-        list.push(Toward {
-            to: to.clone(),
-            decision,
-        });
-    }
+    let component = &policy.config.components[name];
+    let Dependencies {
+        grants,
+        prohibitions,
+        not_allowed,
+    } = Dependencies::of(policy, map, name);
     let strings = |items: Vec<&str>| items.into_iter().map(str::to_string).collect::<Vec<_>>();
     ComponentPolicy {
         owner: component.owner.clone(),
@@ -503,67 +342,12 @@ fn component_policy(policy: &Policy, map: &ComponentMap, name: &str) -> Componen
             .unwrap_or_default(),
         isolated: component.isolated,
         public: component.public_surface().map(strings),
-        surfaces: component
-            .surfaces
-            .iter()
-            .map(|(surface, declared)| SurfaceView {
-                name: surface.clone(),
-                paths: strings(declared.patterns.as_vec()),
-                importers: declared.importers.clone(),
-                because: declared.because.clone(),
-                provenance: policy.provenance(&Site::of_entry(
-                    "components",
-                    name,
-                    format!("components.{name}.surfaces.{surface}"),
-                )),
-            })
-            .collect(),
+        surfaces: resolved::surfaces(policy, name),
         allow_importers: component.allow_importers.clone(),
         grants,
         prohibitions,
         not_allowed,
-        rule: config.rules.get(name).map(|rule| RuleView {
-            may_use_external: rule.may_use_external.as_deref().map(named),
-            forbid_external: rule
-                .forbid_external
-                .iter()
-                .map(|l| Named {
-                    name: l.name().to_string(),
-                    because: l.because().map(str::to_string),
-                })
-                .collect(),
-            must_depend_on: named(&rule.must_depend_on),
-            must_use_external: named(&rule.must_use_external),
-            requires_file: named(&rule.requires_file),
-            forbid_file: named(&rule.forbid_file),
-            requires_directive: named(&rule.requires_directive),
-            max_fan_out: rule.max_fan_out,
-            max_instability: rule.max_instability,
-            because: rule.because.clone(),
-            provenance: policy.provenance(&Site::of_rule(config, name, "")),
-        }),
-    }
-}
-
-/// ` through `api-*`, `@drivers``: the globs and sets that bring a clause to the
-/// component it is about, as text follows the clause with them; empty when the
-/// policy names the component.
-pub fn through(provenance: Option<&Provenance>) -> String {
-    through_names(provenance.map_or(&[], |p| p.through.as_slice()))
-}
-
-/// ` through `api-*`, `@drivers``, for the globs and sets `through`; empty for none.
-pub fn through_names(through: &[String]) -> String {
-    match through {
-        [] => String::new(),
-        through => format!(
-            " through {}",
-            through
-                .iter()
-                .map(|t| format!("`{t}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        rule: RuleView::of(policy, name),
     }
 }
 
@@ -612,17 +396,7 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         None => {}
     }
     for surface in &component.surfaces {
-        let because = surface
-            .because
-            .as_deref()
-            .map(|b| format!(": {b}"))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "  surface {}: {} (open to {}{because})\n",
-            surface.name,
-            surface.paths.join(", "),
-            surface.importers.join(", ")
-        ));
+        out.push_str(&format!("  {}\n", resolved::surface_line(surface)));
     }
     if let Some(owner) = &component.owner {
         out.push_str(&format!("  owner: {owner}\n"));
@@ -642,39 +416,8 @@ pub fn render(explanation: &Explanation) -> Result<String> {
     if let Some(importers) = &component.allow_importers {
         out.push_str(&format!("  open only to: {}\n", importers.join(", ")));
     }
-    let allowed: Vec<String> = component
-        .grants
-        .iter()
-        .map(|Toward { to, decision }| {
-            let grant = decision.grant.map(Grant::as_str).unwrap_or_default();
-            let through = through(decision.provenance.as_ref());
-            let because = decision
-                .because
-                .as_deref()
-                .map(|b| format!(": {b}"))
-                .unwrap_or_default();
-            let conditions: String = decision
-                .conditions
-                .iter()
-                .map(|c| format!("; {c}"))
-                .collect();
-            format!("{to} ({grant}{through}{because}{conditions})")
-        })
-        .collect();
-    let forbidden: Vec<String> = component
-        .prohibitions
-        .iter()
-        .map(|Toward { to, decision }| {
-            let through = through(decision.provenance.as_ref());
-            if decision.rejected_by == Some(ClauseId::MustNotReach) {
-                format!("{to} (not even through others{through})")
-            } else if through.is_empty() {
-                to.clone()
-            } else {
-                format!("{to} ({})", through.trim_start())
-            }
-        })
-        .collect();
+    let allowed = resolved::grant_items(&component.grants);
+    let forbidden = resolved::prohibition_items(&component.prohibitions);
     let other: Vec<String> = component
         .not_allowed
         .iter()
@@ -685,14 +428,10 @@ pub fn render(explanation: &Explanation) -> Result<String> {
             _ => to.clone(),
         })
         .collect();
-    let list = |items: &[String]| {
-        if items.is_empty() {
-            "nothing".to_string()
-        } else {
-            items.join(", ")
-        }
-    };
-    out.push_str(&format!("  may depend on: {}\n", list(&allowed)));
+    out.push_str(&format!(
+        "  may depend on: {}\n",
+        resolved::listed_or_nothing(&allowed)
+    ));
     if !forbidden.is_empty() {
         out.push_str(&format!("  forbidden: {}\n", forbidden.join(", ")));
     }
@@ -700,71 +439,8 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         out.push_str(&format!("  not allowed: {}\n", other.join(", ")));
     }
     if let Some(rule) = &component.rule {
-        if !rule.provenance.through.is_empty() {
-            out.push_str(&format!(
-                "  rule: written under {}\n",
-                rule.provenance.field
-            ));
-        }
-        let names = |items: &[Named]| {
-            items
-                .iter()
-                .map(|l| l.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        if let Some(external) = &rule.may_use_external {
-            let only = if external.is_empty() {
-                "nothing".to_string()
-            } else {
-                names(external)
-            };
-            out.push_str(&format!("  external modules: only {only}\n"));
-        }
-        if !rule.forbid_external.is_empty() {
-            out.push_str(&format!(
-                "  forbidden external modules: {}\n",
-                names(&rule.forbid_external)
-            ));
-        }
-        if !rule.must_depend_on.is_empty() {
-            out.push_str(&format!(
-                "  every directory must depend on: {}\n",
-                names(&rule.must_depend_on)
-            ));
-        }
-        if !rule.must_use_external.is_empty() {
-            out.push_str(&format!(
-                "  every directory must use external: {}\n",
-                names(&rule.must_use_external)
-            ));
-        }
-        if !rule.requires_file.is_empty() {
-            out.push_str(&format!(
-                "  every directory must contain: {}\n",
-                names(&rule.requires_file)
-            ));
-        }
-        if !rule.forbid_file.is_empty() {
-            out.push_str(&format!(
-                "  forbidden files: {}\n",
-                names(&rule.forbid_file)
-            ));
-        }
-        if !rule.requires_directive.is_empty() {
-            out.push_str(&format!(
-                "  every directory must match: {}\n",
-                names(&rule.requires_directive)
-            ));
-        }
-        if let Some(max) = rule.max_fan_out {
-            out.push_str(&format!("  max_fan_out: {max}\n"));
-        }
-        if let Some(max) = rule.max_instability {
-            out.push_str(&format!("  max_instability: {max}\n"));
-        }
-        if let Some(because) = &rule.because {
-            out.push_str(&format!("  because: {because}\n"));
+        for line in rule.lines() {
+            out.push_str(&format!("  {line}\n"));
         }
     }
     for grant in &explanation.symbol_grants {

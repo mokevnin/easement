@@ -15,7 +15,7 @@ Run `easement explain <path>` for the file or directory you are about to add or 
 
 Once you know where an import would go, run `easement propose <file> <target>` (or `--external <module>`, or `--plan -` with a JSON list of `{"from", "to"}` for several imports at once) before writing it. It gives the decision `check` will give the import, and the cycles, `must_not_reach` chains, crossed limits and missing diagram arrows the imports would cause together, each with its witness. Exit 1 means do not write it that way: read `because` and the public surface it names, and pick another target. Under `--no-graph` the graph is not judged, so a pass says nothing about cycles.
 
-`easement why <a> <b>` shows the imports, or the chain of imports, behind a dependency between two components. `explain` and `why` take `--format json` too: every grant and prohibition comes with its `provenance`, the field of the policy and the file that writes it, so you know which file to discuss with a human.
+`easement why <a> <b>` shows the imports, or the chain of imports, behind a dependency between two components. `explain` and `why` take `--format json` too: every grant and prohibition comes with its `provenance`, the field of the policy and the file that writes it, so you know which file to discuss with a human. `easement policy --format json` gives the whole policy as loaded, `extends` merged and globs and sets expanded, each item with its `provenance`: read it instead of `easement.yml` when you need who may use what across the project.
 
 ## After changing code
 

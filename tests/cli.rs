@@ -370,6 +370,20 @@ fn every_command_that_reads_the_indexes_takes_the_cache_flags() {
     }
 }
 
+/// `policy` prints the policy on stdout, as text or as JSON, and reads no code:
+/// its cache stays empty although the project holds files an indexer would read.
+#[test]
+fn policy_prints_the_policy_and_runs_no_indexer() {
+    let (_tmp, root) = fixture("policy");
+    let cache = TempDir::new().unwrap();
+    let text = stdout_of(easement_cached(&root, &["policy"], cache.path()).success());
+    assert!(text.starts_with("policy: easement.yml\n"), "{text}");
+    let policy =
+        json_of(easement_cached(&root, &["policy", "--format", "json"], cache.path()).success());
+    assert_eq!(policy["inputs"][0]["path"], "easement.yml", "{policy}");
+    assert_eq!(fs::read_dir(cache.path()).unwrap().count(), 0);
+}
+
 fn json_of(assert: assert_cmd::assert::Assert) -> serde_json::Value {
     serde_json::from_str(&stdout_of(assert)).unwrap()
 }

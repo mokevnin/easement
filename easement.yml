@@ -32,6 +32,7 @@ components:
       - src/propose.rs
       - src/project.rs
       - src/report.rs
+      - src/resolved.rs
       - src/review.rs
       - src/review
       - src/scan.rs

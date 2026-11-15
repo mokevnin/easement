@@ -146,6 +146,7 @@ For an existing codebase, a [baseline](https://github.com/mokevnin/easement/blob
 ```sh
 easement check                    # check the project
 easement explain <file>           # who owns the file and what it may do
+easement policy                   # print the policy as loaded, with where each item is written
 easement propose <file> <target>  # judge an import before writing it
 easement why <a> <b>              # show the imports behind a dependency
 easement impact --diff main      # find files depending on changed code

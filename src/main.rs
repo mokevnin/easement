@@ -113,6 +113,15 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Print the policy as loaded: `extends` merged, anchors, globs and sets
+    /// expanded, each item with where the policy writes it under `--format json`.
+    /// Reads no code and runs no indexer.
+    Policy {
+        #[arg(long, short, default_value = DEFAULT_CONFIG)]
+        config: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
     /// Draw the components and the dependencies between them.
     Graph {
         #[arg(long, short, default_value = DEFAULT_CONFIG)]
@@ -387,6 +396,15 @@ fn run(cli: Cli) -> Result<Outcome> {
                 format,
                 || explanation.text(),
                 || Ok(serde_json::to_string_pretty(&explanation)?),
+            )?;
+            Ok(Outcome::Passed)
+        }
+        Command::Policy { config, format } => {
+            let policy = commands::policy(&config)?;
+            print_as(
+                format,
+                || Ok(policy.text()),
+                || Ok(serde_json::to_string_pretty(&policy)?),
             )?;
             Ok(Outcome::Passed)
         }

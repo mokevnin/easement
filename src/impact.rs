@@ -7,11 +7,12 @@ use crate::chains::{NO_COMPONENT, describe_chain, file_graph, reach, shortest_ch
 use crate::check::{Chain, Hop, Place, RuleId, Unjudged, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::decision;
-use crate::explain::{DependencyDecision, PairDecision};
+use crate::explain::DependencyDecision;
 use crate::lang::Dep;
 use crate::policy::Policy;
 use crate::relpath;
 use crate::report::{self, Coverage, EvidenceGap, GapKind};
+use crate::resolved::PairDecision;
 
 /// What depends on a set of files, directly or through other files.
 #[derive(Serialize)]
@@ -378,7 +379,7 @@ impl Why {
 pub fn render_why(why: &Why) -> String {
     let Why { from, to, .. } = why;
     let decision = &why.decision;
-    let through = crate::explain::through(decision.provenance.as_ref());
+    let through = crate::resolved::through(decision.provenance.as_ref());
     let said = match (decision.grant, decision.rejected_by) {
         (_, Some(clause)) if clause.prohibits() => {
             format!("is forbidden ({}{through})", clause.as_str())

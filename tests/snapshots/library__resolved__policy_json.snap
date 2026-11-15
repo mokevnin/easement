@@ -1,0 +1,778 @@
+---
+source: tests/library/resolved.rs
+expression: policy_json(&root)
+---
+{
+  "common": [
+    {
+      "name": "kernel",
+      "provenance": {
+        "field": "common[0]",
+        "input": "policy/base.yml"
+      }
+    }
+  ],
+  "components": [
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        },
+        {
+          "allowed": true,
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.domain.may_depend_on[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "shared"
+        },
+        {
+          "allowed": true,
+          "grant": "layers",
+          "provenance": {
+            "field": "layers",
+            "input": "easement.yml",
+            "through": [
+              "store-*"
+            ]
+          },
+          "to": "store-orders"
+        },
+        {
+          "allowed": true,
+          "grant": "layers",
+          "provenance": {
+            "field": "layers",
+            "input": "easement.yml",
+            "through": [
+              "store-*"
+            ]
+          },
+          "to": "store-users"
+        }
+      ],
+      "in": [
+        "src/domain"
+      ],
+      "isolated": false,
+      "name": "domain",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [
+        {
+          "allow_importers": [
+            "web",
+            "store-orders",
+            "store-users"
+          ],
+          "allowed": false,
+          "because": "the domain knows no transport",
+          "provenance": {
+            "field": "rules.domain.must_not_reach[0]",
+            "input": "policy/base.yml"
+          },
+          "rejected_by": "must_not_reach",
+          "rules": [
+            "dependency",
+            "reach"
+          ],
+          "to": "http"
+        }
+      ],
+      "provenance": {
+        "field": "components.domain",
+        "input": "easement.yml"
+      },
+      "rule": {
+        "provenance": {
+          "field": "rules.domain",
+          "input": "policy/base.yml"
+        }
+      }
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/stores/Cargo.toml"
+      ],
+      "isolated": false,
+      "name": "fake-db",
+      "optional": false,
+      "part": "feature/fake",
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.fake-db",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/features/*"
+      ],
+      "isolated": true,
+      "name": "features",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.features",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "allow_importers": [
+        "web",
+        "store-orders",
+        "store-users"
+      ],
+      "because": "one client for every outbound call",
+      "except": [
+        "src/http/testdata"
+      ],
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/http"
+      ],
+      "isolated": false,
+      "name": "http",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.http",
+        "input": "easement.yml"
+      },
+      "public": [
+        "src/http/api"
+      ],
+      "surfaces": [
+        {
+          "because": "fakes for the store tests",
+          "importers": [
+            "store-orders"
+          ],
+          "name": "fakes",
+          "paths": [
+            "src/http/fake"
+          ],
+          "provenance": {
+            "field": "components.http.surfaces.fakes",
+            "input": "easement.yml"
+          }
+        }
+      ]
+    },
+    {
+      "grants": [],
+      "in": [
+        "src/kernel"
+      ],
+      "isolated": false,
+      "name": "kernel",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.kernel",
+        "input": "easement.yml"
+      },
+      "public": [],
+      "surfaces": [
+        {
+          "importers": [
+            "web"
+          ],
+          "name": "clock",
+          "paths": [
+            "src/kernel/clock"
+          ],
+          "provenance": {
+            "field": "components.kernel.surfaces.clock",
+            "input": "easement.yml"
+          }
+        }
+      ]
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/shared"
+      ],
+      "isolated": false,
+      "name": "shared",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.shared",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "defines": [
+        "*Repository"
+      ],
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "only through the public surface of http: src/http/api; or its fakes surface: src/http/fake"
+          ],
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.'store-*'.may_depend_on[0]",
+            "input": "easement.yml",
+            "through": [
+              "store-*"
+            ]
+          },
+          "to": "http"
+        },
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/stores/orders"
+      ],
+      "isolated": false,
+      "name": "store-orders",
+      "optional": false,
+      "priority": 1,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.store-orders",
+        "input": "easement.yml"
+      },
+      "rule": {
+        "forbid_external": [
+          {
+            "name": "moment",
+            "provenance": {
+              "field": "rules.'store-*'.forbid_external[0]",
+              "input": "easement.yml",
+              "through": [
+                "store-*"
+              ]
+            }
+          }
+        ],
+        "provenance": {
+          "field": "rules.'store-*'",
+          "input": "easement.yml",
+          "through": [
+            "store-*"
+          ]
+        }
+      }
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "only through the public surface of http: src/http/api"
+          ],
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.'store-*'.may_depend_on[0]",
+            "input": "easement.yml",
+            "through": [
+              "store-*"
+            ]
+          },
+          "to": "http"
+        },
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/stores/users"
+      ],
+      "isolated": false,
+      "name": "store-users",
+      "optional": true,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.store-users",
+        "input": "easement.yml"
+      },
+      "public_symbols": [
+        "users.Find"
+      ],
+      "rule": {
+        "forbid_external": [
+          {
+            "name": "moment",
+            "provenance": {
+              "field": "rules.'store-*'.forbid_external[0]",
+              "input": "easement.yml",
+              "through": [
+                "store-*"
+              ]
+            }
+          }
+        ],
+        "provenance": {
+          "field": "rules.'store-*'",
+          "input": "easement.yml",
+          "through": [
+            "store-*"
+          ]
+        }
+      }
+    },
+    {
+      "except": [
+        "**/src/**/tests/**/*.rs",
+        "**/src/**/benches/**/*.rs",
+        "**/src/**/examples/**/*.rs"
+      ],
+      "grants": [
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "domain"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "fake-db"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "features"
+        },
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "kernel"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "shared"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "store-orders"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "store-users"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "tools"
+        },
+        {
+          "allowed": true,
+          "grant": "tests",
+          "provenance": {
+            "field": "tests",
+            "input": "easement.yml"
+          },
+          "to": "web"
+        }
+      ],
+      "in": [
+        "**/*_test.go",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/test_*.py",
+        "**/*_test.py",
+        "**/*Test.java",
+        "**/*Tests.java",
+        "**/*Test.kt",
+        "**/*Tests.kt",
+        "**/*Test.cs",
+        "**/*Tests.cs",
+        "**/*Test.php",
+        "**/*Tests.swift",
+        "**/tests/**/*.rs",
+        "**/benches/**/*.rs",
+        "**/examples/**/*.rs"
+      ],
+      "isolated": false,
+      "name": "tests",
+      "optional": true,
+      "priority": 1000000,
+      "prohibitions": [],
+      "provenance": {
+        "field": "tests",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "conditions": [
+            "through no path: kernel opens no surface to it"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/tools"
+      ],
+      "isolated": false,
+      "name": "tools",
+      "optional": false,
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.tools",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "grants": [
+        {
+          "allowed": true,
+          "grant": "layers",
+          "provenance": {
+            "field": "layers",
+            "input": "easement.yml"
+          },
+          "to": "domain"
+        },
+        {
+          "allowed": true,
+          "because": "pages fetch through the client",
+          "conditions": [
+            "only through the public surface of http: src/http/api"
+          ],
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.web.may_depend_on[0]",
+            "input": "easement.yml"
+          },
+          "to": "http"
+        },
+        {
+          "allowed": true,
+          "conditions": [
+            "only through kernel's clock surface: src/kernel/clock"
+          ],
+          "grant": "common",
+          "provenance": {
+            "field": "common[0]",
+            "input": "policy/base.yml"
+          },
+          "to": "kernel"
+        }
+      ],
+      "in": [
+        "src/web"
+      ],
+      "isolated": false,
+      "name": "web",
+      "optional": false,
+      "owner": "@acme/web",
+      "priority": 0,
+      "prohibitions": [],
+      "provenance": {
+        "field": "components.web",
+        "input": "easement.yml"
+      },
+      "rule": {
+        "because": "pages call the client, not the stores",
+        "forbid_symbol": [
+          {
+            "because": "deep merges hide mutations",
+            "name": "lodash.merge",
+            "provenance": {
+              "field": "rules.web.forbid_symbol[0]",
+              "input": "easement.yml"
+            }
+          }
+        ],
+        "provenance": {
+          "field": "rules.web",
+          "input": "easement.yml"
+        }
+      }
+    }
+  ],
+  "entry": [
+    "src/web/page.ts"
+  ],
+  "examples": [
+    {
+      "because": "the domain knows no transport",
+      "expect": "rejected",
+      "from": "src/domain/order.ts",
+      "provenance": {
+        "field": "examples[0]",
+        "input": "policy/base.yml"
+      },
+      "rule": "dependency",
+      "to": "src/http/client.ts"
+    },
+    {
+      "expect": "allowed",
+      "from": "src/web/page.ts",
+      "provenance": {
+        "field": "examples[1]",
+        "input": "easement.yml"
+      },
+      "to": "src/http/api/client.ts"
+    },
+    {
+      "expect": "rejected",
+      "external": "axios",
+      "from": "src/web/page.ts",
+      "provenance": {
+        "field": "examples[2]",
+        "input": "easement.yml"
+      },
+      "rule": "external"
+    }
+  ],
+  "exclude": [
+    "src/gen/**"
+  ],
+  "forbid_external": [
+    {
+      "allow": [
+        "http"
+      ],
+      "because": "one HTTP client",
+      "name": "axios",
+      "provenance": {
+        "field": "forbid_external[0]",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "name": "left-pad",
+      "provenance": {
+        "field": "forbid_external[1]",
+        "input": "easement.yml"
+      }
+    }
+  ],
+  "forbid_symbol": [
+    {
+      "allow": [
+        "store-orders",
+        "store-users"
+      ],
+      "allow_in": [
+        "src/tools/migrate.ts"
+      ],
+      "because": "only the stores open connections",
+      "name": "db.Client",
+      "provenance": {
+        "field": "forbid_symbol[0]",
+        "input": "policy/base.yml"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "kind": "config",
+      "path": "easement.yml"
+    },
+    {
+      "kind": "extended",
+      "path": "policy/base.yml"
+    },
+    {
+      "kind": "diagram",
+      "path": "docs/architecture.md"
+    }
+  ],
+  "layers": [
+    {
+      "closed": false,
+      "components": [
+        "web"
+      ],
+      "provenance": {
+        "field": "layers[0]",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "closed": true,
+      "components": [
+        "domain"
+      ],
+      "provenance": {
+        "field": "layers[1]",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "closed": false,
+      "components": [
+        "store-orders",
+        "store-users"
+      ],
+      "provenance": {
+        "field": "layers[2]",
+        "input": "easement.yml",
+        "through": [
+          "store-*"
+        ]
+      }
+    }
+  ],
+  "manifests": true,
+  "no_cycles": [
+    "domain",
+    "web"
+  ],
+  "packages": true,
+  "reach": "files",
+  "strict": true,
+  "target_only": [
+    "**/*.pb.ts"
+  ],
+  "tests": true,
+  "uncovered_ok": [
+    {
+      "because": "vendored code",
+      "patterns": [
+        "vendor/**"
+      ]
+    }
+  ],
+  "unowned": [
+    "scripts"
+  ],
+  "warn": [
+    "naming"
+  ]
+}

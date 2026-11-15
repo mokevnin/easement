@@ -12,7 +12,6 @@ use crate::components::{AcceptedGap, Access, ComponentMap};
 use crate::config::{Config, Example};
 use crate::decision::{self, Grant, PairDecision, Refusal};
 use crate::examples;
-use crate::explain;
 use crate::policy::Policy;
 use crate::report::{self, EvidenceGap};
 
@@ -887,7 +886,7 @@ impl Review {
                 p.from,
                 p.to,
                 p.clause,
-                explain::through_names(&p.through)
+                crate::resolved::through_names(&p.through)
             ));
             if let Some(because) = &p.because {
                 out.push_str(&format!("    because: {because}\n"));

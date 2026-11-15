@@ -600,7 +600,8 @@ impl Layer {
         }
     }
 
-    fn closed(&self) -> bool {
+    /// Whether the layers above may not reach past it.
+    pub fn closed(&self) -> bool {
         matches!(self, Layer::Named(NamedLayer { closed: true, .. }))
     }
 }
@@ -628,6 +629,16 @@ pub enum Reach {
     #[default]
     Files,
     Symbols,
+}
+
+impl Reach {
+    /// The value as the policy writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reach::Files => "files",
+            Reach::Symbols => "symbols",
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, JsonSchema)]

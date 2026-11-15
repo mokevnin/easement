@@ -28,6 +28,7 @@ mod project;
 mod propose;
 mod relpath;
 mod report;
+mod resolved;
 mod review;
 mod scan;
 mod scip;
