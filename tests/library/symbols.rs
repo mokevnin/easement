@@ -369,7 +369,7 @@ fn a_top_level_forbidden_name_may_be_used_in_the_paths_it_allows() {
     // Another package of the component whose two packages the paths let in.
     assert!(
         report.contains(
-            "internal/modules/reports/report.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing, internal/modules/mailing/*.go may)"
+            "internal/modules/reports/report.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing and internal/modules/mailing/*.go may)"
         ),
         "{report}"
     );
@@ -415,6 +415,10 @@ fn explain_names_the_forbidden_names_a_path_is_allowed() {
             .is_none()
     );
     assert!(!reports.text().unwrap().contains("forbid_symbol"));
+    pinned(|| {
+        insta::assert_snapshot!("explain_symbol_grants_text", said);
+        insta::assert_json_snapshot!("explain_symbol_grants_json", mailing);
+    });
     // A component whose own rule forbids the name keeps it forbidden: no grant to show.
     let policy = fs::read_to_string(config(&root)).unwrap().replace(
         "may_depend_on: [store]",
@@ -445,6 +449,7 @@ fn a_path_allowed_a_forbidden_name_that_matches_no_file_is_unmatched() {
         ),
         "{report}"
     );
+    pinned(|| insta::assert_snapshot!("forbid_symbol_allow_in_unmatched_text", report));
 }
 
 #[test]

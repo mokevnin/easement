@@ -1,0 +1,9 @@
+---
+source: tests/library/symbols.rs
+expression: said
+---
+internal/modules/mailing/send.go
+  component: modules (matches `internal/modules`)
+  may depend on: store (may_depend_on)
+  not allowed: tests, wiring
+  may use, although forbid_symbol forbids it: example.com/app/internal/store.Client (allow_in `internal/modules/mailing/*.go`: a module takes the scoped client it is given)

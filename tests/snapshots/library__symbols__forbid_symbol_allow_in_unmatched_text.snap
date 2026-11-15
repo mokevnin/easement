@@ -1,0 +1,11 @@
+---
+source: tests/library/symbols.rs
+expression: report
+---
+easement.yml:12: `forbid_symbol` `example.com/app/internal/store.Client` is allowed in `internal/modules/mailer/*.go`, which matches no file; fix the pattern or drop it (files that `exclude` or .gitignore hide do not count) [unmatched]
+internal/modules/mailing/send.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing and internal/modules/mailer/*.go may) [symbol]
+  because: a module takes the scoped client it is given
+internal/modules/reports/report.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing and internal/modules/mailer/*.go may) [symbol]
+  because: a module takes the scoped client it is given
+
+easement failed: 3 violation(s), 0 stale, 0 legalized; 6 files, 7 internal deps
