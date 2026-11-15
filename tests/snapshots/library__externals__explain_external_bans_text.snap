@@ -1,0 +1,10 @@
+---
+source: tests/library/externals.rs
+expression: said
+---
+src/utils/Dates.kt
+  component: utils (matches `src/utils`)
+  may depend on: nothing
+  not allowed: domain, web, wiring
+  forbid_external forbids: org.koin (only wiring may: no domain module or handler sees the DI container)
+  may use, although forbid_external forbids it: org.threeten.bp (allow_in `src/utils/Dates.kt`: dates go through src/utils/Dates.kt)

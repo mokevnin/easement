@@ -1,0 +1,18 @@
+---
+source: tests/library/externals.rs
+expression: report
+---
+scripts/Seed.kt:3: unowned files -> external org.koin.core.Koin is forbidden (only wiring may) [external]
+  because: no domain module or handler sees the DI container
+src/domain/Order.kt:3: domain -> external org.koin.core.component.KoinComponent is forbidden (only wiring may) [external]
+  because: no domain module or handler sees the DI container
+src/domain/Order.kt:4: domain -> external okhttp3.OkHttpClient is forbidden [external]
+  because: the domain makes no calls
+src/utils/Strings.kt:3: utils -> external org.threeten.bp.format.DateTimeFormatter is forbidden (only src/utils/Dates.kt may) [external]
+  because: dates go through src/utils/Dates.kt
+src/web/Handler.kt:3: web -> external org.koin.core.Koin is forbidden (only wiring may) [external]
+  because: no domain module or handler sees the DI container
+src/web/Handler.kt:4: web -> external org.threeten.bp.LocalDate is forbidden (only src/utils/Dates.kt may) [external]
+  because: dates go through src/utils/Dates.kt
+
+easement failed: 6 violation(s), 0 stale, 0 legalized; 6 files, 0 internal deps

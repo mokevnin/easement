@@ -3,11 +3,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, name_first};
+use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, in_words, name_first};
 use crate::components::ComponentMap;
 use anyhow::{Result, bail};
 
-use crate::config::{Config, ForbiddenName};
+use crate::config::{Ban, Config, ForbiddenName};
 use crate::lang::{Dep, Target, registry};
 use crate::policy::Policy;
 use crate::relpath::slash;
@@ -61,17 +61,14 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
                     continue;
                 }
                 // So may a file in a path the item allows, whatever owns it.
-                if item.is_some_and(|item| map.granted_in(item, &file).is_some()) {
+                if item.is_some_and(|item| map.granted_in(Ban::Symbol, item, &file).is_some()) {
                     continue;
                 }
                 // A name in both lists is one violation.
                 if !seen.insert(pattern) {
                     continue;
                 }
-                let who = match owner {
-                    Some(component) => component.to_string(),
-                    None => "unowned files".to_string(),
-                };
+                let who = crate::check::who(from);
                 let allowed: Vec<&str> = listed
                     .allow()
                     .into_iter()
@@ -112,15 +109,6 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
         }
     }
     found
-}
-
-/// `items` as a sentence lists them: `a`, `a and b`, `a, b and c`.
-fn in_words(items: &[&str]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.to_string(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
 }
 
 /// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a
@@ -169,7 +157,7 @@ pub fn contradicted_grants(
         let first = files
             .iter()
             .filter_map(|file| {
-                let (at, pattern) = map.granted_in(i, file)?;
+                let (at, pattern) = map.granted_in(Ban::Symbol, i, file)?;
                 let (component, spelled) = map
                     .component_of(file)
                     .into_iter()

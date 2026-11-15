@@ -122,8 +122,12 @@ pub enum Clause<'a> {
     },
     /// `exclude` hides the target, so no rule could judge it.
     ExcludedTarget,
-    /// An external module the rules of the source do not let it use: what is wrong with it.
-    External(&'static str),
+    /// An external module the rules of the source do not let it use: what is wrong with
+    /// it, and the item of the top-level `forbid_external` that forbids it, if one does.
+    External {
+        what: String,
+        item: Option<usize>,
+    },
 }
 
 impl Clause<'_> {
@@ -136,7 +140,7 @@ impl Clause<'_> {
             Clause::SliceMismatch { .. } => ClauseId::Slice,
             Clause::OtherInstance { .. } => ClauseId::Isolated,
             Clause::ExcludedTarget => ClauseId::Exclude,
-            Clause::External(_) => ClauseId::External,
+            Clause::External { .. } => ClauseId::External,
         }
     }
 
@@ -147,7 +151,7 @@ impl Clause<'_> {
             Clause::OutsideSurface { .. } => RuleId::Privacy,
             Clause::SliceMismatch { .. } | Clause::OtherInstance { .. } => RuleId::Isolation,
             Clause::ExcludedTarget => RuleId::Excluded,
-            Clause::External(_) => RuleId::External,
+            Clause::External { .. } => RuleId::External,
         }
     }
 }
@@ -173,7 +177,8 @@ pub enum Outside {
 /// The verdict on one dependency.
 #[derive(Debug)]
 pub struct Decision<'a> {
-    /// The component of the importing code.
+    /// The component of the importing code; empty for a file of no component,
+    /// which only the top-level `forbid_external` judges.
     pub from: &'a str,
     /// The component of the target: none for an external module, a target
     /// `exclude` hides, or one that belongs to no component.
@@ -313,6 +318,29 @@ pub fn unread(map: &ComponentMap, rel_path: &str) -> Option<Outside> {
     }
 }
 
+/// The verdict on `dep` of `file`, which no component owns: only the top-level
+/// `forbid_external` judges it, rejecting an external module it forbids there.
+fn unowned<'a>(map: &'a ComponentMap, dep: &Dep, file: &str) -> Result<Decision<'a>, Outside> {
+    let Target::External(module) = &dep.target else {
+        return Err(Outside::Unowned);
+    };
+    let problem = map
+        .external_problem(None, file, module)
+        .ok_or(Outside::Unowned)?;
+    Ok(Decision {
+        from: "",
+        to: None,
+        target: module.clone(),
+        grant: Err(Clause::External {
+            what: problem.what,
+            item: problem.item,
+        }),
+        resolution: ResolutionStatus::Unambiguous,
+        candidates: Vec::new(),
+        because: problem.because,
+    })
+}
+
 /// How certainly a dependency's target was resolved. It says nothing of whether
 /// the declaration is a duplicate: an import that means every copy (a wildcard,
 /// an overload) still tells how certain its target is.
@@ -340,7 +368,9 @@ pub fn decide<'a>(
     if let Some(why) = unread(map, &file) {
         return Err(why);
     }
-    let from = map.component_of_unit(&dep.from).ok_or(Outside::Unowned)?;
+    let Some(from) = map.component_of_unit(&dep.from) else {
+        return unowned(map, dep, &file);
+    };
     let resolution_status = if dep.candidates.is_empty() {
         ResolutionStatus::Unambiguous
     } else {
@@ -363,12 +393,19 @@ pub fn decide<'a>(
     };
     let unit = match &dep.target {
         Target::External(module) => {
-            return Ok(match map.external_problem(from, &file, module) {
+            return Ok(match map.external_problem(Some(from), &file, module) {
                 Some(problem) => decision(
                     None,
                     module.clone(),
-                    Err(Clause::External(problem.what)),
-                    problem.because.or_else(|| config.reason(from)),
+                    Err(Clause::External {
+                        what: problem.what,
+                        item: problem.item,
+                    }),
+                    // The reason of the rule backs only the rule's own lists.
+                    match problem.item {
+                        Some(_) => problem.because,
+                        None => problem.because.or_else(|| config.reason(from)),
+                    },
                     resolution_status,
                     dep.candidates.clone(),
                 ),
@@ -522,7 +559,13 @@ impl Decision<'_> {
             }
             Err(Clause::OtherInstance { .. }) => component(from, "isolated"),
             Err(Clause::SliceMismatch { .. }) => component(from, "in"),
-            Err(Clause::ExcludedTarget | Clause::External(_)) => None,
+            Err(Clause::External {
+                item: Some(item), ..
+            }) => {
+                let key = crate::config::Ban::External.key();
+                Some(Site::in_key(key, format!("{key}[{item}]")))
+            }
+            Err(Clause::ExcludedTarget | Clause::External { item: None, .. }) => None,
         }
     }
 }

@@ -1,0 +1,76 @@
+---
+source: tests/library/externals.rs
+expression: dates
+---
+{
+  "path": "src/utils/Dates.kt",
+  "ownership": {
+    "status": "owned",
+    "component": "utils",
+    "pattern": "src/utils",
+    "test": false,
+    "target_only": false,
+    "provenance": {
+      "field": "components.utils.in",
+      "input": "easement.yml"
+    }
+  },
+  "priority": 0,
+  "isolated": false,
+  "surfaces": [],
+  "grants": [],
+  "prohibitions": [],
+  "not_allowed": [
+    {
+      "to": "domain",
+      "allowed": false,
+      "rejected_by": "not_granted",
+      "rules": [
+        "dependency"
+      ]
+    },
+    {
+      "to": "web",
+      "allowed": false,
+      "rejected_by": "not_granted",
+      "rules": [
+        "dependency"
+      ]
+    },
+    {
+      "to": "wiring",
+      "allowed": false,
+      "rejected_by": "not_granted",
+      "rules": [
+        "dependency"
+      ]
+    }
+  ],
+  "forbid_external": [
+    {
+      "name": "org.koin",
+      "allowed": false,
+      "only": [
+        "wiring"
+      ],
+      "because": "no domain module or handler sees the DI container",
+      "provenance": {
+        "field": "forbid_external[0]",
+        "input": "easement.yml"
+      }
+    },
+    {
+      "name": "org.threeten.bp",
+      "allow_in": "src/utils/Dates.kt",
+      "allowed": true,
+      "only": [
+        "src/utils/Dates.kt"
+      ],
+      "because": "dates go through src/utils/Dates.kt",
+      "provenance": {
+        "field": "forbid_external[1].allow_in[0]",
+        "input": "easement.yml"
+      }
+    }
+  ]
+}

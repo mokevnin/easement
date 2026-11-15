@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 
-use crate::config::{Config, TESTS};
+use crate::config::{Ban, Config, ForbiddenName, TESTS};
 use crate::lang::{Unit, registry};
 use crate::stdlib::{STD, is_std};
 
@@ -38,9 +38,11 @@ pub struct ComponentMap {
     surfaces: std::collections::HashMap<String, Vec<NamedSurface>>,
     /// Component -> what it may do with external modules, for components that restrict it.
     externals: std::collections::HashMap<String, Externals>,
-    /// The `allow_in` patterns of each top-level `forbid_symbol` item, as written
-    /// and compiled, in the order of the items.
-    symbol_grants: Vec<Vec<(String, ModuleMatcher)>>,
+    /// The items of the top-level `forbid_external`, in their order.
+    forbidden_externals: Vec<ForbiddenExternal>,
+    /// By top-level list, the `allow_in` patterns of each item, as written and
+    /// compiled, in the order of the items.
+    path_grants: std::collections::BTreeMap<Ban, Vec<Vec<(String, ModuleMatcher)>>>,
     /// Path -> (part, the index in `entries` of the entry that owns it) for every
     /// lookup made so far: the entries never change, so an answer stays true for
     /// the life of the map. Scoped threads share the map, hence the lock.
@@ -109,11 +111,38 @@ struct Externals {
     forbidden_std: Option<StdForbidden>,
 }
 
-/// Why a component may not use an external module: what is wrong, and the
-/// reason attached to the forbidden pattern, if it has one.
+/// An item of the top-level `forbid_external`: the module it forbids, and who may
+/// use it all the same.
+struct ForbiddenExternal {
+    /// The module and what it contains; `None` for `$std`.
+    module: Option<GlobMatcher>,
+    /// The components that may use it all the same (`allow`); the paths that
+    /// may are matched by [`ComponentMap::granted_in`].
+    allow: Vec<String>,
+    /// The components, then the paths, that may use it, as written, for messages.
+    who: Vec<String>,
+    /// The item's own reason.
+    because: Option<String>,
+}
+
+impl ForbiddenExternal {
+    /// Whether the item forbids `specifier`, imported by `file`, as a pattern of
+    /// a component's own `forbid_external` would.
+    fn names(&self, file: &str, specifier: &str) -> bool {
+        match &self.module {
+            None => is_std(file, specifier),
+            Some(module) => prefixes(file, specifier).any(|p| module.is_match(p)),
+        }
+    }
+}
+
+/// Why a component may not use an external module: what is wrong, the reason
+/// attached to the forbidden pattern, if it has one, and the item of the
+/// top-level `forbid_external` that forbids it, when one does.
 pub struct ExternalProblem<'a> {
-    pub what: &'static str,
+    pub what: String,
     pub because: Option<&'a str>,
+    pub item: Option<usize>,
 }
 
 fn glob_set<'a>(
@@ -169,6 +198,24 @@ fn module_matchers(component: &str, pattern: &str) -> Result<ModuleMatcher> {
         compile(&format!("{pattern}/**"))?,
         compile(&format!("{pattern}.*"))?,
     ]))
+}
+
+/// How the own `forbid_external` of `component` writes a pattern that covers
+/// `module`, when it has one: empty when spelled alike, else `` as `own` ``,
+/// to follow `forbids` in an error.
+pub fn own_external_ban(config: &Config, component: &str, module: &str) -> Option<String> {
+    let own = config
+        .rules
+        .get(component)?
+        .forbid_external
+        .iter()
+        .map(ForbiddenName::name)
+        .find(|own| ComponentMap::covers_module(own, module))?;
+    Some(if own == module {
+        String::new()
+    } else {
+        format!(" as `{own}`")
+    })
 }
 
 /// Whether the module `pattern` names lies inside one of the `in` patterns
@@ -253,11 +300,10 @@ impl ComponentMap {
         let mut externals = std::collections::HashMap::new();
         for (name, rule) in &config.rules {
             if rule.may_use_external.is_some() || !rule.forbid_external.is_empty() {
-                let std_item = |l: &&crate::config::Listed| l.name() == STD;
                 let forbidden: Vec<_> = rule
                     .forbid_external
                     .iter()
-                    .filter(|l| !std_item(l))
+                    .filter(|l| l.name() != STD)
                     .collect();
                 externals.insert(
                     name.clone(),
@@ -269,11 +315,15 @@ impl ComponentMap {
                                 glob_set(
                                     name,
                                     "may_use_external",
-                                    p.iter().filter(|l| !std_item(l)).map(|l| l.name()),
+                                    p.iter().map(|l| l.name()).filter(|n| *n != STD),
                                 )
                             })
                             .transpose()?,
-                        allowed_std: rule.may_use_external.iter().flatten().any(|l| std_item(&l)),
+                        allowed_std: rule
+                            .may_use_external
+                            .iter()
+                            .flatten()
+                            .any(|l| l.name() == STD),
                         forbidden: glob_set(
                             name,
                             "forbid_external",
@@ -283,11 +333,11 @@ impl ComponentMap {
                             .iter()
                             .map(|l| l.because().map(str::to_string))
                             .collect(),
-                        forbidden_std: rule.forbid_external.iter().find(std_item).map(|l| {
-                            StdForbidden {
+                        forbidden_std: rule.forbid_external.iter().find(|l| l.name() == STD).map(
+                            |l| StdForbidden {
                                 because: l.because().map(str::to_string),
-                            }
-                        }),
+                            },
+                        ),
                     },
                 );
             }
@@ -337,19 +387,48 @@ impl ComponentMap {
                 surfaces.insert(name.clone(), named);
             }
         }
-        let symbol_grants = config
-            .forbid_symbol
+        let mut path_grants = std::collections::BTreeMap::new();
+        for ban in Ban::ALL {
+            let grants = config
+                .top_bans(ban)
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    item.allow_in()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|pattern| {
+                            let place = format!("{}[{i}].allow_in", ban.key());
+                            Ok((pattern.clone(), module_matchers(&place, pattern)?))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .collect::<Result<Vec<_>>>()?;
+            path_grants.insert(ban, grants);
+        }
+        let forbidden_externals = config
+            .forbid_external
             .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                item.allow_in()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|pattern| {
-                        let place = format!("forbid_symbol[{i}].allow_in");
-                        Ok((pattern.clone(), module_matchers(&place, pattern)?))
-                    })
-                    .collect::<Result<Vec<_>>>()
+            .map(|item| {
+                let module = match item.name() {
+                    STD => None,
+                    pattern => Some(
+                        Glob::new(pattern)
+                            .with_context(|| format!("bad pattern `{pattern}` in forbid_external"))?
+                            .compile_matcher(),
+                    ),
+                };
+                let allow = item.allow().unwrap_or_default().to_vec();
+                Ok(ForbiddenExternal {
+                    module,
+                    who: allow
+                        .iter()
+                        .chain(item.allow_in().unwrap_or_default())
+                        .cloned()
+                        .collect(),
+                    allow,
+                    because: item.because().map(str::to_string),
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         let mut uncovered_ok = GlobSetBuilder::new();
@@ -388,16 +467,19 @@ impl ComponentMap {
             public,
             surfaces,
             externals,
-            symbol_grants,
+            forbidden_externals,
+            path_grants,
             owners: Owners::default(),
         })
     }
 
-    /// The `allow_in` pattern of the top-level `forbid_symbol` item at `item`
-    /// that lets `rel_path` use its name, the first one written, with its index
-    /// in the list; the component that owns the file does not matter.
-    pub fn granted_in(&self, item: usize, rel_path: &str) -> Option<(usize, &str)> {
-        self.symbol_grants
+    /// The `allow_in` pattern of the item at `item` of the top-level list of
+    /// `ban` that lets `rel_path` use what it forbids, the first one written,
+    /// with its index in the list; the component that owns the file does not
+    /// matter.
+    pub fn granted_in(&self, ban: Ban, item: usize, rel_path: &str) -> Option<(usize, &str)> {
+        self.path_grants
+            .get(&ban)?
             .get(item)?
             .iter()
             .enumerate()
@@ -405,15 +487,18 @@ impl ComponentMap {
             .map(|(at, (pattern, _))| (at, pattern.as_str()))
     }
 
-    /// Every `allow_in` pattern, with the index of its item, that matches none
-    /// of `files`, in the order of the config.
-    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(usize, &str)> {
-        self.symbol_grants
+    /// Every `allow_in` pattern, with its top-level list and the index of its
+    /// item, that matches none of `files`, in the order of the config.
+    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(Ban, usize, &str)> {
+        self.path_grants
             .iter()
-            .enumerate()
-            .flat_map(|(item, patterns)| patterns.iter().map(move |grant| (item, grant)))
-            .filter(|(_, (_, matcher))| !files.iter().any(|f| matcher.is_match(f)))
-            .map(|(item, (pattern, _))| (item, pattern.as_str()))
+            .flat_map(|(ban, items)| {
+                items.iter().enumerate().flat_map(move |(item, patterns)| {
+                    patterns.iter().map(move |grant| (*ban, item, grant))
+                })
+            })
+            .filter(|(_, _, (_, matcher))| !files.iter().any(|f| matcher.is_match(f)))
+            .map(|(ban, item, (pattern, _))| (ban, item, pattern.as_str()))
             .collect()
     }
 
@@ -430,6 +515,23 @@ impl ComponentMap {
         modules
             .into_iter()
             .any(|(file, module)| prefixes(file, module).any(|p| matcher.is_match(p)))
+    }
+
+    /// Whether the `forbid_external` or `may_use_external` pattern `pattern`
+    /// covers all that the pattern `module` names, read with no file to tell its
+    /// language: `lodash` covers `lodash/fp`, `okhttp3` covers `okhttp3.Client`,
+    /// and `$std` covers only itself.
+    pub fn covers_module(pattern: &str, module: &str) -> bool {
+        if pattern == STD || module == STD {
+            return pattern == module;
+        }
+        let Ok(glob) = Glob::new(pattern) else {
+            return false;
+        };
+        let matcher = glob.compile_matcher();
+        registry::module_parents_anywhere(module)
+            .chain(std::iter::once(module))
+            .any(|p| matcher.is_match(p))
     }
 
     /// Whether strict mode lets `rel_path` belong to no component.
@@ -500,36 +602,62 @@ impl ComponentMap {
             .collect()
     }
 
-    /// Whether a rule of `component` names `$std`.
-    pub fn uses_std(&self, component: &str) -> bool {
-        self.externals
-            .get(component)
-            .is_some_and(|r| r.allowed_std || r.forbidden_std.is_some())
+    /// Whether the top-level `forbid_external` names `$std`, which binds every file.
+    pub fn forbids_std(&self) -> bool {
+        self.forbidden_externals.iter().any(|f| f.module.is_none())
     }
 
-    /// Why `component` may not use the external module `specifier`, imported
-    /// by `file`, if it may not.
+    /// Whether the top-level `forbid_external` or a rule of `component` names `$std`.
+    pub fn uses_std(&self, component: &str) -> bool {
+        self.forbids_std()
+            || self
+                .externals
+                .get(component)
+                .is_some_and(|r| r.allowed_std || r.forbidden_std.is_some())
+    }
+
+    /// Why `component`, or a file of no component for `None`, may not use the
+    /// external module `specifier`, imported by `file`, if it may not: the
+    /// top-level `forbid_external` first, then the rules of the component.
     pub fn external_problem(
         &self,
-        component: &str,
+        component: Option<&str>,
         file: &str,
         specifier: &str,
     ) -> Option<ExternalProblem<'_>> {
-        let rules = self.externals.get(component)?;
-        let std = || is_std(file, specifier);
-        if let Some(forbidden) = rules.forbidden_std.as_ref().filter(|_| std()) {
+        for (item, forbidden) in self.forbidden_externals.iter().enumerate() {
+            if !forbidden.names(file, specifier)
+                || component.is_some_and(|c| forbidden.allow.iter().any(|a| a == c))
+                || self.granted_in(Ban::External, item, file).is_some()
+            {
+                continue;
+            }
+            let only = if forbidden.who.is_empty() {
+                String::new()
+            } else {
+                let who: Vec<&str> = forbidden.who.iter().map(String::as_str).collect();
+                format!(" (only {} may)", crate::check::in_words(&who))
+            };
             return Some(ExternalProblem {
-                what: "is forbidden",
+                what: format!("is forbidden{only}"),
                 because: forbidden.because.as_deref(),
+                item: Some(item),
             });
+        }
+        let rules = self.externals.get(component?)?;
+        let std = || is_std(file, specifier);
+        let forbidden = |because| ExternalProblem {
+            what: "is forbidden".to_string(),
+            because,
+            item: None,
+        };
+        if let Some(found) = rules.forbidden_std.as_ref().filter(|_| std()) {
+            return Some(forbidden(found.because.as_deref()));
         }
         if let Some(index) =
             prefixes(file, specifier).find_map(|p| rules.forbidden.matches(p).first().copied())
         {
-            return Some(ExternalProblem {
-                what: "is forbidden",
-                because: rules.reasons[index].as_deref(),
-            });
+            return Some(forbidden(rules.reasons[index].as_deref()));
         }
         match &rules.allowed {
             Some(allowed)
@@ -537,8 +665,9 @@ impl ComponentMap {
                     && !(rules.allowed_std && std()) =>
             {
                 Some(ExternalProblem {
-                    what: "is not in may_use_external",
+                    what: "is not in may_use_external".to_string(),
                     because: None,
+                    item: None,
                 })
             }
             _ => None,
@@ -918,7 +1047,10 @@ rules:
       - { name: okhttp3.internal, because: internals change }
 ");
         assert!(m.uses_std("core"));
-        let reason = |file, module| m.external_problem("core", file, module).map(|p| p.because);
+        let reason = |file, module| {
+            m.external_problem(Some("core"), file, module)
+                .map(|p| p.because)
+        };
         assert_eq!(
             reason("A.kt", "java.util.UUID"),
             Some(Some("std is wrapped"))
@@ -929,7 +1061,7 @@ rules:
         );
         assert_eq!(reason("A.kt", "okhttp3.Client"), None);
         assert!(
-            m.external_problem("core", "A.kt", "retrofit2.Call")
+            m.external_problem(Some("core"), "A.kt", "retrofit2.Call")
                 .is_some()
         );
     }
@@ -981,25 +1113,37 @@ rules:
   ui: { may_use_external: [react, java.util] }
 ");
         assert!(
-            m.external_problem("domain", "x.ts", "moment/locale/ru")
+            m.external_problem(Some("domain"), "x.ts", "moment/locale/ru")
                 .is_some()
         );
         assert!(
-            m.external_problem("domain", "x.ts", "@acme/sdk/v2")
+            m.external_problem(Some("domain"), "x.ts", "@acme/sdk/v2")
                 .is_some()
         );
-        assert!(m.external_problem("domain", "x.ts", "lodash").is_none());
-        assert!(m.external_problem("ui", "x.ts", "react-dom").is_some());
         assert!(
-            m.external_problem("ui", "x.ts", "react/jsx-runtime")
+            m.external_problem(Some("domain"), "x.ts", "lodash")
                 .is_none()
         );
         assert!(
-            m.external_problem("ui", "X.java", "java.util.List")
+            m.external_problem(Some("ui"), "x.ts", "react-dom")
+                .is_some()
+        );
+        assert!(
+            m.external_problem(Some("ui"), "x.ts", "react/jsx-runtime")
                 .is_none()
         );
-        assert!(m.external_problem("ui", "X.java", "java.io.File").is_some());
-        assert!(m.external_problem("other", "x.ts", "anything").is_none());
+        assert!(
+            m.external_problem(Some("ui"), "X.java", "java.util.List")
+                .is_none()
+        );
+        assert!(
+            m.external_problem(Some("ui"), "X.java", "java.io.File")
+                .is_some()
+        );
+        assert!(
+            m.external_problem(Some("other"), "x.ts", "anything")
+                .is_none()
+        );
         assert_eq!(
             prefixes("src/lib.rs", "serde::de::Deserialize").collect::<Vec<_>>(),
             ["serde", "serde::de", "serde::de::Deserialize"]
@@ -1026,20 +1170,23 @@ rules:
   web: { forbid_external: [lodash, golang, java] }
 ");
         assert!(
-            m.external_problem("web", "web/a.ts", "lodash.debounce")
+            m.external_problem(Some("web"), "web/a.ts", "lodash.debounce")
                 .is_none()
         );
         assert!(
-            m.external_problem("web", "web/package.json", "lodash.debounce")
-                .is_none()
-        );
-        assert!(m.external_problem("web", "web/a.ts", "lodash/fp").is_some());
-        assert!(
-            m.external_problem("web", "web/a.go", "golang.org/x/sync")
+            m.external_problem(Some("web"), "web/package.json", "lodash.debounce")
                 .is_none()
         );
         assert!(
-            m.external_problem("web", "web/A.java", "java.util.List")
+            m.external_problem(Some("web"), "web/a.ts", "lodash/fp")
+                .is_some()
+        );
+        assert!(
+            m.external_problem(Some("web"), "web/a.go", "golang.org/x/sync")
+                .is_none()
+        );
+        assert!(
+            m.external_problem(Some("web"), "web/A.java", "java.util.List")
                 .is_some()
         );
         assert!(!ComponentMap::external_matches(

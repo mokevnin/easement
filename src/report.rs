@@ -725,7 +725,12 @@ pub fn key_description(k: &Key) -> String {
         RuleId::Metric => format!("{} exceeds {}", k.from, k.target),
         RuleId::Reach => format!("{} reaches {}", k.from, k.to),
         RuleId::Diagram => format!("{} -> {} is not in the diagram", k.from, k.to),
-        RuleId::External => format!("{}: {} -> external {}", k.file, k.from, k.target),
+        RuleId::External => format!(
+            "{}: {} -> external {}",
+            k.file,
+            crate::check::who(&k.from),
+            k.target
+        ),
         RuleId::Dependency | RuleId::Privacy => {
             format!("{}: {} -> {} ({})", k.file, k.from, k.to, k.target)
         }
@@ -1085,6 +1090,25 @@ const STALE: &str = "stale-baseline";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_external_module_of_a_file_of_no_component_is_described_as_unowned_files() {
+        let key = |from: &str| Key {
+            rule: RuleId::External,
+            file: "scripts/seed.ts".to_string(),
+            target: "dayjs".to_string(),
+            from: from.to_string(),
+            to: String::new(),
+        };
+        assert_eq!(
+            key_description(&key("")),
+            "scripts/seed.ts: unowned files -> external dayjs"
+        );
+        assert_eq!(
+            key_description(&key("web")),
+            "scripts/seed.ts: web -> external dayjs"
+        );
+    }
 
     #[test]
     fn a_graph_answer_passes_the_gaps_that_hide_dependencies() {

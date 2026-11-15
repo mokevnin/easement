@@ -68,7 +68,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `dependency` | a component imports one that its `may_depend_on` does not list |
 | `privacy` | a component imports a path of another component outside that component's `public` API |
 | `cycle` | components covered by `no_cycles` depend on each other in a cycle |
-| `external` | a component uses an external module its rule does not allow |
+| `external` | a component uses an external module its rule does not allow, or a file uses one the top-level `forbid_external` forbids it |
 | `metric` | a component exceeds `max_fan_out` or `max_instability` |
 | `orphan` | with `strict: true`, a checked file belongs to no component |
 | `isolation` | an instance of an `isolated` component imports another instance, or an import crosses slices of a named placeholder |
@@ -182,7 +182,7 @@ rules:
     may_depend_on: [usecase]
 ```
 
-A glob (`*`, `?`, `[ab]`, `{a,b}`) covers the components whose names match it; `'@drivers'` covers the components the set lists. A set lists component names and globs, never another set. They work in every list of components: `common`, the rows of `layers`, `no_cycles`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on`, `must_not_reach` and `must_depend_on`, `allow_importers`, the `importers` of a named surface, and the `allow` of a top-level `forbid_symbol` item. Quote them: YAML reads a bare `*` or `@` as something else. A component's own name wins: a list that writes `'@acme/core'` or `'web*'` names that component when one is so called. A leading `@` is otherwise always a set, so a glob over such names escapes it (`'[@]acme/*'`), and a set whose `@name` is also a component's name fails to load.
+A glob (`*`, `?`, `[ab]`, `{a,b}`) covers the components whose names match it; `'@drivers'` covers the components the set lists. A set lists component names and globs, never another set. They work in every list of components: `common`, the rows of `layers`, `no_cycles`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on`, `must_not_reach` and `must_depend_on`, `allow_importers`, the `importers` of a named surface, and the `allow` of a top-level `forbid_symbol` or `forbid_external` item. Quote them: YAML reads a bare `*` or `@` as something else. A component's own name wins: a list that writes `'@acme/core'` or `'web*'` names that component when one is so called. A leading `@` is otherwise always a set, so a glob over such names escapes it (`'[@]acme/*'`), and a set whose `@name` is also a component's name fails to load.
 
 They expand when the policy loads, so every rule judges the names as if they were written out: a new `ee-sso` component is let into `ee-licensekey` with no edit. An item keeps its `because` for every component it covers. A rule key that is a glob or a set gives its rule to each component it covers; a component that two keys cover (its own name and a glob, two globs, a set and its member) fails to load, naming both. In `layers`, a glob or a set in place of a name holds the siblings it covers; a closed layer must cover one component.
 
@@ -226,7 +226,7 @@ rules:
     because: core stays dependency-free   # printed for lodash
 ```
 
-`may_depend_on`, `must_not_reach`, `may_use_external`, `must_depend_on`, `must_use_external`, `requires_file`, `forbid_file`, `requires_directive` and `forbid_symbol` take the same items; an item of the top-level `forbid_symbol` may also take `allow` and `allow_in` (below). For the allow-lists the reason says why the dependency is allowed and is shown by `easement explain`.
+`may_depend_on`, `must_not_reach`, `may_use_external`, `must_depend_on`, `must_use_external`, `requires_file`, `forbid_file`, `requires_directive` and `forbid_symbol` take the same items; an item of the top-level `forbid_symbol` or `forbid_external` may also take `allow` and `allow_in` (below). For the allow-lists the reason says why the dependency is allowed and is shown by `easement explain`.
 
 Quote a reason that contains a comma or a colon.
 
@@ -268,6 +268,20 @@ rules:
 ```
 
 `forbid_external` lists modules the component must not use. `may_use_external` is an allow-list: everything else is a violation; without it any external module is fine. A pattern covers submodules, split where the importing file's language splits a module name (`/` in Go and TypeScript, `.` in Python, Java, Kotlin, C# and Swift, `::` in Rust and Ruby, `\` in PHP): `lodash` covers `lodash/fp` but not the package `lodash.debounce`, `@mantine/core` covers `@mantine/core/styles.css`, `java.util` covers `java.util.List`, `serde` covers `serde::Deserialize`. The standard library counts as external in Go, Python, Java and Rust, so an allow-list has to name it: `$std` stands for the standard library of the importing file's language, in `may_use_external` (`[$std, lodash]`) and in `forbid_external`. It knows Go (a package path without a domain), Python (`sys.stdlib_module_names`, and the modules removed since 3.8), Java (the JDK: `java`, `javax`, `jdk`, `sun`, `org.w3c`, …), Kotlin (`kotlin` and the JDK), Rust (`std`, `proc_macro`) and C# (`System`). PHP counts a class of no namespace as its own (`DateTime`, `PDO`), and Swift the modules of the toolchain and Apple's SDKs (`Foundation`, `SwiftUI`, …). In TypeScript and Ruby it matches nothing: Node's own modules never reach the rules as external modules, so an allow-list need not name them, and Ruby's core classes cannot be told from a gem's. When a rule with `$std` covers such files, the report says so as a `std_unknown` evidence gap. The reason of the matching item is printed with a violation, else the `because` of the rule.
+
+A top-level `forbid_external` of the same items applies to every checked file, components and the files that belong to no component alike, and matches a module as a component's own list does; a component's own `forbid_external` adds to it. A ban that holds across the project is written once instead of in every rule, so a component added later cannot be left without it. An item takes `allow`, the components that may use the module all the same, and `allow_in`, globs of files or directories (as `in` patterns) whose files may, whatever component owns them, as an item of the top-level `forbid_symbol` does (below):
+
+```yaml
+forbid_external:
+  - name: github.com/samber/do
+    allow: [wiring]
+    because: no domain module or handler sees the DI container
+  - name: dayjs
+    allow_in: [src/utils/datetime.ts]
+    because: dates go through src/utils/datetime.ts
+```
+
+Every other use is an `external` violation that names who may use the module and gives the item's reason (`web -> external dayjs is forbidden (only src/utils/datetime.ts may)`, `unowned files -> external …` for a file of no component), and its `provenance` points at the item. A grant lifts the top-level ban alone: the component's own `forbid_external` and `may_use_external` still apply. With `packages`, a manifest that declares a forbidden module fails as well, unless the grants cover the manifest (`allow_in: [web/package.json]`). A module the project never uses stays silent; an `allow_in` pattern that matches no file fails as `unmatched`. A component whose `may_use_external` lists a module that an item forbids it (the module or one inside it), with neither `allow` letting the component in nor an `allow_in` pattern reaching into its files or holding them, fails to load, naming both places: read alone, either line would mislead. The other load errors are those of the top-level `forbid_symbol`: `allow` and `allow_in` work only at the top level, an item must let someone in when it has either, `allow` names known components and none whose own `forbid_external` forbids the module, an `allow_in` pattern lies inside no such component, and a module listed twice where one item has a grant is ambiguous. `explain` on a path lists the items that bind it (`forbid_external` in `--format json`), each with what lets it use the module, if anything, and the `provenance` of that grant, and `review` judges an item by who may use the module, as it does a forbidden name. A policy example with `external:` is judged by the top-level list as by the rules.
 
 ### Required imports and files
 
@@ -497,7 +511,7 @@ examples:
 
 Each example is a proposed dependency, judged by every `check` as `easement propose` judges it, without any code that imports it: the paths need not exist, and only the path decides the component, instance and slice. `expect` is `allowed` or `rejected`; `rule` (`dependency`, `privacy`, `isolation`, or `external` for an `external` module) pins the rule that must reject it when the reason matters, and without it any rejection satisfies `rejected`. Examples say what the policy means, not how it is written, so the same policy restated with other grants keeps them passing.
 
-An example that gets another decision fails as `example` at its line in the file that writes it, with the decision the policy gives now and the example's `because`. A source or a target path that no component owns, `exclude` hiding it among the reasons, and a source `target_only` names cannot be judged, so the example fails rather than passing. Like `unmatched`, `example` is about the config: `--diff` and `--scope` keep it, the baseline never accepts it, it cannot be suppressed or listed in `warn`. `extends` joins the examples, so a shared base policy ships its own. Cycles, reach chains and symbols need a graph or symbol facts an example does not give, so examples are of single dependencies only.
+An example that gets another decision fails as `example` at its line in the file that writes it, with the decision the policy gives now and the example's `because`. A source or a target path that no component owns, `exclude` hiding it among the reasons, and a source `target_only` names cannot be judged, so the example fails rather than passing; a source no component owns is judged only on an `external` module the top-level `forbid_external` forbids it. Like `unmatched`, `example` is about the config: `--diff` and `--scope` keep it, the baseline never accepts it, it cannot be suppressed or listed in `warn`. `extends` joins the examples, so a shared base policy ships its own. Cycles, reach chains and symbols need a graph or symbol facts an example does not give, so examples are of single dependencies only.
 
 ### Warnings
 

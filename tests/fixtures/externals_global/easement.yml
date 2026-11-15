@@ -1,0 +1,24 @@
+version: 1
+
+# Only the wiring sees the DI container, and dates go through one file: every
+# other use is a violation, in a file of no component too.
+forbid_external:
+  - name: org.koin
+    allow: [wiring]
+    because: no domain module or handler sees the DI container
+  - name: org.threeten.bp
+    allow_in: [src/utils/Dates.kt]
+    because: dates go through src/utils/Dates.kt
+
+components:
+  wiring: { in: src/wiring }
+  domain: { in: src/domain }
+  web: { in: src/web }
+  utils: { in: src/utils }
+
+rules:
+  wiring: { may_depend_on: [domain, web, utils] }
+  domain:
+    may_depend_on: [utils]
+    forbid_external: [{ name: okhttp3, because: the domain makes no calls }]
+  web: { may_depend_on: [domain, utils] }

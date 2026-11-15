@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::Sides;
-use crate::config::{Component, Config, ForbiddenName, Listed, NoCycles, Rule};
+use crate::config::{Ban, Component, Config, ForbiddenName, Listed, NoCycles, Rule};
 use crate::diagram;
 use crate::policy::{Policy, Provenance, Site};
 
@@ -163,8 +163,8 @@ impl<'a> Items<'a> {
         Self::named(list.iter().map(|l| (l.name(), l.because())), reason)
     }
 
-    /// The names of a `forbid_symbol` list; who each `allow` lets in is
-    /// compared by [`Diff::allow`].
+    /// The items of a `forbid_symbol` or `forbid_external` list; who each
+    /// `allow` lets in is compared by [`Diff::allow`].
     fn forbidden(list: &'a [ForbiddenName], reason: Option<&'a str>) -> Self {
         Self::named(list.iter().map(|l| (l.name(), l.because())), reason)
     }
@@ -298,28 +298,29 @@ impl Diff<'_> {
         }
     }
 
-    /// The components that the `allow` of a top-level `forbid_symbol` item of
-    /// the head policy, or of the merge-base item of the same name, lets use
-    /// the name now and not then (loosened), or then and not now (tightened):
-    /// one entry each way. A component is judged on every list that forbids
-    /// the name, so one let in that its own rule used to forbid is listed
-    /// here, and one whose own rule still forbids it is not. Then the same for
-    /// the patterns of `allow_in`, told apart as written, of an item both
-    /// policies have: a new item is tightened as a whole.
-    fn allow(&mut self) {
+    /// The components that the `allow` of an item of the top-level list of
+    /// `ban` in the head policy, or of the merge-base item of the same name,
+    /// lets use it now and not then (loosened), or then and not now
+    /// (tightened): one entry each way. A component is judged on every list
+    /// that forbids it, so one let in that its own rule used to forbid is
+    /// listed here, and one whose own rule still forbids it is not. Then the
+    /// same for the patterns of `allow_in`, told apart as written, of an item
+    /// both policies have: a new item is tightened as a whole.
+    fn allow(&mut self, ban: Ban) {
         let (base, head) = (&self.sides.base.config, &self.sides.head.config);
+        let key = ban.key();
         let kept: Vec<&str> = self.sides.kept().collect();
-        for (index, item) in head.forbid_symbol.iter().enumerate() {
+        for (index, item) in head.top_bans(ban).iter().enumerate() {
             let name = item.name();
-            let old = base.forbid_symbol.iter().find(|old| old.name() == name);
+            let old = top_level_item(base, ban, name);
             let (mut let_in, mut shut_out) = (Vec::new(), Vec::new());
             for &component in &kept {
                 if !item.allows(component) && !old.is_some_and(|old| old.allows(component)) {
                     continue;
                 }
                 match (
-                    forbids(base, component, name),
-                    forbids(head, component, name),
+                    forbids(base, ban, component, name),
+                    forbids(head, ban, component, name),
                 ) {
                     (true, false) => let_in.push(component.to_string()),
                     (false, true) => shut_out.push(component.to_string()),
@@ -327,8 +328,8 @@ impl Diff<'_> {
                 }
             }
             let field = match item.allow() {
-                Some(_) => format!("forbid_symbol[{index}].allow"),
-                None => format!("forbid_symbol[{index}]"),
+                Some(_) => format!("{key}[{index}].allow"),
+                None => format!("{key}[{index}]"),
             };
             for (components, change) in [
                 (let_in, Direction::Loosened),
@@ -339,7 +340,7 @@ impl Diff<'_> {
                 }
                 self.changes.push(ConstraintChange {
                     component: None,
-                    key: "forbid_symbol",
+                    key,
                     item: Some(name.to_string()),
                     edit: None,
                     before: None,
@@ -351,21 +352,28 @@ impl Diff<'_> {
                     provenance: self
                         .sides
                         .head
-                        .provenance(&Site::in_key("forbid_symbol", field.clone())),
+                        .provenance(&Site::in_key(key, field.clone())),
                 });
             }
             if let Some(old) = old {
-                self.allow_in(index, item, old);
+                self.allow_in(key, index, item, old);
             }
         }
     }
 
-    /// The patterns that the `allow_in` of the top-level `forbid_symbol` item
-    /// at `index` of the head policy has and the merge-base item `old` of the
+    /// The patterns that the `allow_in` of the item at `index` of the top-level
+    /// list `key` in the head policy has and the merge-base item `old` of the
     /// same name lacks (loosened), and the other way (tightened): one entry
-    /// each way. A pattern matches the files of no component that forbids the
-    /// name on its own, or the policy fails, so the patterns alone tell.
-    fn allow_in(&mut self, index: usize, item: &ForbiddenName, old: &ForbiddenName) {
+    /// each way. The patterns alone tell: a pattern of `forbid_symbol` matches
+    /// the files of no component that forbids the name on its own, or the
+    /// policy fails.
+    fn allow_in(
+        &mut self,
+        key: &'static str,
+        index: usize,
+        item: &ForbiddenName,
+        old: &ForbiddenName,
+    ) {
         let (now, then) = (
             item.allow_in().unwrap_or_default(),
             old.allow_in().unwrap_or_default(),
@@ -381,8 +389,8 @@ impl Diff<'_> {
             lacking
         };
         let field = match item.allow_in() {
-            Some(_) => format!("forbid_symbol[{index}].allow_in"),
-            None => format!("forbid_symbol[{index}]"),
+            Some(_) => format!("{key}[{index}].allow_in"),
+            None => format!("{key}[{index}]"),
         };
         for (paths, change) in [
             (lacking(now, then), Direction::Loosened),
@@ -393,7 +401,7 @@ impl Diff<'_> {
             }
             self.changes.push(ConstraintChange {
                 component: None,
-                key: "forbid_symbol",
+                key,
                 item: Some(item.name().to_string()),
                 edit: None,
                 before: None,
@@ -405,7 +413,7 @@ impl Diff<'_> {
                 provenance: self
                     .sides
                     .head
-                    .provenance(&Site::in_key("forbid_symbol", field.clone())),
+                    .provenance(&Site::in_key(key, field.clone())),
             });
         }
     }
@@ -524,7 +532,8 @@ impl Diff<'_> {
             packages: _,
             // The policy examples section.
             examples: _,
-            forbid_symbol,
+            forbid_symbol: _,
+            forbid_external: _,
             no_cycles,
             strict,
             unowned,
@@ -533,14 +542,16 @@ impl Diff<'_> {
             manifests,
         } = head;
         let none = (None, None);
-        self.items(
-            At::Top,
-            "forbid_symbol",
-            &Items::forbidden(&base.forbid_symbol, None),
-            &Items::forbidden(forbid_symbol, None),
-            Direction::Tightened,
-        );
-        self.allow();
+        for ban in Ban::ALL {
+            self.items(
+                At::Top,
+                ban.key(),
+                &Items::forbidden(base.top_bans(ban), None),
+                &Items::forbidden(head.top_bans(ban), None),
+                Direction::Tightened,
+            );
+            self.allow(ban);
+        }
         self.no_cycles(&base.no_cycles, no_cycles);
         self.flag(
             At::Top,
@@ -696,29 +707,33 @@ impl Diff<'_> {
         // top level forbids the component, or lets it use through `allow`, is
         // judged there, so an item that only moves between the two is none.
         let (base, head) = (&self.sides.base.config, &self.sides.head.config);
-        self.items_that(
-            at,
-            "forbid_symbol",
-            &Items::forbidden(&then.forbid_symbol, reasons.0),
-            &Items::forbidden(forbid_symbol, reasons.1),
-            Direction::Tightened,
-            |symbol, edit| {
-                let at_top = |config| top_level_item(config, symbol);
-                match edit {
-                    Edit::Added => {
-                        !forbids(base, name, symbol)
-                            && !at_top(head).is_some_and(|item| !item.allows(name))
+        for (ban, before, after) in [
+            (Ban::Symbol, &then.forbid_symbol, forbid_symbol),
+            (Ban::External, &then.forbid_external, forbid_external),
+        ] {
+            self.items_that(
+                at,
+                ban.key(),
+                &Items::forbidden(before, reasons.0),
+                &Items::forbidden(after, reasons.1),
+                Direction::Tightened,
+                |forbidden, edit| {
+                    let at_top = |config| top_level_item(config, ban, forbidden);
+                    match edit {
+                        Edit::Added => {
+                            !forbids(base, ban, name, forbidden)
+                                && !at_top(head).is_some_and(|item| !item.allows(name))
+                        }
+                        Edit::Removed => {
+                            !forbids(head, ban, name, forbidden)
+                                && !at_top(base).is_some_and(|item| !item.allows(name))
+                                && !at_top(head).is_some_and(|item| item.allows(name))
+                        }
                     }
-                    Edit::Removed => {
-                        !forbids(head, name, symbol)
-                            && !at_top(base).is_some_and(|item| !item.allows(name))
-                            && !at_top(head).is_some_and(|item| item.allows(name))
-                    }
-                }
-            },
-        );
+                },
+            );
+        }
         for (key, before, after) in [
-            ("forbid_external", &then.forbid_external, forbid_external),
             ("forbid_file", &then.forbid_file, forbid_file),
             ("must_depend_on", &then.must_depend_on, must_depend_on),
             (
@@ -883,23 +898,23 @@ fn shown(value: Option<&Value>) -> String {
     }
 }
 
-/// Whether `config` forbids `component` the name spelled `name`: its own rule
-/// lists it, or a top-level item does and leaves the component out of `allow`.
-/// A name spelled otherwise is another item, even when it names the same
-/// symbol, so a respelling stays listed both ways.
-fn forbids(config: &Config, component: &str, name: &str) -> bool {
+/// Whether `config` forbids `component` the name or module spelled `name` in
+/// the lists of `ban`: its own rule lists it, or a top-level item does and
+/// leaves the component out of `allow`. One spelled otherwise is another item,
+/// even when it names the same, so a respelling stays listed both ways.
+fn forbids(config: &Config, ban: Ban, component: &str, name: &str) -> bool {
     config
         .rules
         .get(component)
-        .is_some_and(|rule| rule.forbid_symbol.iter().any(|own| own.name() == name))
-        || top_level_item(config, name).is_some_and(|item| !item.allows(component))
+        .is_some_and(|rule| rule.own_bans(ban).iter().any(|own| own.name() == name))
+        || top_level_item(config, ban, name).is_some_and(|item| !item.allows(component))
 }
 
-/// The top-level `forbid_symbol` item spelled `name`. Two items of one
+/// The item of the top-level list of `ban` spelled `name`. Two items of one
 /// spelling forbid alike: the policy refuses a second one when either has
 /// `allow`.
-fn top_level_item<'a>(config: &'a Config, name: &str) -> Option<&'a ForbiddenName> {
-    config.forbid_symbol.iter().find(|item| item.name() == name)
+fn top_level_item<'a>(config: &'a Config, ban: Ban, name: &str) -> Option<&'a ForbiddenName> {
+    config.top_bans(ban).iter().find(|item| item.name() == name)
 }
 
 /// Where an arrow is drawn: the diagram of `policy`, under `diagram`.
@@ -1146,6 +1161,83 @@ components:
                 "web.forbid_symbol: os.Getenv (Loosened)",
             ]
         );
+    }
+
+    /// `github.com/samber/do` forbidden to every component but `wiring`, in
+    /// each rule or by one top-level item.
+    const DI_RULES: &str = "rules:\n  app: { forbid_external: [github.com/samber/do] }\n  web: { forbid_external: [github.com/samber/do] }\n";
+
+    fn di_at_top_level(grants: &str) -> String {
+        format!(
+            "{RUN}forbid_external:\n  - {{ name: github.com/samber/do{grants}, because: no one sees the container }}\n"
+        )
+    }
+
+    #[test]
+    fn forbidden_modules_moved_from_the_rules_into_one_top_level_item_are_that_item_alone() {
+        let found = compare(
+            &format!("{RUN}{DI_RULES}"),
+            &di_at_top_level(", allow: [wiring]"),
+            changes,
+        );
+        // Files of no component may not use it now; `app` and `web` still may not.
+        assert_eq!(
+            said(&found),
+            ["forbid_external: github.com/samber/do (Tightened)"]
+        );
+        assert_eq!(found[0].edit, Some(Edit::Added));
+        assert_eq!(found[0].provenance.field, "forbid_external[0]");
+        // And back: the item alone again.
+        assert_eq!(
+            said(&compare(
+                &di_at_top_level(", allow: [wiring]"),
+                &format!("{RUN}{DI_RULES}"),
+                changes
+            )),
+            ["forbid_external: github.com/samber/do (Loosened)"]
+        );
+        // An item a top-level item already forbids is no change.
+        let both = format!("{}{DI_RULES}", di_at_top_level(""));
+        assert!(compare(&di_at_top_level(""), &both, changes).is_empty());
+    }
+
+    #[test]
+    fn a_component_or_a_path_let_into_a_forbidden_module_loosens_and_one_left_out_tightens() {
+        let wiring = di_at_top_level(", allow: [wiring]");
+        let found = compare(&wiring, &di_at_top_level(", allow: [wiring, web]"), changes);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].components, ["web"]);
+        assert_eq!(found[0].provenance.field, "forbid_external[0].allow");
+        assert_eq!(
+            found[0].line(),
+            "forbid_external: `github.com/samber/do` may now be used by `web` (loosened)"
+        );
+        let paths = compare(
+            &di_at_top_level(", allow: [wiring], allow_in: [app/boot.go]"),
+            &di_at_top_level(", allow: [wiring], allow_in: [app/main.go]"),
+            changes,
+        );
+        let lines: Vec<String> = paths.iter().map(ConstraintChange::line).collect();
+        assert_eq!(
+            lines,
+            [
+                "forbid_external: `github.com/samber/do` may now be used in `app/main.go` (loosened)",
+                "forbid_external: `github.com/samber/do` may no longer be used in `app/boot.go` (tightened)",
+            ]
+        );
+        assert_eq!(paths[0].provenance.field, "forbid_external[0].allow_in");
+        assert_eq!(
+            paths[0].because.as_deref(),
+            Some("no one sees the container")
+        );
+        // A component let in as its own item goes: one loosening.
+        let own = format!("{wiring}rules:\n  web: {{ forbid_external: [github.com/samber/do] }}\n");
+        let found = compare(&own, &di_at_top_level(", allow: [wiring, web]"), changes);
+        assert_eq!(
+            said(&found),
+            ["forbid_external: github.com/samber/do (Loosened)"]
+        );
+        assert_eq!(found[0].components, ["web"]);
     }
 
     #[test]

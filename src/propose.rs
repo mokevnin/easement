@@ -305,7 +305,10 @@ pub fn judge(config: &Config, map: &ComponentMap, proposals: &[Proposal]) -> Vec
                 _ => (Vec::new(), Vec::new()),
             };
             Judged {
-                component: Some(decision.from.to_string()),
+                // A file of no component is judged by the top-level `forbid_external` alone.
+                component: Some(decision.from)
+                    .filter(|from| !from.is_empty())
+                    .map(str::to_string),
                 target_component: decision.to.map(str::to_string),
                 decision: if decision.grant.is_ok() {
                     Kind::Allowed

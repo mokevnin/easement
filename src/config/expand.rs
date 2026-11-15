@@ -51,7 +51,7 @@ pub struct Expansion {
     /// By component, the key of `rules` that covers it, when that key is a glob or a set.
     rule_keys: BTreeMap<String, String>,
     /// By expanded list (`rules.web.may_depend_on`, `components.db.allow_importers`,
-    /// `common`, `no_cycles`, `forbid_symbol[0].allow`,
+    /// `common`, `no_cycles`, `forbid_symbol[0].allow`, `forbid_external[0].allow`,
     /// `components.db.surfaces.admin.importers`), where each of its names is written;
     /// under `layers`, the index is the row.
     lists: BTreeMap<String, WrittenNames>,
@@ -132,14 +132,18 @@ impl Config {
                     expander.names(&at, &at.join("."), std::mem::take(&mut declared.importers))?;
             }
         }
-        for (i, listed) in self.forbid_symbol.iter_mut().enumerate() {
-            if let ForbiddenName::Detailed(item) = listed
-                && let Some(allow) = item.allow.take()
-            {
-                let index = i.to_string();
-                let at = ["forbid_symbol", &index, "allow"];
-                item.allow =
-                    Some(expander.names(&at, &format!("forbid_symbol[{i}].allow"), allow)?);
+        for (key, list) in [
+            ("forbid_symbol", &mut self.forbid_symbol),
+            ("forbid_external", &mut self.forbid_external),
+        ] {
+            for (i, listed) in list.iter_mut().enumerate() {
+                if let ForbiddenName::Detailed(item) = listed
+                    && let Some(allow) = item.allow.take()
+                {
+                    let index = i.to_string();
+                    let at = [key, &index, "allow"];
+                    item.allow = Some(expander.names(&at, &format!("{key}[{i}].allow"), allow)?);
+                }
             }
         }
         self.expansion = expander.finish();
