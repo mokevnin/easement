@@ -74,6 +74,10 @@ _Avoid_: resolved module (a module reference that leads nowhere resolves nothing
 An import a file writes that the index takes to no source target and whose text names none either: its dependency is not in the graph, so it is an evidence gap, one for each cause.
 _Avoid_: missing import, broken import (the code may build)
 
+**Implementation**:
+A type's declared relation to a type it implements or extends, directly or through its ancestors. It is no dependency: the relation holds whether or not the code writes the supertype's name.
+_Avoid_: inheritance edge, subtype dependency, structural match (a Go type that satisfies an interface declares nothing)
+
 **Symbol use**:
 Any reference from a file to a name defined elsewhere, members included, whether the code writes the type or the type is inferred or inherited.
 _Avoid_: dependency (a dependency is only what the code writes)
