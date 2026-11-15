@@ -209,18 +209,20 @@ pub fn permissions(sides: &Sides) -> Vec<PermissionChange> {
             if now.rejected() != then_permitted {
                 continue;
             }
-            let (change, clause, because) = if now.rejected() {
-                let (clause, because) = rejection(head, &now, to);
-                (Change::Rejected, clause, because)
-            } else {
-                let grant = now.grant.as_ref().expect("a permitted pair has a grant");
-                // A plain `may_depend_on` item gives the reason of its rule;
-                // the rule of the source says nothing of `common` or `layers`.
-                let because = match grant {
-                    Grant::MayDependOn => now.because.or_else(|| head.reason(from)),
-                    _ => now.because,
-                };
-                (Change::Permitted, grant.as_str().to_string(), because)
+            let (change, clause, because) = match &now.grant {
+                Ok(grant) if now.importers.is_none() => {
+                    // A plain `may_depend_on` item gives the reason of its rule;
+                    // the rule of the source says nothing of `common` or `layers`.
+                    let because = match grant {
+                        Grant::MayDependOn => now.because.or_else(|| head.reason(from)),
+                        _ => now.because,
+                    };
+                    (Change::Permitted, grant.as_str().to_string(), because)
+                }
+                _ => {
+                    let (clause, because) = rejection(head, &now, to);
+                    (Change::Rejected, clause, because)
+                }
             };
             changes.push(PermissionChange {
                 from: from.clone(),

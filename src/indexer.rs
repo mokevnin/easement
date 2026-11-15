@@ -628,37 +628,40 @@ fn in_parallel<T: Sync, R: Send, E: Send>(
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next = AtomicUsize::new(0);
     let failed_at = AtomicUsize::new(usize::MAX);
-    let slots: Vec<std::sync::Mutex<Option<Result<R, E>>>> =
-        groups.iter().map(|_| std::sync::Mutex::new(None)).collect();
-    std::thread::scope(|scope| {
-        for _ in 0..at_most.min(groups.len()) {
-            scope.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, Ordering::SeqCst);
-                    let Some(group) = groups.get(i) else { break };
-                    if i > failed_at.load(Ordering::SeqCst) {
-                        continue;
+    let mut done: Vec<(usize, Result<R, E>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..at_most.min(groups.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::SeqCst);
+                        let Some(group) = groups.get(i) else { break };
+                        if i > failed_at.load(Ordering::SeqCst) {
+                            continue;
+                        }
+                        let result = job(group);
+                        if result.is_err() {
+                            failed_at.fetch_min(i, Ordering::SeqCst);
+                        }
+                        done.push((i, result));
                     }
-                    let result = job(group);
-                    if result.is_err() {
-                        failed_at.fetch_min(i, Ordering::SeqCst);
-                    }
-                    // No job runs while a slot is locked, so a lock is never poisoned.
-                    *slots[i].lock().expect("a slot is never poisoned") = Some(result);
-                }
-            });
-        }
+                    done
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
     });
-    let mut results = Vec::with_capacity(groups.len());
-    for slot in slots {
-        // A group is skipped only behind a failure, which this loop returns first.
-        match slot.into_inner().expect("a slot is never poisoned") {
-            Some(Ok(result)) => results.push(result),
-            Some(Err(failure)) => return Err(failure),
-            None => unreachable!("a group was skipped, but no group before it failed"),
-        }
-    }
-    Ok(results)
+    // Every group before the first failure ran: a group is skipped only behind
+    // one, so in order the results meet that failure before any gap.
+    done.sort_unstable_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, result)| result).collect()
 }
 
 /// Where indexes are kept between runs by default: `EASEMENT_CACHE_DIR` of

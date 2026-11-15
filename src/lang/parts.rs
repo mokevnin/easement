@@ -59,7 +59,7 @@ pub fn rust(path: &str, source: &str) -> Found {
     // The bytes of the test items, `spans` as the code they cover.
     let mut test_code: Vec<RangeInclusive<usize>> = Vec::new();
     for attribute in ATTRIBUTE.captures_iter(text) {
-        let whole = attribute.get(0).expect("the whole match");
+        let whole = attribute.get_match();
         let Some((content, attribute_end)) = cfg_attribute(text, whole.end()) else {
             continue;
         };

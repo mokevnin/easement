@@ -773,7 +773,7 @@ impl Report<'_> {
             .into_iter()
             .map(|(level, text, files)| {
                 sarif::Notification::builder()
-                    .level(serde_json::to_value(level).expect("a level serializes"))
+                    .level(serde_json::Value::from(level.to_string()))
                     .message(sarif_message(text))
                     .locations(
                         files
