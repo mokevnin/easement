@@ -382,11 +382,14 @@ pub fn surfaces(sides: &Sides, files: &[String]) -> Vec<SurfaceChange> {
             now.allow_importers.clone(),
         ) {
             // Importers admitted now reach the surface of today; importers
-            // turned away lose the surface they had.
-            if !importers.added.is_empty() || importers.after.is_none() {
+            // turned away lose the surface they had. No list admits every
+            // component: a first list only turns some away, and dropping the
+            // list only lets them back in.
+            let both = importers.before.is_some() && importers.after.is_some();
+            if importers.after.is_none() || (both && !importers.added.is_empty()) {
                 importers.opens = pick(|_, now| now);
             }
-            if !importers.removed.is_empty() || importers.before.is_none() {
+            if importers.before.is_none() || (both && !importers.removed.is_empty()) {
                 importers.closes = pick(|then, _| then);
             }
             changes.push(importers);
@@ -1161,6 +1164,23 @@ components:
                 "set to none (was unset: any component the rules allow)"
             );
         });
+    }
+
+    /// No list admits every component: a first list only turns some away, and
+    /// dropping the list only lets them back in.
+    #[test]
+    fn an_importer_list_set_or_dropped_moves_the_surface_one_way() {
+        let unset = format!("{TWO}common: [db]\n");
+        let listed = unset.replace("db: { in: db }", "db: { in: db, allow_importers: [web] }");
+        let files = ["db/pool.ts", "web/page.ts"].map(str::to_string);
+        let set = compare(&unset, &listed, |s| surfaces(s, &files));
+        assert_eq!(set.len(), 1);
+        assert!(set[0].opens.is_empty(), "{:?}", set[0].opens);
+        assert_eq!(set[0].closes, ["db/pool.ts"]);
+        let dropped = compare(&listed, &unset, |s| surfaces(s, &files));
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].opens, ["db/pool.ts"]);
+        assert!(dropped[0].closes.is_empty(), "{:?}", dropped[0].closes);
     }
 
     #[test]
