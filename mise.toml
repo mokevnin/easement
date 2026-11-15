@@ -146,3 +146,20 @@ run = "hk check --all"
 [tasks.fix]
 description = "Apply the automatic fixes"
 run = "hk fix --all"
+
+# Mutation tests of the lines changed since origin/main, committed or not: cargo-mutants changes
+# the code (a condition flipped, a body replaced) and runs the tests, and a mutant they do not
+# catch is code no test pins. Slow, so not part of `check`: an unmutated run of the tests first,
+# then a build per mutant and the tests again, which stop at the first failure for a caught
+# mutant and run in full for a missed one. The missed ones are listed in
+# target/mutants.out/missed.txt. Its own tool, so the CI jobs do not build it.
+[tasks.mutants]
+description = "Mutation-test the lines changed since origin/main; a missed mutant is code no test pins"
+tools = { "cargo:cargo-mutants" = "27.1.0" }
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p target
+git diff "$(git merge-base origin/main HEAD)" > target/mutants.diff
+cargo mutants --in-diff target/mutants.diff --output target
+"""
