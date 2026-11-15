@@ -339,3 +339,23 @@ fn suggest_patch_leaves_globs_and_sets_to_remove_by_hand() {
         ]
     );
 }
+
+/// Writing a policy out as globs and sets changes who is allowed nothing, so a
+/// review of that change lists no permission, surface or constraint: it compares
+/// the expanded lists, whatever their order.
+#[test]
+fn review_of_a_policy_respelled_as_globs_and_sets_lists_no_change() {
+    let written_out = WRITTEN_OUT.replace(
+        "allow_importers: [wiring, ee-licensekey, ee-sso]",
+        "allow_importers: [ee-sso, wiring, ee-licensekey]",
+    );
+    let (_tmp, root) = drivers(&written_out);
+    commit_all(&root);
+    git(&root, &["checkout", "-q", "-b", "feature"]);
+    fs::write(config(&root), SPELLED).unwrap();
+    let review = commands::review(&config(&root), "main", &mut cache()).unwrap();
+    let report = crate::run::parse(&review.json());
+    for section in ["permissions", "surfaces", "constraints"] {
+        assert_eq!(report[section], json!([]), "{section}: {report:#}");
+    }
+}

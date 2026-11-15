@@ -30,6 +30,7 @@ pub fn is_pattern(name: &str) -> bool {
     name.starts_with('@') || is_glob(name)
 }
 
+/// Whether `name` holds a character that makes it a glob.
 fn is_glob(name: &str) -> bool {
     name.contains(['*', '?', '[', '{'])
 }
@@ -83,6 +84,7 @@ pub struct Unmatched {
     pub item: String,
     /// Whether `item` is a key of the mapping at `path`, not an item of the list there.
     pub is_key: bool,
+    /// What the violation says.
     pub message: String,
 }
 
@@ -143,17 +145,28 @@ impl Config {
 /// The state of one expansion: the components and sets of the config, which sets
 /// something names, and what has expanded so far.
 struct Expander {
+    /// The names of the components, in order.
     components: Vec<String>,
     /// The components each set covers, by name.
     sets: BTreeMap<String, Vec<String>>,
+    /// The sets some list or rule key names so far.
     named_sets: BTreeSet<String>,
     expansion: Expansion,
 }
 
 /// The item of a list that names one component, with the item it was written as.
 struct Expanded<T> {
+    /// The item made for the component.
     item: T,
+    /// The component it names.
     name: String,
+}
+
+/// A rule with its lists of components expanded.
+struct ExpandedRule {
+    rule: Rule,
+    /// Where each list of components (`may_depend_on`) writes each of its names.
+    written: BTreeMap<&'static str, WrittenNames>,
 }
 
 impl Expander {
@@ -203,15 +216,7 @@ impl Expander {
     /// The components `glob` matches, in the order of their names; one that matches
     /// none is unmatched at its item of the list at `path`, written in `place`.
     fn glob(&mut self, glob: &str, path: &[&str], place: &str) -> Result<Vec<String>> {
-        let matcher = globset::Glob::new(glob)
-            .with_context(|| format!("bad glob `{glob}` in {place}"))?
-            .compile_matcher();
-        let found: Vec<String> = self
-            .components
-            .iter()
-            .filter(|c| matcher.is_match(c.as_str()))
-            .cloned()
-            .collect();
+        let found = self.matching(glob, place)?;
         if found.is_empty() {
             self.unmatched(
                 path,
@@ -223,6 +228,7 @@ impl Expander {
         Ok(found)
     }
 
+    /// Keeps `item`, written at `path`, to fail as `unmatched` with `message`.
     fn unmatched(&mut self, path: &[&str], item: &str, is_key: bool, message: String) {
         let unmatched = Unmatched {
             path: path.iter().map(|k| k.to_string()).collect(),
@@ -309,7 +315,7 @@ impl Expander {
             let members = match Spelled::of(&key) {
                 Spelled::Component(_) => vec![key.clone()],
                 Spelled::Glob(glob) => {
-                    let found = self.glob_quietly(glob, &place)?;
+                    let found = self.matching(glob, &place)?;
                     if found.is_empty() {
                         self.unmatched(
                             &["rules"],
@@ -324,7 +330,7 @@ impl Expander {
                 }
                 Spelled::Set(_) => self.members(&key, &["rules"], "the keys of rules")?,
             };
-            let rule = self.rule(&key, rule)?;
+            let ExpandedRule { rule, written } = self.rule(&key, rule)?;
             for member in members {
                 if let Some((other, _)) = by_component.get(&member) {
                     bail!(
@@ -336,14 +342,12 @@ impl Expander {
                 if member != key {
                     self.expansion.rule_keys.insert(member.clone(), key.clone());
                 }
-                for field in ["may_depend_on", "must_not_depend_on", "must_not_reach"] {
-                    if let Some(written) = rule.1.get(field) {
-                        self.expansion
-                            .lists
-                            .insert(format!("rules.{member}.{field}"), written.clone());
-                    }
+                for (field, names) in &written {
+                    self.expansion
+                        .lists
+                        .insert(format!("rules.{member}.{field}"), names.clone());
                 }
-                by_component.insert(member, (key.clone(), rule.0.clone()));
+                by_component.insert(member, (key.clone(), rule.clone()));
             }
         }
         Ok(by_component
@@ -352,8 +356,9 @@ impl Expander {
             .collect())
     }
 
-    /// The components `glob` matches, leaving to the caller what to say when none does.
-    fn glob_quietly(&mut self, glob: &str, place: &str) -> Result<Vec<String>> {
+    /// The components `glob`, written in `place`, matches, in the order of their
+    /// names; the caller says what one that matches none means.
+    fn matching(&self, glob: &str, place: &str) -> Result<Vec<String>> {
         let matcher = globset::Glob::new(glob)
             .with_context(|| format!("bad glob `{glob}` in {place}"))?
             .compile_matcher();
@@ -367,11 +372,7 @@ impl Expander {
 
     /// The rule under `key` with its lists of components expanded, and where each list
     /// writes each name.
-    fn rule(
-        &mut self,
-        key: &str,
-        mut rule: Rule,
-    ) -> Result<(Rule, BTreeMap<&'static str, WrittenNames>)> {
+    fn rule(&mut self, key: &str, mut rule: Rule) -> Result<ExpandedRule> {
         let mut written = BTreeMap::new();
         for (field, list) in [
             ("may_depend_on", &mut rule.may_depend_on),
@@ -396,7 +397,7 @@ impl Expander {
             *list = items;
             written.insert(field, names);
         }
-        Ok((rule, written))
+        Ok(ExpandedRule { rule, written })
     }
 
     /// The layers with each glob or set replaced by the components it covers: a row

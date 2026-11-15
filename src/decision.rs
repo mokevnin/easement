@@ -473,7 +473,7 @@ pub fn grant_site(config: &Config, from: &str, to: &str, grant: Grant) -> Option
     match grant {
         Grant::SameComponent => None,
         Grant::Tests => Some(Site::of_key("tests")),
-        Grant::MayDependOn => listed_site(config, from, "may_depend_on", to),
+        Grant::MayDependOn => Site::of_rule_item(config, from, "may_depend_on", to),
         Grant::Common => Site::of_common(config, to),
         Grant::Layers => Some(Site::of_key("layers")),
     }
@@ -484,16 +484,15 @@ pub fn grant_site(config: &Config, from: &str, to: &str, grant: Grant) -> Option
 /// grants it.
 pub fn refusal_site(config: &Config, from: &str, to: &str, refusal: &Refusal) -> Option<Site> {
     match refusal {
-        Refusal::Prohibited { reach: true } => listed_site(config, from, "must_not_reach", to),
-        Refusal::Prohibited { reach: false } => listed_site(config, from, "must_not_depend_on", to),
+        Refusal::Prohibited { reach: true } => {
+            Site::of_rule_item(config, from, "must_not_reach", to)
+        }
+        Refusal::Prohibited { reach: false } => {
+            Site::of_rule_item(config, from, "must_not_depend_on", to)
+        }
         Refusal::NotGranted { layers: Some(_) } => Some(Site::of_key("layers")),
         Refusal::NotGranted { layers: None } => None,
     }
-}
-
-/// The item that names `to` in the list `field` of the rule of `from`.
-fn listed_site(config: &Config, from: &str, field: &str, to: &str) -> Option<Site> {
-    Site::of_rule_item(config, from, field, to)
 }
 
 impl Decision<'_> {

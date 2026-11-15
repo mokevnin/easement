@@ -214,12 +214,7 @@ pub fn permissions(sides: &Sides) -> Vec<PermissionChange> {
             if now.rejected() != then_permitted {
                 continue;
             }
-            let site = match &now.grant {
-                Err(refusal) => decision::refusal_site(head, from, to, refusal),
-                Ok(_) if now.importers.is_some() => None,
-                Ok(grant) => decision::grant_site(head, from, to, *grant),
-            };
-            let (change, clause, because) = match &now.grant {
+            let (site, change, clause, because) = match &now.grant {
                 Ok(grant) if now.importers.is_none() => {
                     // A plain `may_depend_on` item gives the reason of its rule;
                     // the rule of the source says nothing of `common` or `layers`.
@@ -227,11 +222,16 @@ pub fn permissions(sides: &Sides) -> Vec<PermissionChange> {
                         Grant::MayDependOn => now.because.or_else(|| head.reason(from)),
                         _ => now.because,
                     };
-                    (Change::Permitted, grant.as_str().to_string(), because)
+                    let site = decision::grant_site(head, from, to, *grant);
+                    (site, Change::Permitted, grant.as_str().to_string(), because)
                 }
-                _ => {
+                grant => {
+                    let site = match grant {
+                        Err(refusal) => decision::refusal_site(head, from, to, refusal),
+                        Ok(_) => None,
+                    };
                     let (clause, because) = rejection(head, &now, to);
-                    (Change::Rejected, clause, because)
+                    (site, Change::Rejected, clause, because)
                 }
             };
             changes.push(PermissionChange {
@@ -395,11 +395,18 @@ pub fn surfaces(sides: &Sides, files: &[String]) -> Vec<SurfaceChange> {
             public.closes = pick(|then, now| then && !now);
             changes.push(public);
         }
-        if let Some(mut importers) = change(
-            SurfaceKey::AllowImporters,
-            then.allow_importers.clone(),
-            now.allow_importers.clone(),
-        ) {
+        // Who is let in, not how the list is spelled: a glob expands in the order of
+        // the names, so the same importers in another order are no change.
+        if let Some(mut importers) = (importers_of(then) != importers_of(now))
+            .then(|| {
+                change(
+                    SurfaceKey::AllowImporters,
+                    then.allow_importers.clone(),
+                    now.allow_importers.clone(),
+                )
+            })
+            .flatten()
+        {
             // Importers admitted now reach the surface of today; importers
             // turned away lose the surface they had. No list admits every
             // component: a first list only turns some away, and dropping the
@@ -448,6 +455,14 @@ pub fn surfaces(sides: &Sides, files: &[String]) -> Vec<SurfaceChange> {
         }
     }
     changes
+}
+
+/// The importers `allow_importers` lets in, in no order; none when it is unset.
+fn importers_of(component: &crate::config::Component) -> Option<BTreeSet<&str>> {
+    component
+        .allow_importers
+        .as_ref()
+        .map(|list| list.iter().map(String::as_str).collect())
 }
 
 /// The named surfaces of a component as a review lists them, one per name:

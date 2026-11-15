@@ -318,7 +318,8 @@ pub struct ForbiddenNameItem {
     #[serde(default)]
     because: Option<String>,
     /// Only in the top-level `forbid_symbol`: the components that may use the name. Every
-    /// other use is a violation, in the component that defines the name too. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
+    /// other use is a violation, in the component that defines the name too. An item may
+    /// be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     allow: Option<Vec<String>>,
     /// Only in the top-level `forbid_symbol`: globs of the paths whose files may use the
@@ -462,7 +463,8 @@ pub struct Component {
     /// evidence gap instead.
     #[serde(default)]
     pub public_symbols: Option<Vec<String>>,
-    /// When set, only these components (and the component itself) may import it. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
+    /// When set, only these components (and the component itself) may import it. An item
+    /// may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     pub allow_importers: Option<Vec<String>>,
     /// Named surfaces: paths of the component open only to the components each lists. With
@@ -509,7 +511,8 @@ pub struct Surface {
     #[serde(rename = "in")]
     pub patterns: Patterns,
     /// The components that may import these paths; each must be in `allow_importers` when the
-    /// component has one. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
+    /// component has one. An item may be a glob over component names (`'api-*'`) or a set
+    /// (`'@drivers'`).
     #[schemars(length(min = 1))]
     pub importers: Vec<String>,
     /// Why the surface exists; shown with its violations.
