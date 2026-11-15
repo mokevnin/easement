@@ -6,21 +6,14 @@ use super::*;
 
 impl Config {
     /// Rejects what is wrong in a list as written, before its globs and sets expand: a
-    /// list that lets no one in, a row of siblings with one name, and a component whose
-    /// name reads as a glob or a set.
+    /// list that lets no one in, and a row of siblings with one name.
     pub(super) fn check_written(&self) -> Result<()> {
-        for name in self.components.keys() {
-            if is_pattern(name) {
-                bail!(
-                    "component `{name}` has a name that reads as a glob or a set (`*?[{{` or a leading `@`), which lists of components use to name several; rename it"
-                );
-            }
-        }
+        // A glob or a set alone may name several.
+        let one = |n: &String| self.components.contains_key(n) || !is_pattern(n);
         if let Some(Layer::Siblings(names)) = self
             .layers
             .iter()
-            // A glob or a set alone may name several.
-            .find(|l| matches!(l, Layer::Siblings(n) if n.len() < 2 && !n.iter().any(|n| is_pattern(n))))
+            .find(|l| matches!(l, Layer::Siblings(n) if n.len() < 2 && n.iter().all(one)))
         {
             bail!(
                 "layers: `{names:?}` lists fewer than two siblings; write a lone layer as its name"
@@ -80,12 +73,6 @@ impl Config {
         crate::lang::registry::check_settings(&self.indexers).map_err(anyhow::Error::msg)?;
         let known: BTreeSet<&str> = self.components.keys().map(String::as_str).collect();
         let check = |name: &str, place: &str| -> Result<()> {
-            // Every list that takes a glob or a set has expanded it by now.
-            if is_pattern(name) {
-                bail!(
-                    "`{name}` in {place}: a glob or a set of components works only in `common`, `layers`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on` and `must_not_reach`, `allow_importers`, the `importers` of a surface and the `allow` of a top-level `forbid_symbol` item"
-                );
-            }
             if !known.contains(name) {
                 return Err(unknown_component(
                     name,

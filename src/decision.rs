@@ -475,7 +475,7 @@ pub fn grant_site(config: &Config, from: &str, to: &str, grant: Grant) -> Option
         Grant::Tests => Some(Site::of_key("tests")),
         Grant::MayDependOn => Site::of_rule_item(config, from, "may_depend_on", to),
         Grant::Common => Site::of_common(config, to),
-        Grant::Layers => Some(Site::of_key("layers")),
+        Grant::Layers => Some(Site::of_layers(config, from, to)),
     }
 }
 
@@ -490,7 +490,7 @@ pub fn refusal_site(config: &Config, from: &str, to: &str, refusal: &Refusal) ->
         Refusal::Prohibited { reach: false } => {
             Site::of_rule_item(config, from, "must_not_depend_on", to)
         }
-        Refusal::NotGranted { layers: Some(_) } => Some(Site::of_key("layers")),
+        Refusal::NotGranted { layers: Some(_) } => Some(Site::of_layers(config, from, to)),
         Refusal::NotGranted { layers: None } => None,
     }
 }

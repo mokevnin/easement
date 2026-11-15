@@ -14,6 +14,7 @@ enum Spelled<'a> {
 }
 
 impl<'a> Spelled<'a> {
+    /// How `text` is written, when it is not the name of a component.
     fn of(text: &'a str) -> Self {
         if let Some(set) = text.strip_prefix('@') {
             Spelled::Set(set)
@@ -50,8 +51,9 @@ pub struct Expansion {
     /// By component, the key of `rules` that covers it, when that key is a glob or a set.
     rule_keys: BTreeMap<String, String>,
     /// By expanded list (`rules.web.may_depend_on`, `components.db.allow_importers`,
-    /// `common`, `forbid_symbol[0].allow`, `components.db.surfaces.admin.importers`),
-    /// where each of its names is written.
+    /// `common`, `no_cycles`, `forbid_symbol[0].allow`,
+    /// `components.db.surfaces.admin.importers`), where each of its names is written;
+    /// under `layers`, the index is the row.
     lists: BTreeMap<String, WrittenNames>,
     /// The globs and sets that cover no component, and the sets nothing names.
     pub unmatched: Vec<Unmatched>,
@@ -110,6 +112,9 @@ impl Config {
         self.rules = expander.rules(std::mem::take(&mut self.rules))?;
         self.common = expander.names(&["common"], "common", std::mem::take(&mut self.common))?;
         self.layers = expander.layers(std::mem::take(&mut self.layers))?;
+        if let NoCycles::Among(list) = &mut self.no_cycles {
+            *list = expander.names(&["no_cycles"], "no_cycles", std::mem::take(list))?;
+        }
         for (name, component) in &mut self.components {
             if let Some(importers) = component.allow_importers.take() {
                 let at = ["components", name.as_str(), "allow_importers"];
@@ -180,13 +185,18 @@ impl Expander {
             expansion: Expansion::default(),
         };
         for (set, items) in &config.sets {
+            if config.components.contains_key(&format!("@{set}")) {
+                bail!(
+                    "the set `{set}` and the component `@{set}` are both written `@{set}`; rename one"
+                );
+            }
             let place = format!("sets.{set}");
             if items.is_empty() {
                 bail!("{place} lists no component; list some or drop the set");
             }
             let mut members: Vec<String> = Vec::new();
             for item in items {
-                let found = match Spelled::of(item) {
+                let found = match expander.spelled(item) {
                     Spelled::Set(_) => bail!(
                         "{place} lists `{item}`, another set: sets are flat, so list its components instead"
                     ),
@@ -245,7 +255,7 @@ impl Expander {
     /// The components `item`, written in the list at `path` and called `place` in
     /// errors, names: itself, the ones a glob matches, or the members of a set.
     fn members(&mut self, item: &str, path: &[&str], place: &str) -> Result<Vec<String>> {
-        match Spelled::of(item) {
+        match self.spelled(item) {
             // `validate` names one that is no component.
             Spelled::Component(name) => Ok(vec![name.to_string()]),
             Spelled::Glob(glob) => self.glob(glob, path, place),
@@ -277,7 +287,8 @@ impl Expander {
         let mut written = WrittenNames::new();
         for (index, item) in items.iter().enumerate() {
             let text = name(item);
-            let through = is_pattern(text).then(|| text.to_string());
+            let through =
+                (!matches!(self.spelled(text), Spelled::Component(_))).then(|| text.to_string());
             for member in self.members(text, path, place)? {
                 let entry = written.entry(member.clone()).or_insert_with(|| Written {
                     index,
@@ -312,7 +323,7 @@ impl Expander {
         let mut by_component: BTreeMap<String, (String, Rule)> = BTreeMap::new();
         for (key, rule) in rules {
             let place = format!("rules.{}", field_key(&key));
-            let members = match Spelled::of(&key) {
+            let members = match self.spelled(&key) {
                 Spelled::Component(_) => vec![key.clone()],
                 Spelled::Glob(glob) => {
                     let found = self.matching(glob, &place)?;
@@ -356,6 +367,16 @@ impl Expander {
             .collect())
     }
 
+    /// How `text` is written in a list of components: the name of a component
+    /// first, whatever it holds, so a component named `@acme/core` is named so.
+    fn spelled<'a>(&self, text: &'a str) -> Spelled<'a> {
+        if self.components.iter().any(|c| c == text) {
+            Spelled::Component(text)
+        } else {
+            Spelled::of(text)
+        }
+    }
+
     /// The components `glob`, written in `place`, matches, in the order of their
     /// names; the caller says what one that matches none means.
     fn matching(&self, glob: &str, place: &str) -> Result<Vec<String>> {
@@ -378,6 +399,7 @@ impl Expander {
             ("may_depend_on", &mut rule.may_depend_on),
             ("must_not_depend_on", &mut rule.must_not_depend_on),
             ("must_not_reach", &mut rule.must_not_reach),
+            ("must_depend_on", &mut rule.must_depend_on),
         ] {
             let path = ["rules", key, field];
             let place = format!("rules.{}.{field}", field_key(key));
@@ -405,16 +427,22 @@ impl Expander {
     /// layer is one component, so its name covers exactly one.
     fn layers(&mut self, layers: Vec<Layer>) -> Result<Vec<Layer>> {
         let mut expanded = Vec::new();
-        for layer in layers {
+        // Where each name is written: the row, and the glob or set that names it.
+        let mut rows = WrittenNames::new();
+        for (row, layer) in layers.into_iter().enumerate() {
             let closed = layer.closed();
             let written: Vec<String> = layer.names().into_iter().map(str::to_string).collect();
-            let (mut names, _) = self.list(
+            let (mut names, at) = self.list(
                 &["layers"],
                 "layers",
                 written.clone(),
                 String::as_str,
                 |_, m| m,
             )?;
+            for (name, mut place) in at {
+                place.index = row;
+                rows.entry(name).or_insert(place);
+            }
             if closed && names.len() > 1 {
                 bail!(
                     "layers: the closed layer `{}` covers {}, but a closed layer is one component; name it alone",
@@ -432,6 +460,7 @@ impl Expander {
                 _ => Layer::Siblings(names),
             });
         }
+        self.expansion.lists.insert("layers".to_string(), rows);
         Ok(expanded)
     }
 
@@ -683,10 +712,6 @@ rules:
             ),
             ("sets:\n  a: []\n", "sets.a lists no component"),
             (
-                "rules:\n  usecase: { must_depend_on: ['ee-*'] }\n",
-                "`ee-*` in rules.usecase.must_depend_on: a glob or a set of components works only in",
-            ),
-            (
                 "layers: [{ name: 'ee-*', closed: true }]\n",
                 "the closed layer `ee-*` covers ee-licensekey, ee-sso",
             ),
@@ -695,10 +720,66 @@ rules:
             let err = format!("{:#}", with(rest).unwrap_err());
             assert!(err.contains(said), "{rest}: {err}");
         }
-        let err = parse("version: 1\ncomponents:\n  'a*': { in: a }\n").unwrap_err();
+    }
+
+    /// A component whose name reads as a glob or a set (`@acme/core`, a scope of
+    /// npm) loads, and a list that writes its name names it alone; a set that
+    /// `'@name'` would also name is refused. A leading `@` is a set, so a glob over
+    /// such names escapes it: `'[@]acme/*'`.
+    #[test]
+    fn a_component_named_like_a_glob_or_a_set_is_named_by_its_own_name() {
+        let config = parse(
+            "version: 1
+components:
+  '@acme/core': { in: a }
+  '@acme/ui': { in: b }
+  'web*': { in: c }
+  webapp: { in: d }
+sets:
+  ui: ['@acme/ui']
+common: ['@acme/core', 'web*', '@ui']
+rules:
+  '@acme/ui': { may_depend_on: ['[@]acme/*'] }
+",
+        )
+        .unwrap();
+        assert_eq!(config.common, ["@acme/core", "web*", "@acme/ui"]);
+        assert_eq!(config.written("common", "web*").unwrap().through, None);
+        assert_eq!(config.rule_key("@acme/ui"), "@acme/ui");
+        assert_eq!(
+            names(&config.rules["@acme/ui"].may_depend_on),
+            ["@acme/core", "@acme/ui"]
+        );
+        let err = parse(
+            "version: 1\ncomponents:\n  '@ui': { in: a }\n  web: { in: b }\nsets:\n  ui: [web]\n",
+        )
+        .unwrap_err();
         assert!(
-            err.to_string().contains("reads as a glob or a set"),
+            err.to_string()
+                .contains("the set `ui` and the component `@ui` are both written `@ui`"),
             "{err}"
+        );
+    }
+
+    /// Every list of components expands: `must_depend_on` and `no_cycles` too.
+    #[test]
+    fn must_depend_on_and_no_cycles_take_globs_and_sets() {
+        let config = with(
+            "sets:\n  drivers: ['api-*', runner]\nno_cycles: ['@drivers', usecase]\nrules:\n  wiring: { must_depend_on: [{ name: 'ee-*', because: licensed }] }\n",
+        )
+        .unwrap();
+        assert!(config.no_cycles.covers("runner") && config.no_cycles.covers("api-site"));
+        assert!(!config.no_cycles.covers("wiring"));
+        let wiring = &config.rules["wiring"].must_depend_on;
+        assert_eq!(names(wiring), ["ee-licensekey", "ee-sso"]);
+        assert_eq!(wiring[1].because(), Some("licensed"));
+        assert_eq!(
+            config
+                .written("no_cycles", "runner")
+                .unwrap()
+                .through
+                .as_deref(),
+            Some("@drivers")
         );
     }
 

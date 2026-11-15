@@ -246,6 +246,12 @@ fn explain_and_why_name_the_glob_or_the_set_a_clause_comes_through() {
     );
     let (_dir, mut fresh) = fresh();
     let why = commands::why(&config(&root), "usecase", "runner", &mut fresh).unwrap();
+    // Two drivers are siblings in the row `'@drivers'` of `layers`.
+    let siblings = commands::why(&config(&root), "api-external", "runner", &mut fresh).unwrap();
+    assert_eq!(
+        serde_json::to_value(&siblings).unwrap()["decision"]["provenance"],
+        json!({ "field": "layers", "input": "easement.yml", "through": ["@drivers"] })
+    );
     assert_eq!(
         serde_json::to_value(&why).unwrap()["decision"]["provenance"]["through"],
         json!(["@drivers"])
@@ -384,4 +390,49 @@ fn review_of_a_policy_respelled_as_globs_and_sets_lists_no_change() {
     for section in ["permissions", "surfaces", "constraints"] {
         assert_eq!(report[section], json!([]), "{section}: {report:#}");
     }
+}
+
+/// A required dependency on a set is a constraint on each of its components,
+/// each written at the item of the set.
+#[test]
+fn review_places_a_constraint_through_a_set_at_its_item() {
+    let (_tmp, root) = drivers(SPELLED);
+    commit_all(&root);
+    git(&root, &["checkout", "-q", "-b", "feature"]);
+    fs::write(
+        config(&root),
+        SPELLED.replace(
+            "  runner: { may_depend_on: [usecase] }\n",
+            "  runner: { may_depend_on: [usecase] }\n  wiring: { must_depend_on: [usecase, '@drivers'] }\n",
+        ),
+    )
+    .unwrap();
+    let review = commands::review(&config(&root), "main", &mut cache()).unwrap();
+    let report = crate::run::parse(&review.json());
+    let placed: Vec<(&str, &serde_json::Value)> = report["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["item"].as_str().unwrap(), &c["provenance"]))
+        .collect();
+    let at = |index: usize, through: &[&str]| {
+        let mut provenance = json!({
+            "field": format!("rules.wiring.must_depend_on[{index}]"),
+            "input": "easement.yml",
+        });
+        if !through.is_empty() {
+            provenance["through"] = json!(through);
+        }
+        provenance
+    };
+    assert_eq!(
+        placed,
+        [
+            ("usecase", &at(0, &[])),
+            ("api-site", &at(1, &["@drivers"])),
+            ("api-external", &at(1, &["@drivers"])),
+            ("runner", &at(1, &["@drivers"])),
+        ],
+        "{report:#}"
+    );
 }
