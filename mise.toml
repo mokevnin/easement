@@ -41,6 +41,14 @@ url = "https://github.com/mattpocock/skills/archive/refs/tags/v{{version}}.tar.g
 version_list_url = "https://api.github.com/repos/mattpocock/skills/tags"
 version_expr = 'reverse(map(filter(fromJSON(body), hasPrefix(#.name, "v")), trimPrefix(#.name, "v")))'
 
+# Morgan Linton's Rust agent skills (write, review and port idiomatic Rust): a tagged release of
+# morganlinton/BeautifulRust, copied in by `mise run skills` and upgraded like the one above.
+[tools."http:beautiful-rust"]
+version = "1.6.0"
+url = "https://github.com/morganlinton/BeautifulRust/archive/refs/tags/v{{version}}.tar.gz"
+version_list_url = "https://api.github.com/repos/morganlinton/BeautifulRust/tags"
+version_expr = 'reverse(map(filter(fromJSON(body), hasPrefix(#.name, "v")), trimPrefix(#.name, "v")))'
+
 # Where `composer global require` (macOS, Linux) and `dotnet tool install --global` put
 # scip-php and scip-dotnet, which the tests need; the CI workflow shows how to install them.
 [env]
@@ -67,12 +75,12 @@ depends = ["skills"]
 run = "pnpm install --frozen-lockfile"
 
 # The skills of the mattpocock-skills plugin (its .claude-plugin/plugin.json), without the
-# in-progress and misc ones, copied from the pinned release into .agents/skills, where Codex reads
-# them and mise links the skills of its tools. Claude Code reads .claude/skills, a link to it. Both
-# are gitignored; a copy, not a link, because mise prunes the links into its installs it did not
-# make itself.
+# in-progress and misc ones, and the three Rust skills of BeautifulRust, copied from the pinned
+# releases into .agents/skills, where Codex reads them and mise links the skills of its tools.
+# Claude Code reads .claude/skills, a link to it. Both are gitignored; a copy, not a link, because
+# mise prunes the links into its installs it did not make itself.
 [tasks.skills]
-description = "Copy Matt Pocock's agent skills of the pinned release into the project"
+description = "Copy the agent skills of the pinned releases (Matt Pocock's, BeautifulRust) into the project"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
@@ -90,6 +98,11 @@ for skill in \
   name="${skill#*/}"
   rm -rf ".agents/skills/$name"
   cp -R "$src/$skill" ".agents/skills/$name"
+done
+rust="$(mise where http:beautiful-rust)/skills"
+for name in rust-best-practices rust-review rust-port; do
+  rm -rf ".agents/skills/$name"
+  cp -R "$rust/$name" ".agents/skills/$name"
 done
 # Earlier installs made .claude/skills a directory of links; it holds nothing else.
 if [ -d .claude/skills ] && [ ! -L .claude/skills ]; then
