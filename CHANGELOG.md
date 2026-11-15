@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.5](https://github.com/mokevnin/easement/compare/v0.6.4...v0.6.5) (2026-11-15)
+
+
+### Features
+
+* **forbid_symbol:** grant a name to paths with allow_in ([#156](https://github.com/mokevnin/easement/issues/156)) ([d4d8dc1](https://github.com/mokevnin/easement/commit/d4d8dc114adecf7bca1064cbc0ad61d5ca71c5f3)), closes [#148](https://github.com/mokevnin/easement/issues/148)
+
+
+### Bug Fixes
+
+* **cache:** key an index on what its indexer reads in every root ([#162](https://github.com/mokevnin/easement/issues/162)) ([91dbc82](https://github.com/mokevnin/easement/commit/91dbc82a5d78b8836e41d161bce4b2a52d61fb85))
+* **config:** refuse a comma in a component name ([#160](https://github.com/mokevnin/easement/issues/160)) ([081ff1b](https://github.com/mokevnin/easement/commit/081ff1bc89b2deacf90f2b39b315c2ec820f5194))
+* **diff:** tell a file that lost its first lines from a deleted one ([#165](https://github.com/mokevnin/easement/issues/165)) ([ab09e5c](https://github.com/mokevnin/easement/commit/ab09e5cd9cfddb93949b188b4a6f7de5029d3fae))
+* **forbid_symbol:** list who may use a name as a sentence ([#158](https://github.com/mokevnin/easement/issues/158)) ([beb32dd](https://github.com/mokevnin/easement/commit/beb32dd6a240e6ebc8e4622b2d2a3b26e0b5e183)), closes [#148](https://github.com/mokevnin/easement/issues/148)
+* **kotlin:** read the name of a declaration past its type parameters ([#164](https://github.com/mokevnin/easement/issues/164)) ([8959b41](https://github.com/mokevnin/easement/commit/8959b418dacf6533d2620ff475cffd9926c90834))
+* **parts:** take a cfg(test) macro item as test code, and a pub field as no item ([#163](https://github.com/mokevnin/easement/issues/163)) ([b6a00be](https://github.com/mokevnin/easement/commit/b6a00beb584175aa33d5a1463c15cd681752b71c))
+* read source files whatever their encoding, and tell what cannot be read ([#161](https://github.com/mokevnin/easement/issues/161)) ([1b04f91](https://github.com/mokevnin/easement/commit/1b04f91c7e50bbb5b973699fb3929d99e65c670a))
+* **review:** tell what a first or dropped allow_importers list moves ([#159](https://github.com/mokevnin/easement/issues/159)) ([2d36b8b](https://github.com/mokevnin/easement/commit/2d36b8b1e1f9fff3a04535625cccfb34126557d4))
+
 ## [0.6.4](https://github.com/mokevnin/easement/compare/v0.6.3...v0.6.4) (2026-11-14)
 
 
