@@ -11,8 +11,8 @@ use crate::components::ComponentMap;
 use crate::policy::Policy;
 use crate::project::{self, Analysis, Project};
 use crate::{
-    check, diagram, diff, doctor, explain, graph, impact, indexer, patch, propose, report, review,
-    scan, scope, suggest,
+    check, diagram, diff, doctor, explain, graph, impact, indexer, patch, propose, report,
+    resolved, review, scan, scope, suggest,
 };
 
 /// How a command ends, which its exit code says.
@@ -371,6 +371,14 @@ pub fn explain(config: &Path, path: &Path) -> Result<explain::Explanation> {
     let map = ComponentMap::new(project.config())?;
     let rel = explain::root_relative(&project.root, path);
     Ok(explain::explain(&project.policy, &map, &rel))
+}
+
+/// The policy in `config` as loaded: `extends` merged, the anchors, globs and
+/// sets expanded, each item with where the policy writes it. It reads no code.
+pub fn policy(config: &Path) -> Result<resolved::ResolvedPolicy> {
+    let project = Project::open(config)?;
+    let map = ComponentMap::new(project.config())?;
+    Ok(resolved::ResolvedPolicy::of(&project.policy, &map))
 }
 
 /// A drawing of the components and the dependencies between them, with what

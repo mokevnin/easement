@@ -28,6 +28,7 @@ mod policy;
 mod propose;
 mod reach;
 mod reexports;
+mod resolved;
 mod review;
 mod rules;
 mod sets;

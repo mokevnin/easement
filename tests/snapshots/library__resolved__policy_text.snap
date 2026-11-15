@@ -1,0 +1,68 @@
+---
+source: tests/library/resolved.rs
+expression: "commands::policy(&config(&root)).unwrap().text()"
+---
+policy: easement.yml
+  extended: policy/base.yml
+  diagram: docs/architecture.md
+components:
+  domain: src/domain
+    may depend on: kernel (common; through no path: kernel opens no surface to it), shared (may_depend_on), store-orders (layers through `store-*`), store-users (layers through `store-*`)
+    forbidden: http (not even through others)
+  fake-db: src/stores/Cargo.toml
+    part: feature/fake
+    may depend on: kernel (common; through no path: kernel opens no surface to it)
+  features: src/features/* (isolated)
+    may depend on: kernel (common; through no path: kernel opens no surface to it)
+  http: src/http, except src/http/testdata
+    public surface: src/http/api
+    surface fakes: src/http/fake (open to store-orders: fakes for the store tests)
+    open only to: web, store-orders, store-users
+    restricted because: one client for every outbound call
+    may depend on: kernel (common; through no path: kernel opens no surface to it)
+  kernel: src/kernel
+    public surface: none (only the named surfaces are open)
+    surface clock: src/kernel/clock (open to web)
+    may depend on: nothing
+  shared: src/shared
+    may depend on: kernel (common; through no path: kernel opens no surface to it)
+  store-orders: src/stores/orders
+    priority: 1
+    defines: *Repository
+    may depend on: http (may_depend_on through `store-*`; only through the public surface of http: src/http/api; or its fakes surface: src/http/fake), kernel (common; through no path: kernel opens no surface to it)
+    rule: written under rules.'store-*'
+    forbidden external modules: moment
+  store-users: src/stores/users (optional)
+    public symbols: users.Find
+    may depend on: http (may_depend_on through `store-*`; only through the public surface of http: src/http/api), kernel (common; through no path: kernel opens no surface to it)
+    rule: written under rules.'store-*'
+    forbidden external modules: moment
+  tests: the test files of every language (tests: auto)
+    may depend on: domain (tests: auto), fake-db (tests: auto), features (tests: auto), kernel (tests: auto; through no path: kernel opens no surface to it), shared (tests: auto), store-orders (tests: auto), store-users (tests: auto), tools (tests: auto), web (tests: auto)
+  tools: src/tools
+    may depend on: kernel (common; through no path: kernel opens no surface to it)
+  web: src/web
+    owner: @acme/web
+    may depend on: domain (layers), http (may_depend_on: pages fetch through the client; only through the public surface of http: src/http/api), kernel (common; only through kernel's clock surface: src/kernel/clock)
+    forbidden names: lodash.merge
+    because: pages call the client, not the stores
+common: kernel
+layers: web > domain (closed) > store-orders | store-users
+forbid_symbol: db.Client (only store-orders, store-users and src/tools/migrate.ts may: only the stores open connections)
+forbid_external: axios (only http may: one HTTP client)
+forbid_external: left-pad
+examples:
+  src/domain/order.ts -> src/http/client.ts: rejected [dependency]: the domain knows no transport (policy/base.yml)
+  src/web/page.ts -> src/http/api/client.ts: allowed (easement.yml)
+  src/web/page.ts -> external axios: rejected [external] (easement.yml)
+no_cycles: domain, web
+strict: true
+unowned: scripts
+tests: auto
+entry: src/web/page.ts
+exclude: src/gen/**
+target_only: **/*.pb.ts
+manifests: true
+packages: true
+warn: naming
+uncovered_ok: vendor/**: vendored code

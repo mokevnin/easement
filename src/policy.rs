@@ -14,7 +14,8 @@ use crate::config::{Config, field_key};
 use crate::relpath::real;
 
 /// What a policy input is to the policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InputKind {
     /// The configuration the policy is loaded from.
     Config,
@@ -22,6 +23,17 @@ pub enum InputKind {
     Extended,
     /// The diagram that `diagram` names.
     Diagram,
+}
+
+impl InputKind {
+    /// How reports name the kind, as `--format json` writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputKind::Config => "config",
+            InputKind::Extended => "extended",
+            InputKind::Diagram => "diagram",
+        }
+    }
 }
 
 /// A file whose content is part of the policy, as it was read.
@@ -256,6 +268,24 @@ impl Site {
         site
     }
 
+    /// The row of `layers` that holds `names`, with the globs and sets that name them.
+    pub fn of_layer(config: &Config, names: &[&str]) -> Self {
+        let written: Vec<_> = names
+            .iter()
+            .filter_map(|name| config.written("layers", name))
+            .collect();
+        let mut site = match written.first() {
+            Some(first) => Self::in_key("layers", format!("layers[{}]", first.index)),
+            None => Self::of_key("layers"),
+        };
+        for through in written.iter().filter_map(|w| w.through.clone()) {
+            if !site.through.contains(&through) {
+                site.through.push(through);
+            }
+        }
+        site
+    }
+
     /// The item that names `name` in the top-level list `key` (`no_cycles`): the
     /// name itself, or the glob or set it comes through.
     pub fn of_top_item(config: &Config, key: &str, name: &str) -> Option<Self> {
@@ -324,6 +354,20 @@ impl Policy {
             field: site.field.clone(),
             input: self.defined_by(section, name).map(|i| self.input_name(i)),
             through: site.through.clone(),
+        }
+    }
+
+    /// Where the `index`th of `config.examples` is written: `extends` joins the
+    /// lists, so each names the input that writes it.
+    pub fn example_provenance(&self, index: usize) -> Provenance {
+        Provenance {
+            field: format!("examples[{index}]"),
+            input: self
+                .examples
+                .get(index)
+                .and_then(|origin| self.inputs.get(origin.input))
+                .map(|input| self.input_name(input)),
+            through: Vec::new(),
         }
     }
 
