@@ -110,7 +110,7 @@ Entries are keyed by rule, file, target and components, not by line, so unrelate
 
 ## Diff mode: judging a pull request
 
-`easement check --diff <base>` reports only the violations of the change: those whose import line was added or changed since the merge-base with `<base>`, including uncommitted and untracked files, and those a change to the policy causes. Old violations elsewhere do not fail the change, so the gate can be turned on without a baseline. In CI fetch the base branch (`actions/checkout` with `fetch-depth: 0`).
+`easement check --diff <base>` reports only the violations of the change: those whose import line was added or changed since the merge-base with `<base>`, including uncommitted and untracked files and every line of a moved file, which is new where it now is, and those a change to the policy causes. Old violations elsewhere do not fail the change, so the gate can be turned on without a baseline. In CI fetch the base branch (`actions/checkout` with `fetch-depth: 0`).
 
 The report ends with the new dependencies between components that the change brings: `app -> ui` is listed when every dependency behind it is on a changed line, so a reviewer sees the change to the graph and not only the violations. `--format github` adds it as a notice and `--format json` as `stats.new_dependencies`.
 
