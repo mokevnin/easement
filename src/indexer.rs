@@ -683,8 +683,10 @@ pub fn default_cache_dir(environment: &Environment) -> Option<PathBuf> {
 
 /// Everything that decides what an indexer would write: the indexer itself, its
 /// environment ([`key_env`]) and
-/// the name and content of every project file under `dir` that the indexer reads
-/// (`Indexer::inputs`), plus the files that sit directly in the directories above `dir`
+/// the name and content of every project file that the indexer reads
+/// (`Indexer::inputs`), in every root of the project and not only under `dir`, since
+/// a root may build with another (`go.work`, a `replace`, a project reference), plus
+/// the files that sit directly in the directories above `dir`
 /// (`tsconfig.base.json`, `go.work`, a root `package.json`), which the project
 /// files extend. Nothing about the checkout (its path, the modification times)
 /// is in the key, so a worktree of the same code reuses the index. Dependencies
@@ -711,18 +713,13 @@ fn fingerprint(
         &multiplexers(environment, &cwd),
     )
     .hash(&mut hasher);
-    let prefix = if dir.is_empty() {
-        String::new()
-    } else {
-        format!("{dir}/")
-    };
     let above = |f: &str| {
         let parent = relpath::parent(f);
         parent.len() < dir.len() && relpath::is_under(dir, parent)
     };
     let mut seen: Vec<(&str, Option<u64>)> = files
         .iter()
-        .filter(|f| (f.starts_with(&prefix) && (language.inputs)(language.language, f)) || above(f))
+        .filter(|f| (language.inputs)(language.language, f) || above(f))
         .map(|f| {
             // An unreadable file is a different state from every readable one.
             let content = std::fs::read(root.join(f))
@@ -1632,6 +1629,42 @@ mod tests {
         // The entry just written stays even when it alone is over the budget.
         trim(dir.path(), &written, 10);
         assert_eq!(left(), [".tmpXXXX", "cccc-0.scip"]);
+    }
+
+    /// One root of a project may build with another (`go.work`, a `replace`, a
+    /// project reference): the key of a root reads what its indexer reads in
+    /// every root, so a change next door misses the cache.
+    #[test]
+    fn the_cache_key_of_a_root_reads_the_other_roots_of_its_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let files: Vec<String> = [
+            "go.work",
+            "a/go.mod",
+            "a/x.go",
+            "b/go.mod",
+            "b/y.go",
+            "b/README.md",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        for file in &files {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "1").unwrap();
+        }
+        let binary = root.join("scip-go");
+        std::fs::write(&binary, "binary").unwrap();
+        let go = &INDEXERS[0];
+        let environment = Environment(BTreeMap::new());
+        let key = || fingerprint(go, &binary, root, "a", &files, &[], &environment);
+        let before = key();
+        std::fs::write(root.join("b/y.go"), "2").unwrap();
+        assert_ne!(key(), before);
+        // What the indexer does not read stays out of the key.
+        let before = key();
+        std::fs::write(root.join("b/README.md"), "2").unwrap();
+        assert_eq!(key(), before);
     }
 
     /// A PHP project scip-php can run in, with a stand-in for scip-php that
