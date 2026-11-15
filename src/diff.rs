@@ -80,7 +80,9 @@ impl Changes {
         let mut files: HashMap<String, Lines> = HashMap::new();
         let mut deleted = Vec::new();
         for file in patch.files() {
-            if file.is_removed_file() {
+            // A target of /dev/null is a deleted file; a hunk that leaves no line
+            // at 0 is only a file that lost its first lines.
+            if file.target_file == "/dev/null" {
                 deleted.push(file.source_file.clone());
                 continue;
             }
@@ -411,6 +413,21 @@ mod tests {
         let changes = Changes::parse(diff).unwrap();
         assert_eq!(changes.files().collect::<Vec<_>>(), ["package.json"]);
         assert!(!changes.contains("package.json", 3));
+    }
+
+    /// A file whose first lines alone are deleted is still there: one hunk
+    /// that leaves no line at 0 is no deleted file, a target of /dev/null is.
+    #[test]
+    fn a_file_that_loses_its_first_lines_is_changed_not_deleted() {
+        let diff = "\
+--- src/top.ts
++++ src/top.ts
+@@ -1 +0,0 @@
+-import { gone } from \"./gone\";
+";
+        let changes = Changes::parse(diff).unwrap();
+        assert!(changes.deleted.is_empty(), "{:?}", changes.deleted);
+        assert_eq!(changes.files().collect::<Vec<_>>(), ["src/top.ts"]);
     }
 
     #[test]
