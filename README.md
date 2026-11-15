@@ -171,7 +171,7 @@ Start with the [documentation index](https://github.com/mokevnin/easement/blob/m
 
 ## Development
 
-Tools are pinned in `mise.toml`: `mise install`, which also installs the git hooks, `mise run setup` for the npm dependencies, then `mise run check` (every lint, the same set CI runs) and `cargo test`. Commits follow Conventional Commits; releases are cut by merging the release-please pull request. Before proposing a new language, rule or config key, read [CONTRIBUTING.md](CONTRIBUTING.md).
+Tools are pinned in `mise.toml`: `mise install`, which also installs the git hooks, `mise run setup` for the npm dependencies, then `mise run check` (every lint, the same set CI runs) and `cargo nextest run`. Commits follow Conventional Commits; releases are cut by merging the release-please pull request. Before proposing a new language, rule or config key, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

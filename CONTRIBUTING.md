@@ -17,5 +17,5 @@ Bug fixes and documentation fixes can go straight to a pull request.
 ## Pull requests
 
 - One pull request, one change: a new language and new rules are separate pull requests.
-- `mise run check` and `cargo test` pass; snapshot changes are reviewed with `cargo insta review`.
+- `mise run check` and `cargo nextest run` pass; snapshot changes are reviewed with `cargo insta review`.
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org/). Rebase on `main` instead of merging it into your branch.
