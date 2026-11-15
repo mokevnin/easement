@@ -10,9 +10,6 @@ rules:
     ignore: [release.yml]
   template-injection:
     ignore: [release.yml]
-  # Until the crate is published through trusted publishing: #169.
-  use-trusted-publishing:
-    ignore: [publish-crates.yml]
   # The action puts the easement it installed on PATH, for its own step and the steps after it;
   # the directory is $RUNNER_TEMP, which the runner sets, not anything a user writes.
   github-env:
