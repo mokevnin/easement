@@ -47,7 +47,7 @@ A name a module makes available while another module defines it: a Rust `pub use
 _Avoid_: alias (an alias is its own definition), forward
 
 **Written import**:
-An import as the text of a file spells it, whether or not the index recorded it. Each written import is either resolved or an evidence gap.
+An import as the text of a file spells it, whether or not the index recorded it. Each written import of a checked file is either resolved or an evidence gap.
 _Avoid_: syntactic import, raw import
 
 **Resolved import**:
@@ -71,7 +71,7 @@ Where the index must take an import a file writes for it to count as resolved: a
 _Avoid_: resolved module (a module reference that leads nowhere resolves nothing)
 
 **Unresolved import**:
-An import a file writes that the index takes to no source target and whose text names none either: its dependency is not in the graph, so it is an evidence gap, one for each cause.
+An import a file writes that the index takes to no source target and whose text names none either: its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
 _Avoid_: missing import, broken import (the code may build)
 
 **Implementation**:

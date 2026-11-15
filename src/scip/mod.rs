@@ -711,8 +711,8 @@ impl<'a> Indexed<'a> {
         (!own).then(|| name.external.clone())
     }
 
-    /// What the index holds on the specifier of `import`, written in `document`, a
-    /// checked one, whose text is `lines`: a module it resolved stands on the text
+    /// What the index holds on the specifier of `import`, written in `document`,
+    /// any document the index read, whose text is `lines`: a module it resolved stands on the text
     /// of the path, with or without its quotes, in every language. An alias, or
     /// another import on the same line, stands on other text, so it resolves
     /// nothing here; nor does a reference whose range is not on one line, since

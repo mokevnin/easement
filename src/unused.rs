@@ -34,6 +34,9 @@ pub struct Input<'a> {
     /// Imports of checked files whose dependency is not in the graph: any of
     /// them a reached file writes may reach a file the walk does not.
     pub unresolved: &'a [Unresolved],
+    /// Imports of `target_only` and excluded files whose dependency is not in the
+    /// graph, which no `unresolved_imports` gap names.
+    pub unread_unresolved: &'a [Unresolved],
 }
 
 /// How many lost imports the reason of the files they may reach names.
@@ -124,7 +127,21 @@ pub fn unused(input: &Input) -> Result<Unused> {
     }
 
     let mut graph = file_graph(input.deps.iter().chain(input.unread_deps), input.all_files);
-    let found = unindexed_uses(input.root, input.paths, input.all_files, &mut unreadable);
+    let mut found = unindexed_uses(input.root, input.paths, input.all_files, &mut unreadable);
+    // An unread file reaches what it uses as a checked one does, another unread file
+    // among them.
+    let any_file: Vec<String> = input
+        .all_files
+        .iter()
+        .chain(input.unread)
+        .cloned()
+        .collect();
+    found.extend(unindexed_uses(
+        input.root,
+        input.unread,
+        &any_file,
+        &mut unreadable,
+    ));
     for (from, used) in &found {
         graph
             .entry(from.clone())
@@ -147,6 +164,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
     let lost: BTreeSet<Place> = input
         .unresolved
         .iter()
+        .chain(input.unread_unresolved)
         .filter(|u| reached.contains(u.file.as_str()))
         .map(Unresolved::place)
         .filter(|place| !followed.contains(place))
@@ -179,6 +197,11 @@ pub fn unused(input: &Input) -> Result<Unused> {
         })
         .collect();
     if !held.is_empty() {
+        // Whether a lost import is one an unread file writes, which no gap names.
+        let unread: BTreeSet<&str> = input.unread.iter().map(String::as_str).collect();
+        let some_ungapped = lost
+            .iter()
+            .any(|place| unread.contains(place.file.as_str()));
         let lost: Vec<Place> = lost.into_iter().collect();
         let named = check::name_first(&lost, LOST_SHOWN, ", ", ToString::to_string, |more| {
             format!(" and {more} more")
@@ -190,7 +213,11 @@ pub fn unused(input: &Input) -> Result<Unused> {
             ))
             .in_files(held.into_iter().cloned())
             .at(lost)
-            .closed_by("have the indexer resolve the imports the message names (the `unresolved_imports` gap says how), then check again"),
+            .closed_by(if some_ungapped {
+                "have the indexer resolve the imports the message names (the `unresolved_imports` gap says how for a checked file; it leaves out those of `target_only` and excluded files, which no check reads), then check again"
+            } else {
+                "have the indexer resolve the imports the message names (the `unresolved_imports` gap says how), then check again"
+            }),
         );
     }
     if !unreadable.is_empty() {
@@ -284,15 +311,15 @@ fn program(root: &Path, file: &str, unreadable: &mut BTreeSet<String>) -> bool {
         })
 }
 
-/// The uses of a file that each judged file writes and its index may not
-/// report, as its language finds them in its text.
+/// The uses of a file of `files` that each of `paths` of a judged language writes
+/// and its index may not report, as its language finds them in its text.
 fn unindexed_uses(
     root: &Path,
     paths: &[String],
-    all_files: &[String],
+    files: &[String],
     unreadable: &mut BTreeSet<String>,
 ) -> Vec<(String, UnindexedUse)> {
-    let files: BTreeSet<&str> = all_files.iter().map(String::as_str).collect();
+    let files: BTreeSet<&str> = files.iter().map(String::as_str).collect();
     let mut found = Vec::new();
     for file in paths {
         let Some(find) = judged_language(file).and_then(|language| language.unindexed_uses) else {

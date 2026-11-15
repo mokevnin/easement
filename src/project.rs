@@ -142,6 +142,7 @@ impl Project {
             all_files: &scan.all_files,
             uncovered: &scan.uncovered,
             unresolved: &scan.unresolved_imports,
+            unread_unresolved: &scan.unread_unresolved_imports,
         })?;
         violations.extend(unused.violations);
         chains::attribute(policy, &map, &scan.deps, &mut violations);
