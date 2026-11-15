@@ -2,15 +2,12 @@
 //! known by.
 
 use std::collections::BTreeSet;
-use std::sync::LazyLock;
-
-use regex::Regex;
 
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 
 use super::{Declared, Declares, Source, line_at};
 use crate::lang::parts::{Kind, Part};
-use crate::lang::typescript;
+use crate::lang::{Form, typescript};
 
 const SECTIONS: [&str; 4] = [
     "dependencies",
@@ -211,18 +208,15 @@ pub(crate) fn npm_name(package: &str) -> String {
 }
 
 /// The packages TypeScript or JavaScript source names in an import, a `require`
-/// or an `import()`; a relative or absolute path names a file instead.
-pub(super) fn named_in_source(source: &str) -> BTreeSet<String> {
-    static QUOTED: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?:\bfrom|\bimport|\brequire\s*\(|\bimport\s*\()\s*["']([^"']+)["']"#)
-            .expect("valid regex")
-    });
-    QUOTED
-        .captures_iter(source)
-        .filter_map(|c| c.get(1))
-        .map(|specifier| specifier.as_str())
+/// or an `import()` it writes, not in a comment or a string; a relative or
+/// absolute path names a file instead.
+pub(super) fn named_in_source(file: &str, source: &str) -> BTreeSet<String> {
+    typescript::written_imports(file, source)
+        .into_iter()
+        .filter(|import| import.form != Form::Computed)
+        .map(|import| import.specifier)
         .filter(|specifier| !specifier.starts_with(['.', '/']))
-        .map(self::package)
+        .map(|specifier| self::package(&specifier))
         .collect()
 }
 

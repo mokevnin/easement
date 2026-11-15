@@ -80,7 +80,7 @@ pub fn undeclared(
         let named = sources.entry(file.clone()).or_insert_with(|| {
             std::fs::read(root.join(&file))
                 .ok()
-                .map(|bytes| kind.named_in_source(&String::from_utf8_lossy(&bytes)))
+                .map(|bytes| kind.named_in_source(&file, &String::from_utf8_lossy(&bytes)))
         });
         let Some(named) = named else {
             unread_sources.insert(file);

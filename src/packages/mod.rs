@@ -151,14 +151,14 @@ impl Manifest {
         }
     }
 
-    /// The packages `source` names in an import. The index names the package
+    /// The packages `source`, the text of `file`, names in an import. The index names the package
     /// that defines a symbol, which differs from the one the code imports for a
     /// re-export (`serde` re-exports `serde_core`), a global type
     /// (`NodeJS.Timeout`) or a Node builtin; only the imported one has to be
     /// declared. A Go import is the package path itself.
-    pub fn named_in_source(self, source: &str) -> Named {
+    pub fn named_in_source(self, file: &str, source: &str) -> Named {
         match self {
-            Manifest::Npm => Named::These(npm::named_in_source(source)),
+            Manifest::Npm => Named::These(npm::named_in_source(file, source)),
             Manifest::Cargo => Named::These(cargo::named_in_source(source)),
             Manifest::Go => Named::Any,
         }
@@ -495,26 +495,40 @@ mod tests {
     }
 
     #[test]
+    fn an_import_written_in_a_comment_or_a_string_names_no_package() {
+        let ts = "// import a from \"ghost\";\nconst s = \"import 'phantom'\";\n\
+                  /* require(\"spirit\") */\nimport b from \"real\";\nexport * from \"re\";\n\
+                  import c = require(\"old\");\nconst d = await import(\"lazy\");\n";
+        let named = Manifest::Npm.named_in_source("a.ts", ts);
+        for package in ["real", "re", "old", "lazy"] {
+            assert!(named.names(package), "{package} is imported");
+        }
+        for package in ["ghost", "phantom", "spirit"] {
+            assert!(!named.names(package), "{package} is no import");
+        }
+    }
+
+    #[test]
     fn only_a_package_the_source_imports_has_to_be_declared() {
         let ts =
             "import { a } from \"pkg/sub\";\nlet t: NodeJS.Timeout;\nimport fs from \"node:fs\";\n";
-        let named = Manifest::Npm.named_in_source(ts);
+        let named = Manifest::Npm.named_in_source("a.ts", ts);
         assert!(named.names("pkg"));
         assert!(!named.names("node"));
         assert!(!named.names("b"));
         // A path names a file of the project, not the package `.` or ``.
         let relative = "import { h } from \"./helper\";\nimport x from \"/abs/x\";\n";
-        let named = Manifest::Npm.named_in_source(relative);
+        let named = Manifest::Npm.named_in_source("a.ts", relative);
         assert!(!named.names("."));
         assert!(!named.names(""));
         let rs = "use serde::de::Error;\nextern crate libc;\nfn f() { other::x(); }\n";
-        let named = Manifest::Cargo.named_in_source(rs);
+        let named = Manifest::Cargo.named_in_source("a.rs", rs);
         assert!(named.names("serde"));
         assert!(named.names("libc"));
         assert!(!named.names("serde_core"));
         assert!(
             !Manifest::Cargo
-                .named_in_source("use my::serde::x;")
+                .named_in_source("a.rs", "use my::serde::x;")
                 .names("serde")
         );
     }
