@@ -73,7 +73,10 @@ pub fn unused(input: &Input) -> Result<Unused> {
         .flat_map(|language| language.conventional.iter().copied())
         .collect();
     let conventional = glob_set(&owned(&conventional), "conventional entries")?;
-    let packaged = package_entries(input.root, input.all_files);
+    // Files that could not be read: each is taken as used, or as what makes
+    // others used, and the report says so.
+    let mut unreadable: BTreeSet<String> = BTreeSet::new();
+    let packaged = package_entries(input.root, input.all_files, &mut unreadable);
 
     // A family is judged only where the graph sees all of it: not when an
     // indexer left some of its files out, and not beside a language whose files
@@ -110,7 +113,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
             || conventional.is_match(file)
             || registry::is_declaration(file)
             || packaged.contains(file.as_str())
-            || program(input.root, file)
+            || program(input.root, file, &mut unreadable)
             || input.map.component_of(file).is_none_or(|c| c == TESTS)
             || judged.is_none();
         if root {
@@ -121,7 +124,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
     }
 
     let mut graph = file_graph(input.deps.iter().chain(input.unread_deps), input.all_files);
-    let found = unindexed_uses(input.root, input.paths, input.all_files);
+    let found = unindexed_uses(input.root, input.paths, input.all_files, &mut unreadable);
     for (from, used) in &found {
         graph
             .entry(from.clone())
@@ -188,6 +191,15 @@ pub fn unused(input: &Input) -> Result<Unused> {
             .in_files(held.into_iter().cloned())
             .at(lost)
             .closed_by("have the indexer resolve the imports the message names (the `unresolved_imports` gap says how), then check again"),
+        );
+    }
+    if !unreadable.is_empty() {
+        reasons.push(
+            Unjudged::new(format!(
+                "`unused` could not read {}: it took each as used, a manifest with every file under it, and a file one of them uses may be reported unused",
+                unreadable.iter().cloned().collect::<Vec<_>>().join(", ")
+            ))
+            .in_files(unreadable),
         );
     }
     if !unjudged.is_empty() {
@@ -259,13 +271,16 @@ fn reached_from<'a>(
 }
 
 /// Whether a file is a program of its own by its text, as its language tells;
-/// one whose text cannot be read may be one.
-fn program(root: &Path, file: &str) -> bool {
+/// one whose text cannot be read may be one, and goes to `unreadable`.
+fn program(root: &Path, file: &str, unreadable: &mut BTreeSet<String>) -> bool {
     judged_language(file)
         .and_then(|language| language.program)
-        .is_some_and(|program| {
-            std::fs::read(root.join(file))
-                .map_or(true, |bytes| program(&String::from_utf8_lossy(&bytes)))
+        .is_some_and(|program| match std::fs::read(root.join(file)) {
+            Ok(bytes) => program(&String::from_utf8_lossy(&bytes)),
+            Err(_) => {
+                unreadable.insert(file.to_string());
+                true
+            }
         })
 }
 
@@ -275,6 +290,7 @@ fn unindexed_uses(
     root: &Path,
     paths: &[String],
     all_files: &[String],
+    unreadable: &mut BTreeSet<String>,
 ) -> Vec<(String, UnindexedUse)> {
     let files: BTreeSet<&str> = all_files.iter().map(String::as_str).collect();
     let mut found = Vec::new();
@@ -284,6 +300,7 @@ fn unindexed_uses(
         };
         // What a file names is ASCII, whatever the encoding of the file.
         let Ok(bytes) = std::fs::read(root.join(file)) else {
+            unreadable.insert(file.clone());
             continue;
         };
         found.extend(
@@ -297,7 +314,11 @@ fn unindexed_uses(
 
 /// The files the manifests of the project name as what their packages run or
 /// export.
-fn package_entries(root: &Path, all_files: &[String]) -> BTreeSet<String> {
+fn package_entries(
+    root: &Path,
+    all_files: &[String],
+    unreadable: &mut BTreeSet<String>,
+) -> BTreeSet<String> {
     let files: BTreeSet<&str> = all_files.iter().map(String::as_str).collect();
     let mut entries = BTreeSet::new();
     for manifest in all_files {
@@ -306,6 +327,7 @@ fn package_entries(root: &Path, all_files: &[String]) -> BTreeSet<String> {
         };
         let Ok(text) = std::fs::read_to_string(root.join(manifest)) else {
             // What it exports is not known: every file under it may be.
+            unreadable.insert(manifest.clone());
             let dir = parent(manifest);
             entries.extend(
                 all_files
@@ -378,7 +400,7 @@ mod tests {
         ]
         .map(String::from)
         .to_vec();
-        let found = unindexed_uses(dir.path(), &files, &files);
+        let found = unindexed_uses(dir.path(), &files, &files, &mut BTreeSet::new());
         let used = |line, specifier: &str, to: &str| {
             (
                 "src/main.ts".to_string(),
@@ -396,7 +418,7 @@ mod tests {
                 used(2, "./legacy", "src/legacy.js"),
             ]
         );
-        let entries = package_entries(dir.path(), &files);
+        let entries = package_entries(dir.path(), &files, &mut BTreeSet::new());
         assert!(entries.contains("bin/tool.js") && entries.contains("src/main.ts"));
     }
 }
