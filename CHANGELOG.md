@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/mokevnin/easement/compare/v0.6.3...v0.6.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **scan:** take a name for the copy in the component that imports it ([#114](https://github.com/mokevnin/easement/issues/114)) ([1eeaecd](https://github.com/mokevnin/easement/commit/1eeaecd8451ed08e0f1203542788a77c8d98c71a))
+
 ## [0.6.3](https://github.com/mokevnin/easement/compare/v0.6.2...v0.6.3) (2026-11-12)
 
 
