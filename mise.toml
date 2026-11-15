@@ -27,6 +27,8 @@ cargo-insta = "1.49.0"
 jactionlint = { version = "2.4.0", workflow = "release.yaml" }
 # Used by jactionlint to check the run: scripts of workflows.
 shellcheck = "0.11.0"
+# Finds security issues in the GitHub workflows: template injection, leaked credentials, broad permissions.
+zizmor = "1.32.0"
 betterleaks = "1.10.0"
 typos = "1.52.0"
 rumdl = "0.3.2"
