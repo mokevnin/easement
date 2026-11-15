@@ -89,6 +89,26 @@ fn the_baseline_keeps_the_debt_of_files_no_indexer_read() {
     assert!(written.contains("src/ui/legacy.js"), "{written}");
 }
 
+/// The debt of a file no indexer read is not seen, so it is not fixed either:
+/// `check` holds it as `baseline` does, and fails on no stale entry that
+/// `baseline` would keep.
+#[test]
+fn the_debt_of_files_no_indexer_read_is_not_stale() {
+    let (_tmp, root) = fixture("ts");
+    assert_eq!(baseline(&root, false).outcome(), Outcome::Passed);
+    let tsconfig = fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    fs::write(
+        root.join("tsconfig.json"),
+        tsconfig.replacen('{', "{\n  \"exclude\": [\"src/ui\"],", 1),
+    )
+    .unwrap();
+    let checked = check(&root);
+    let report = checked.report().json();
+    assert!(report.contains("\"stale\": []"), "{report}");
+    assert!(report.contains("src/ui/legacy.js"), "{report}");
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+}
+
 #[test]
 fn a_new_file_on_a_baselined_cycle_or_limit_is_not_new_debt() {
     let (_tmp, root) = project(&[
