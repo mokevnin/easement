@@ -123,6 +123,27 @@ fn diff_mode_judges_only_changed_lines() {
     assert!(said.contains("merge-base"), "{said}");
 }
 
+/// A file moved into another component is new there: every import it keeps is
+/// judged, although git only renamed it.
+#[test]
+fn diff_mode_judges_a_moved_file_in_full() {
+    let (_tmp, root) = fixture("ts");
+    on_feature(&root);
+    git(&root, &["mv", "src/ui/page.tsx", "src/domain/page.tsx"]);
+    git(&root, &["commit", "-q", "-m", "move"]);
+
+    let checked = check_with(&root, diff_main);
+    assert_eq!(checked.outcome(), Outcome::Failed, "{}", text(&checked));
+    let report = json(&checked);
+    let found: Vec<(&str, u64)> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| (v["file"].as_str().unwrap(), v["line"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(found, [("src/domain/page.tsx", 1)], "{report}");
+}
+
 /// A change to the policy is part of the change: what it newly rejects fails
 /// `--diff` although no import line changed.
 #[test]
