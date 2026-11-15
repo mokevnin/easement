@@ -580,11 +580,57 @@ fn starts_item(code: &[u8]) -> bool {
         "default",
     ];
     let text = String::from_utf8_lossy(&code[..code.len().min(64)]);
+    if is_macro_call(&text) {
+        return true;
+    }
     let first = text
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .next()
         .unwrap_or_default();
+    if first == "pub" && is_field(&text[first.len()..]) {
+        return false;
+    }
     KEYWORDS.contains(&first)
+}
+
+/// The length of the identifier `text` starts with.
+fn identifier(text: &str) -> usize {
+    text.find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(text.len())
+}
+
+/// Whether `text` starts with a call of a macro, which writes an item where an
+/// item may stand: a path, then `!` (`proptest! {`, `mockall::mock! {`).
+fn is_macro_call(text: &str) -> bool {
+    let mut rest = text;
+    loop {
+        let length = identifier(rest);
+        if length == 0 {
+            return false;
+        }
+        rest = &rest[length..];
+        match rest.strip_prefix("::") {
+            Some(after) => rest = after,
+            None => break,
+        }
+    }
+    let rest = rest.trim_start();
+    rest.starts_with('!') && !rest.starts_with("!=")
+}
+
+/// Whether what follows `pub` names a field, `pub name:` or `pub(crate) name:`,
+/// rather than an item.
+fn is_field(after_pub: &str) -> bool {
+    let mut rest = after_pub.trim_start();
+    if rest.starts_with('(') {
+        let Some(end) = rest.find(')') else {
+            return false;
+        };
+        rest = rest[end + 1..].trim_start();
+    }
+    let length = identifier(rest);
+    let after = rest[length..].trim_start();
+    length > 0 && after.starts_with(':') && !after.starts_with("::")
 }
 
 /// The name of the module, when the text of an item up to its `;` is `mod name`, with a
@@ -691,6 +737,26 @@ mod tests {
         let source =
             "#[cfg(test)]\npub(crate) fn a() {\n}\n#[cfg(test)]\nunsafe impl Send for S {\n}\n";
         assert_eq!(lines(source), [1..=3, 4..=6]);
+    }
+
+    /// An item a macro writes (`proptest! {}`, `mockall::mock! {}`,
+    /// `thread_local!(…);`) is test code under `#[cfg(test)]` as any other.
+    #[test]
+    fn a_cfg_test_macro_item_is_a_part() {
+        let source = "#[cfg(test)]\nproptest! {\n    fn a() {}\n}\n#[cfg(test)]\nmockall::mock! {\n}\n#[cfg(test)]\nthread_local!(static N: u8 = 0);\nfn run() {}\n";
+        assert_eq!(lines(source), [1..=4, 5..=7, 8..=9]);
+    }
+
+    /// A field is no item, whatever its visibility: the struct it sits in is
+    /// not taken for one that never closes.
+    #[test]
+    fn a_cfg_test_field_with_a_visibility_is_no_part() {
+        let found = rust(
+            "src/lib.rs",
+            "struct S {\n    #[cfg(test)]\n    pub f: u8,\n    #[cfg(test)]\n    pub(crate) g: u8,\n}\n",
+        );
+        assert!(found.spans.is_empty(), "{:?}", found.spans);
+        assert!(found.doubts.is_empty(), "{:?}", found.doubts);
     }
 
     #[test]
