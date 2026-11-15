@@ -593,10 +593,14 @@ fn starts_item(code: &[u8]) -> bool {
     KEYWORDS.contains(&first)
 }
 
-/// The length of the identifier `text` starts with.
+/// The length of the identifier `text` starts with, a raw one (`r#type`) too.
 fn identifier(text: &str) -> usize {
-    text.find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(text.len())
+    let raw = if text.starts_with("r#") { 2 } else { 0 };
+    let rest = &text[raw..];
+    let length = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    if length == 0 { 0 } else { raw + length }
 }
 
 /// Whether `text` starts with a call of a macro, which writes an item where an
@@ -753,7 +757,7 @@ mod tests {
     fn a_cfg_test_field_with_a_visibility_is_no_part() {
         let found = rust(
             "src/lib.rs",
-            "struct S {\n    #[cfg(test)]\n    pub f: u8,\n    #[cfg(test)]\n    pub(crate) g: u8,\n}\n",
+            "struct S {\n    #[cfg(test)]\n    pub f: u8,\n    #[cfg(test)]\n    pub(crate) g: u8,\n    #[cfg(test)]\n    pub r#type: u8,\n}\n",
         );
         assert!(found.spans.is_empty(), "{:?}", found.spans);
         assert!(found.doubts.is_empty(), "{:?}", found.doubts);
