@@ -156,21 +156,23 @@ pub fn contradicted_grants(
     }
     for (i, listed) in config.forbid_symbol.iter().enumerate() {
         let symbol = listed.name();
-        for file in files {
-            let Some((_, pattern)) = map.granted_in(i, file) else {
-                continue;
-            };
-            let owners = map
-                .component_of(file)
-                .into_iter()
-                .chain(parts.get(file).into_iter().flatten().copied());
-            for component in owners {
-                if let Some(spelled) = own_ban(config, component, symbol) {
-                    bail!(
-                        "forbid_symbol[{i}].allow_in lets `{pattern}` use `{symbol}`, but {file} there belongs to `{component}`, whose rules.{component}.forbid_symbol forbids it{spelled}"
-                    );
-                }
-            }
+        // The first pattern, then the first file by path, whatever order the walk took.
+        let first = files
+            .iter()
+            .filter_map(|file| {
+                let (at, pattern) = map.granted_in(i, file)?;
+                let (component, spelled) = map
+                    .component_of(file)
+                    .into_iter()
+                    .chain(parts.get(file).into_iter().flatten().copied())
+                    .find_map(|component| Some((component, own_ban(config, component, symbol)?)))?;
+                Some((at, file, pattern, component, spelled))
+            })
+            .min_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        if let Some((_, file, pattern, component, spelled)) = first {
+            bail!(
+                "forbid_symbol[{i}].allow_in lets `{pattern}` use `{symbol}`, but {file} there belongs to `{component}`, whose rules.{component}.forbid_symbol forbids it{spelled}"
+            );
         }
     }
     Ok(())
@@ -429,6 +431,32 @@ rules:
             list.join(", ")
         ))
         .unwrap()
+    }
+
+    /// The first contradiction is told whatever order the files are walked in:
+    /// the first pattern of the item, then the first file by path.
+    #[test]
+    fn a_contradicted_grant_is_told_the_same_in_any_order_of_files() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  web: { in: web }
+rules:
+  web: { forbid_symbol: [d.T] }
+forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let said = |files: &[&str]| {
+            let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+            contradicted_grants(&config, &map, &files, &[])
+                .unwrap_err()
+                .to_string()
+        };
+        let first = "forbid_symbol[0].allow_in lets `web/b` use `d.T`, but web/b/x.go there belongs to `web`, whose rules.web.forbid_symbol forbids it";
+        assert_eq!(said(&["web/a/x.go", "web/b/y.go", "web/b/x.go"]), first);
+        assert_eq!(said(&["web/b/x.go", "web/b/y.go", "web/a/x.go"]), first);
     }
 
     fn known(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

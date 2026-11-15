@@ -34,6 +34,9 @@ pub struct Indexer {
     mise: Option<&'static str>,
     /// For an indexer that has no output option: the file it writes in its working directory.
     writes_in_cwd: Option<&'static str>,
+    /// The argument that makes it print its version, for `doctor`; `None` for an
+    /// indexer that takes any argument for a request to index (scip-php).
+    version_flag: Option<&'static str>,
     /// What has to be in place before the indexer runs: (project root, directory, shown name).
     needs: fn(&Path, &Path, &str) -> Result<()>,
     /// Which project files under the index directory the cache key reads (the `/`-separated
@@ -189,6 +192,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
         mise: Some("go:github.com/scip-code/scip-go/cmd/scip-go"),
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: go_inputs,
         env: go_env,
@@ -210,6 +214,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "mise use -g npm:@sourcegraph/scip-typescript",
         mise: Some("npm:@sourcegraph/scip-typescript"),
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: require_installed,
         inputs: typescript_inputs,
         env: |_| false,
@@ -241,6 +246,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "mise use -g npm:@sourcegraph/scip-python",
         mise: Some("npm:@sourcegraph/scip-python"),
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: every_own_file,
         env: python_env,
@@ -255,6 +261,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "composer global require davidrjenni/scip-php",
         mise: None,
         writes_in_cwd: Some("index.scip"),
+        version_flag: None,
         needs: require_composer,
         inputs: every_own_file,
         env: |_| false,
@@ -269,6 +276,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "mise use -g github:sourcegraph/scip-java",
         mise: Some("github:sourcegraph/scip-java"),
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: every_own_file,
         env: java_env,
@@ -283,6 +291,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "dotnet tool install --global scip-dotnet",
         mise: None,
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: every_own_file,
         env: csharp_env,
@@ -305,6 +314,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "mise use -g github:sourcegraph/scip-ruby",
         mise: Some("github:sourcegraph/scip-ruby"),
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: every_own_file,
         // scip-ruby reads no variable that changes the index; Bundler's are read
@@ -328,6 +338,7 @@ pub static INDEXERS: &[Indexer] = &[
         install: "rustup component add rust-analyzer",
         mise: None,
         writes_in_cwd: None,
+        version_flag: Some("--version"),
         needs: nothing_needed,
         inputs: every_own_file,
         env: rust_env,
@@ -919,7 +930,8 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
             let binary = environment.which(language.binary, root);
             let version = binary
                 .as_deref()
-                .and_then(|binary| version_of(binary, environment));
+                .zip(language.version_flag)
+                .and_then(|(binary, flag)| version_of(binary, flag, environment));
             let problems = language
                 .roots(files)
                 .iter()
@@ -944,9 +956,9 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
         .collect()
 }
 
-/// The first line a tool prints for `--version`.
-fn version_of(binary: &Path, environment: &Environment) -> Option<String> {
-    let output = environment.command(binary).arg("--version").output().ok()?;
+/// The first line a tool prints for `flag`.
+fn version_of(binary: &Path, flag: &str, environment: &Environment) -> Option<String> {
+    let output = environment.command(binary).arg(flag).output().ok()?;
     [output.stdout, output.stderr].iter().find_map(|bytes| {
         String::from_utf8_lossy(bytes)
             .lines()
@@ -1033,6 +1045,9 @@ fn index_dir(
         }
         None => out.path().join("index.scip"),
     };
+    // What the indexer writes in the project goes when this run ends, failed or not:
+    // left there, it would be in the way of every run after it.
+    let _written = language.writes_in_cwd.map(|_| RemoveOnDrop(file.clone()));
     let output = environment
         .command(&binary)
         .args((language.args)(&file))
@@ -1067,11 +1082,7 @@ fn index_dir(
         );
     }
     let bytes = std::fs::read(&file)
-        .with_context(|| format!("{} wrote no index in {shown}", language.binary));
-    if language.writes_in_cwd.is_some() {
-        let _ = std::fs::remove_file(&file);
-    }
-    let bytes = bytes?;
+        .with_context(|| format!("{} wrote no index in {shown}", language.binary))?;
     let documents = scip::parse(&bytes, root, Path::new(dir))
         .with_context(|| format!("cannot read the index of {} in {shown}", language.binary))?;
     if documents.is_empty() {
@@ -1095,6 +1106,15 @@ fn index_dir(
         trim(parent, &path, CACHE_BUDGET);
     }
     Ok((documents, false))
+}
+
+/// A file removed when this goes out of scope, as far as it can be.
+struct RemoveOnDrop(PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Entries of one directory and indexer that are kept: checkouts of the same
@@ -1612,5 +1632,65 @@ mod tests {
         // The entry just written stays even when it alone is over the budget.
         trim(dir.path(), &written, 10);
         assert_eq!(left(), [".tmpXXXX", "cccc-0.scip"]);
+    }
+
+    /// A PHP project scip-php can run in, with a stand-in for scip-php that
+    /// runs `script` from the bin directory it returns on the `PATH`.
+    #[cfg(unix)]
+    fn php_project(script: &str) -> (tempfile::TempDir, PathBuf, Environment) {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        let bin = tmp.path().join("bin");
+        for (file, text) in [
+            ("composer.json", "{}"),
+            ("composer.lock", "{}"),
+            ("vendor/autoload.php", "<?php\n"),
+            ("a.php", "<?php\n"),
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake = bin.join("scip-php");
+        std::fs::write(&fake, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let environment = Environment(BTreeMap::new()).with("PATH", bin.as_os_str());
+        (tmp, root, environment)
+    }
+
+    fn php() -> &'static Indexer {
+        INDEXERS.iter().find(|i| i.binary == "scip-php").unwrap()
+    }
+
+    /// scip-php writes its index into the directory it indexes: a run that fails
+    /// takes away what it wrote, or every run after it would find it in the way.
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_indexer_leaves_no_index_in_the_project() {
+        let (_tmp, root, environment) = php_project("echo partial > index.scip\nexit 1");
+        let indexing = Indexing {
+            cache: CacheUse::Off,
+            cache_dir: None,
+            environment,
+            jobs: Jobs::default(),
+        };
+        let files = vec!["a.php".to_string()];
+        let failed = index_dir(php(), &root, "", &files, &indexing, &Default::default());
+        assert!(failed.is_err());
+        assert!(!root.join("index.scip").exists());
+    }
+
+    /// scip-php takes any argument for a request to index: `doctor` does not
+    /// ask it for its version.
+    #[test]
+    #[cfg(unix)]
+    fn doctor_runs_no_indexer_that_would_index_for_a_version() {
+        let (tmp, root, environment) = php_project("echo \"$@\" > \"$0.ran\"");
+        let found = diagnose(&root, &["a.php".to_string()], &environment);
+        assert!(found[0].found, "{:?}", found[0].path);
+        assert_eq!(found[0].version, None);
+        assert!(!tmp.path().join("bin/scip-php.ran").exists());
     }
 }
