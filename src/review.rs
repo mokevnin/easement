@@ -465,18 +465,21 @@ fn importers_of(component: &crate::config::Component) -> Option<BTreeSet<&str>> 
         .map(|list| list.iter().map(String::as_str).collect())
 }
 
-/// The named surfaces of a component as a review lists them, one per name:
-/// `admin: src/billing/admin (open to jobs)`; none when it has none.
+/// The named surfaces of a component as a review lists them, one per name, its
+/// importers in name order: `admin: src/billing/admin (open to jobs)`; none when
+/// it has none.
 fn named_surfaces(component: &crate::config::Component) -> Option<Vec<String>> {
     (!component.surfaces.is_empty()).then(|| {
         component
             .surfaces
             .iter()
             .map(|(name, s)| {
+                // Who is let in, in name order: not how the list is spelled.
+                let importers: BTreeSet<&str> = s.importers.iter().map(String::as_str).collect();
                 format!(
                     "{name}: {} (open to {})",
                     s.patterns.as_vec().join(", "),
-                    s.importers.join(", ")
+                    importers.into_iter().collect::<Vec<_>>().join(", ")
                 )
             })
             .collect()

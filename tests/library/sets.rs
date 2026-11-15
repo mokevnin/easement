@@ -141,6 +141,10 @@ fn a_glob_or_a_set_that_covers_nothing_fails_as_unmatched_at_its_line() {
         .replace(
             "  runner: { may_depend_on: [usecase] }\n",
             "  runner: { may_depend_on: [usecase, '@gone'] }\n  'job-*': { may_depend_on: [usecase] }\n  wiring: { may_depend_on: ['web-*'] }\n",
+        )
+        .replace(
+            "    may_depend_on: [usecase, ee-licensekey]\n",
+            "    may_depend_on: [usecase, ee-licensekey, 'zz-*']\n",
         );
     let (_tmp, root) = drivers(&policy);
     let report = json(&check(&root));
@@ -169,6 +173,11 @@ fn a_glob_or_a_set_that_covers_nothing_fails_as_unmatched_at_its_line() {
                 5,
                 "cli-*",
                 "`cli-*` in sets.gone matches no component; fix the glob or drop it"
+            ),
+            (
+                17,
+                "zz-*",
+                "`zz-*` in rules.'api-*'.may_depend_on matches no component; fix the glob or drop it"
             ),
             (
                 20,
@@ -345,14 +354,31 @@ fn suggest_patch_leaves_globs_and_sets_to_remove_by_hand() {
 /// the expanded lists, whatever their order.
 #[test]
 fn review_of_a_policy_respelled_as_globs_and_sets_lists_no_change() {
-    let written_out = WRITTEN_OUT.replace(
-        "allow_importers: [wiring, ee-licensekey, ee-sso]",
-        "allow_importers: [ee-sso, wiring, ee-licensekey]",
+    let surface = |allowed: &str, importers: &str| {
+        format!(
+            "allow_importers: {allowed}, surfaces: {{ api: {{ in: src/usecase/case.ts, importers: {importers} }} }}"
+        )
+    };
+    let written_out = WRITTEN_OUT
+        .replace(
+            "allow_importers: [wiring, ee-licensekey, ee-sso]",
+            "allow_importers: [ee-sso, wiring, ee-licensekey]",
+        )
+        .replace(
+            "allow_importers: [api-site, api-external, runner, wiring]",
+            &surface(
+                "[api-site, api-external, runner, wiring]",
+                "[runner, api-site, api-external]",
+            ),
+        );
+    let spelled = SPELLED.replace(
+        "allow_importers: ['@drivers', wiring]",
+        &surface("['@drivers', wiring]", "['@drivers']"),
     );
     let (_tmp, root) = drivers(&written_out);
     commit_all(&root);
     git(&root, &["checkout", "-q", "-b", "feature"]);
-    fs::write(config(&root), SPELLED).unwrap();
+    fs::write(config(&root), spelled).unwrap();
     let review = commands::review(&config(&root), "main", &mut cache()).unwrap();
     let report = crate::run::parse(&review.json());
     for section in ["permissions", "surfaces", "constraints"] {
