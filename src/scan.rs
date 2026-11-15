@@ -57,8 +57,12 @@ pub struct Scan {
     pub types: Vec<TypeDef>,
     pub suppressions: Vec<Suppression>,
     /// Source files of an indexed language that the indexer did not cover,
-    /// for example files outside every `tsconfig.json`.
+    /// for example files outside every `tsconfig.json`, and the source files an
+    /// adapter could not read.
     pub uncovered: Vec<String>,
+    /// Source files easement could not read: what they import beyond the index,
+    /// and what they suppress, is unknown.
+    pub unreadable: Vec<String>,
     /// Checked files that use a name of a package the indexer left unnamed,
     /// which no rule on names judged.
     pub unnamed_uses: Vec<String>,
@@ -239,6 +243,10 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         std::collections::BTreeMap::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
+    // Source files an adapter would parse that cannot be read.
+    let mut unread_sources: Vec<String> = Vec::new();
+    // Every source file that cannot be read, those of the index too.
+    let mut unreadable: Vec<String> = Vec::new();
     for (entry, rel) in walked {
         let path = entry.path();
         let file = slash(&rel);
@@ -263,9 +271,14 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
             .get(&rel)
             .is_some_and(|p| p.len == meta.len() && p.modified == modified && modified.is_some());
         if !fresh {
-            let source = match std::fs::read_to_string(path) {
-                Ok(s) => s,
-                Err(_) => continue, // binary or unreadable
+            // Imports are ASCII: a file in another encoding is read all the same.
+            // One that cannot be read is no file nothing imports: it is uncovered.
+            let source = match std::fs::read(path) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(_) => {
+                    unread_sources.push(file.clone());
+                    continue;
+                }
             };
             let parsed = Parsed {
                 modified,
@@ -380,7 +393,9 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         .filter(|d| !target_only.is_match(d.path.as_str()))
     {
         paths.push(document.path.clone());
-        if let Ok(source) = std::fs::read_to_string(root.join(&document.path)) {
+        if let Ok(bytes) = std::fs::read(root.join(&document.path)) {
+            // Directives and imports are ASCII, whatever the encoding of the file.
+            let source = String::from_utf8_lossy(&bytes);
             suppressions.extend(suppress::parse(&document.path, &source));
             if let Some(written) = lang::registry::of(&document.path)
                 .and_then(|language| language.written_imports.as_ref())
@@ -397,6 +412,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
                     }
                 }
             }
+        } else {
+            unreadable.push(document.path.clone());
         }
         types.extend(document.types.iter().map(|(name, line)| TypeDef {
             file: document.path.clone(),
@@ -480,7 +497,19 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         symbols,
         unverified_symbols,
         suppressions,
-        uncovered: indexed.uncovered,
+        uncovered: {
+            let mut uncovered = indexed.uncovered;
+            uncovered.extend(unread_sources.iter().cloned());
+            uncovered.sort();
+            uncovered.dedup();
+            uncovered
+        },
+        unreadable: {
+            unreadable.extend(unread_sources);
+            unreadable.sort();
+            unreadable.dedup();
+            unreadable
+        },
         unnamed_uses,
         unresolved_imports,
         parts_doubts,

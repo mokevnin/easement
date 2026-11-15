@@ -449,6 +449,9 @@ pub struct Stats {
     /// Source files of an indexed language that its indexer did not cover.
     #[serde(skip)]
     pub uncovered: Vec<String>,
+    /// Source files easement could not read, `uncovered_ok` aside.
+    #[serde(skip)]
+    pub unreadable: Vec<String>,
     /// `--component` and `--scope` of the run, as `component web`, `path src/api`.
     #[serde(skip)]
     pub limited_to: Vec<String>,
@@ -991,8 +994,12 @@ pub fn required(
             let Some(pattern) = &directives[wanted.name()] else {
                 continue;
             };
+            // Read whatever the encoding of the file: a directive is ASCII. A file
+            // that cannot be read may hold it, and the scan reports the file.
             let present = unit.files.iter().any(|file| {
-                std::fs::read_to_string(root.join(file)).is_ok_and(|text| pattern.is_match(&text))
+                std::fs::read(root.join(file)).map_or(true, |bytes| {
+                    pattern.is_match(&String::from_utf8_lossy(&bytes))
+                })
             });
             if !present {
                 missing(
@@ -1152,6 +1159,65 @@ mod tests {
             assert_eq!(once.file, want);
             assert_eq!(once.clone().canonical(), once);
         }
+    }
+
+    /// A directive is ASCII: it is found in a file that is not UTF-8.
+    #[test]
+    fn a_directive_is_found_in_a_file_of_another_encoding() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  mappers: { in: mappers }
+rules:
+  mappers: { requires_directive: ['goverter:converter'] }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("mappers")).unwrap();
+        // An "é" in Latin-1, which is no UTF-8, then the directive.
+        let mut source = b"// \xe9\n".to_vec();
+        source.extend_from_slice(b"// goverter:converter\npackage mappers\n");
+        std::fs::write(dir.path().join("mappers/m.go"), source).unwrap();
+        let files = vec!["mappers/m.go".to_string()];
+        let found = required(dir.path(), &config, &map, &[], &files, &files);
+        assert!(
+            found.is_empty(),
+            "{:?}",
+            found.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// A file that cannot be read may hold the directive: no violation is
+    /// drawn from it (the scan reports the file as unreadable).
+    #[test]
+    #[cfg(unix)]
+    fn a_directive_is_not_missing_from_a_file_that_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  mappers: { in: mappers }
+rules:
+  mappers: { requires_directive: ['goverter:converter'] }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("mappers")).unwrap();
+        let file = dir.path().join("mappers/m.go");
+        std::fs::write(&file, "// goverter:converter\npackage mappers\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let files = vec!["mappers/m.go".to_string()];
+        let found = required(dir.path(), &config, &map, &[], &files, &files);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            found.is_empty(),
+            "{:?}",
+            found.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]

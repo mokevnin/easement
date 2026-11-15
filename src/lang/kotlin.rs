@@ -74,9 +74,12 @@ impl Kotlin {
             let Some(stem) = rel.file_stem() else {
                 continue;
             };
-            let Ok(source) = std::fs::read_to_string(root.join(rel)) else {
+            // Declarations are read whatever the encoding of the file. One that cannot
+            // be read declares nothing known; the scan reports it as unreadable.
+            let Ok(bytes) = std::fs::read(root.join(rel)) else {
                 continue;
             };
+            let source = String::from_utf8_lossy(&bytes);
             let package = package_of(&source).unwrap_or_default();
             let qualify = |name: &str| {
                 if package.is_empty() {
