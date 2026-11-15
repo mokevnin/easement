@@ -10,9 +10,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_norway::Value;
 
+mod expand;
 mod schema;
 mod validate;
 
+pub use expand::{Expansion, field_key, is_pattern};
 pub use schema::schema_text;
 pub use validate::closest;
 use validate::unknown_component;
@@ -31,10 +33,19 @@ pub struct Config {
     /// Named parts of the system and the paths they cover.
     #[schemars(extend("minProperties" = 1))]
     pub components: BTreeMap<String, Component>,
-    /// Components every other component may depend on.
+    /// Named sets of components, each a list of component names and globs over them
+    /// (`drivers: [api-*, runner, cli]`), never another set. A list of components names a
+    /// set as `'@drivers'`; a set no list or rule key names fails as `unmatched`.
+    #[serde(default)]
+    pub sets: BTreeMap<String, Vec<String>>,
+    /// Components every other component may depend on. As in every list of components, an
+    /// item may be a glob over component names (`'ee-*'`) or a set (`'@drivers'`); one that
+    /// covers no component fails as `unmatched`.
     #[serde(default)]
     pub common: Vec<String>,
-    /// Per component: what it may depend on and use.
+    /// Per component: what it may depend on and use. A key may be a glob over component
+    /// names (`'api-*'`) or a set (`'@drivers'`): its rule is the rule of each component it
+    /// covers. A component two keys cover fails to load.
     #[serde(default)]
     pub rules: BTreeMap<String, Rule>,
     /// Names that no checked file may use, components and files that belong to none alike,
@@ -67,7 +78,8 @@ pub struct Config {
     /// Components from the top layer to the bottom one: a layer may depend on any layer below
     /// it, never on one above. A list in place of a name holds sibling components of one
     /// layer, which do not depend on each other; {name, closed: true} is a layer the ones
-    /// above cannot reach past.
+    /// above cannot reach past. A glob or a set in place of a name holds the siblings it
+    /// covers; a closed layer must cover one component.
     #[serde(default)]
     pub layers: Vec<Layer>,
     /// Fail on checked files that belong to no component, except those matching `unowned`.
@@ -125,6 +137,10 @@ pub struct Config {
     /// component owns cannot be judged and fails. `extends` joins the lists.
     #[serde(default)]
     pub examples: Vec<Example>,
+    /// What the globs and sets expanded to, and where each expanded name is written.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub expansion: Expansion,
 }
 
 /// A policy example: a proposed dependency and the decision it must get.
@@ -302,7 +318,7 @@ pub struct ForbiddenNameItem {
     #[serde(default)]
     because: Option<String>,
     /// Only in the top-level `forbid_symbol`: the components that may use the name. Every
-    /// other use is a violation, in the component that defines the name too.
+    /// other use is a violation, in the component that defines the name too. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     allow: Option<Vec<String>>,
     /// Only in the top-level `forbid_symbol`: globs of the paths whose files may use the
@@ -446,7 +462,7 @@ pub struct Component {
     /// evidence gap instead.
     #[serde(default)]
     pub public_symbols: Option<Vec<String>>,
-    /// When set, only these components (and the component itself) may import it.
+    /// When set, only these components (and the component itself) may import it. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     pub allow_importers: Option<Vec<String>>,
     /// Named surfaces: paths of the component open only to the components each lists. With
@@ -493,7 +509,7 @@ pub struct Surface {
     #[serde(rename = "in")]
     pub patterns: Patterns,
     /// The components that may import these paths; each must be in `allow_importers` when the
-    /// component has one.
+    /// component has one. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[schemars(length(min = 1))]
     pub importers: Vec<String>,
     /// Why the surface exists; shown with its violations.
@@ -579,19 +595,20 @@ pub enum Reach {
     Symbols,
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     /// Components this one may depend on. An item may carry its own reason, shown by
-    /// `explain`.
+    /// `explain`, and may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     pub may_depend_on: Vec<Listed>,
     /// Components that are never allowed, even if common or layers would allow them. An item
-    /// may carry its own reason.
+    /// may carry its own reason, and may be a glob or a set.
     #[serde(default)]
     pub must_not_depend_on: Vec<Listed>,
     /// Components this component must not depend on, directly or through any chain of
-    /// imports, even when every hop is allowed. An item may carry its own reason.
+    /// imports, even when every hop is allowed. An item may carry its own reason, and may be
+    /// a glob or a set.
     #[serde(default)]
     pub must_not_reach: Vec<Listed>,
     /// External modules this component may use; unset means no restriction. A pattern covers
@@ -650,7 +667,15 @@ impl Config {
         // The merged value has no line numbers, so the error names the path to the field.
         let config: Config = serde_path_to_error::deserialize(value)
             .with_context(|| format!("invalid config {}", path.display()))?;
-        let config = config.with_tests()?;
+        config.checked()
+    }
+
+    /// The config as rules read it: with the `tests` component of `tests: auto`, its
+    /// globs and sets expanded, and every key checked against the others.
+    fn checked(self) -> Result<Self> {
+        let config = self.with_tests()?;
+        config.check_written()?;
+        let config = config.expand()?;
         config.validate()?;
         Ok(config)
     }
@@ -962,10 +987,7 @@ rules:
     }
 
     fn parse(yaml: &str) -> Result<Config> {
-        let config: Config = serde_norway::from_str(yaml)?;
-        let config = config.with_tests()?;
-        config.validate()?;
-        Ok(config)
+        serde_norway::from_str::<Config>(yaml)?.checked()
     }
 
     #[test]

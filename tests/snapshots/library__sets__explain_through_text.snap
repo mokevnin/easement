@@ -1,0 +1,10 @@
+---
+source: tests/library/sets.rs
+expression: "commands::explain(&config(&root),\n&root.join(\"src/api/site/page.ts\")).unwrap().text().unwrap()"
+---
+src/api/site/page.ts
+  component: api-site (matches `src/api/site`)
+  may depend on: usecase (may_depend_on through `api-*`)
+  not allowed: api-external, ee-licensekey (open only to wiring, ee-licensekey, ee-sso), ee-sso, runner, wiring
+  rule: written under rules.'api-*'
+  because: drivers call use cases

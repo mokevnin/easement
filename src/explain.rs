@@ -444,8 +444,30 @@ fn component_policy(policy: &Policy, map: &ComponentMap, name: &str) -> Componen
             max_fan_out: rule.max_fan_out,
             max_instability: rule.max_instability,
             because: rule.because.clone(),
-            provenance: policy.provenance(&Site::of_entry("rules", name, format!("rules.{name}"))),
+            provenance: policy.provenance(&Site::of_rule(config, name, "")),
         }),
+    }
+}
+
+/// ` through `api-*`, `@drivers``: the globs and sets that bring a clause to the
+/// component it is about, as text follows the clause with them; empty when the
+/// policy names the component.
+pub fn through(provenance: Option<&Provenance>) -> String {
+    through_names(provenance.map_or(&[], |p| p.through.as_slice()))
+}
+
+/// ` through `api-*`, `@drivers``, for the globs and sets `through`; empty for none.
+pub fn through_names(through: &[String]) -> String {
+    match through {
+        [] => String::new(),
+        through => format!(
+            " through {}",
+            through
+                .iter()
+                .map(|t| format!("`{t}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -521,6 +543,7 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         .iter()
         .map(|Toward { to, decision }| {
             let grant = decision.grant.map(Grant::as_str).unwrap_or_default();
+            let through = through(decision.provenance.as_ref());
             let because = decision
                 .because
                 .as_deref()
@@ -531,17 +554,20 @@ pub fn render(explanation: &Explanation) -> Result<String> {
                 .iter()
                 .map(|c| format!("; {c}"))
                 .collect();
-            format!("{to} ({grant}{because}{conditions})")
+            format!("{to} ({grant}{through}{because}{conditions})")
         })
         .collect();
     let forbidden: Vec<String> = component
         .prohibitions
         .iter()
         .map(|Toward { to, decision }| {
+            let through = through(decision.provenance.as_ref());
             if decision.rejected_by == Some(ClauseId::MustNotReach) {
-                format!("{to} (not even through others)")
-            } else {
+                format!("{to} (not even through others{through})")
+            } else if through.is_empty() {
                 to.clone()
+            } else {
+                format!("{to} ({})", through.trim_start())
             }
         })
         .collect();
@@ -570,6 +596,12 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         out.push_str(&format!("  not allowed: {}\n", other.join(", ")));
     }
     if let Some(rule) = &component.rule {
+        if !rule.provenance.through.is_empty() {
+            out.push_str(&format!(
+                "  rule: written under {}\n",
+                rule.provenance.field
+            ));
+        }
         let names = |items: &[Named]| {
             items
                 .iter()

@@ -3,10 +3,13 @@
 //! not hold as a list item under `rules.<rule>.may_depend_on` (an alias, a merge) is
 //! reported to be removed by hand, never guessed at.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use similar::TextDiff;
 use yaml_edit::{Document, YamlNode};
+
+use crate::config::{Config, field_key};
 
 /// The text with the `may_depend_on` entries `removals` (`(rule, component)`) taken out,
 /// and a note for every entry that could not be located.
@@ -29,6 +32,59 @@ pub fn remove_allowances(text: &str, removals: &[(String, String)]) -> (String, 
         .map(|(rule, target)| skip(rule, target))
         .collect();
     (document.to_string(), skipped)
+}
+
+/// The entries the patch leaves alone, by the list as written and the globs and
+/// sets that hold them: the components whose rule it is, and the names no import
+/// of theirs uses.
+type Held = BTreeMap<(String, Vec<String>), (BTreeSet<String>, BTreeSet<String>)>;
+
+/// The removals of `may_depend_on` entries (`(rule, component)`) that `config`
+/// writes by name, and a note for each list whose glob or set holds the others:
+/// the rule key covers other components, or the item covers other names, so the
+/// patch leaves it alone and names it once, with what no import uses.
+pub fn by_name(
+    config: &Config,
+    removals: Vec<(String, String)>,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let mut plain = Vec::new();
+    let mut held = Held::new();
+    for (rule, target) in removals {
+        let key = config.rule_key(&rule);
+        let mut through: Vec<String> = (key != rule).then(|| key.to_string()).into_iter().collect();
+        if let Some(covered_by) = config
+            .written(&format!("rules.{rule}.may_depend_on"), &target)
+            .and_then(|w| w.covered_by.clone())
+            && !through.contains(&covered_by)
+        {
+            through.push(covered_by);
+        }
+        if through.is_empty() {
+            plain.push((rule, target));
+            continue;
+        }
+        let list = format!("rules.{}.may_depend_on", field_key(key));
+        let (rules, targets) = held.entry((list, through)).or_default();
+        rules.insert(rule);
+        targets.insert(target);
+    }
+    let notes = held
+        .into_iter()
+        .map(|((list, through), (rules, targets))| {
+            let join = |names: BTreeSet<String>| names.into_iter().collect::<Vec<_>>().join(", ");
+            format!(
+                "{list}: no import of {} uses {}, but the patch does not edit what comes through {}; remove it by hand if no component it covers needs it",
+                join(rules),
+                join(targets),
+                through
+                    .iter()
+                    .map(|t| format!("`{t}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect();
+    (plain, notes)
 }
 
 /// A unified diff of `old` into `new` for the file `name`, empty when nothing changed.

@@ -474,11 +474,7 @@ pub fn grant_site(config: &Config, from: &str, to: &str, grant: Grant) -> Option
         Grant::SameComponent => None,
         Grant::Tests => Some(Site::of_key("tests")),
         Grant::MayDependOn => listed_site(config, from, "may_depend_on", to),
-        Grant::Common => config
-            .common
-            .iter()
-            .position(|c| c == to)
-            .map(|at| Site::of_common(to, at)),
+        Grant::Common => Site::of_common(config, to),
         Grant::Layers => Some(Site::of_key("layers")),
     }
 }
@@ -497,19 +493,7 @@ pub fn refusal_site(config: &Config, from: &str, to: &str, refusal: &Refusal) ->
 
 /// The item that names `to` in the list `field` of the rule of `from`.
 fn listed_site(config: &Config, from: &str, field: &str, to: &str) -> Option<Site> {
-    let rule = config.rules.get(from)?;
-    let list = match field {
-        "may_depend_on" => &rule.may_depend_on,
-        "must_not_depend_on" => &rule.must_not_depend_on,
-        "must_not_reach" => &rule.must_not_reach,
-        _ => return None,
-    };
-    let at = list.iter().position(|l| l.name() == to)?;
-    Some(Site::of_entry(
-        "rules",
-        from,
-        format!("rules.{from}.{field}[{at}]"),
-    ))
+    Site::of_rule_item(config, from, field, to)
 }
 
 impl Decision<'_> {

@@ -69,8 +69,36 @@ pub fn unmatched(
                     ..Violation::of(RuleId::Unmatched)
                 }),
         )
+        .chain(unmatched_names(policy, config_file))
         .chain(unmatched_parts(policy, deps, config_file))
         .chain(unmatched_grants(policy, map, files, config_file))
+        .collect()
+}
+
+/// A glob or a set of a list of components, or a key of `rules`, that covers no
+/// component, and a set nothing names: each says nothing, so it is a typo or a
+/// component gone.
+fn unmatched_names(policy: &Policy, config_file: &str) -> Vec<Violation> {
+    policy
+        .config
+        .expansion
+        .unmatched
+        .iter()
+        .map(|unmatched| {
+            let path: Vec<&str> = unmatched.path.iter().map(String::as_str).collect();
+            let line = if unmatched.is_key {
+                policy.config_key_line(&path, &unmatched.item)
+            } else {
+                policy.config_line(&path, &unmatched.item)
+            };
+            Violation {
+                file: config_file.to_string(),
+                line,
+                message: unmatched.message.clone(),
+                target: unmatched.item.clone(),
+                ..Violation::of(RuleId::Unmatched)
+            }
+        })
         .collect()
 }
 

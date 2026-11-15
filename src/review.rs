@@ -12,6 +12,7 @@ use crate::components::{AcceptedGap, Access, ComponentMap};
 use crate::config::{Config, Example};
 use crate::decision::{self, Grant, PairDecision, Refusal};
 use crate::examples;
+use crate::explain;
 use crate::policy::Policy;
 use crate::report::{self, EvidenceGap};
 
@@ -181,6 +182,10 @@ pub struct PermissionChange {
     pub change: Change,
     /// The grant that now permits the pair, or the clause that now rejects it.
     pub clause: String,
+    /// The globs and sets, as the head policy writes them, that bring that grant
+    /// or clause to the pair: a new component a glob covers is permitted through it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub through: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub because: Option<String>,
 }
@@ -209,6 +214,11 @@ pub fn permissions(sides: &Sides) -> Vec<PermissionChange> {
             if now.rejected() != then_permitted {
                 continue;
             }
+            let site = match &now.grant {
+                Err(refusal) => decision::refusal_site(head, from, to, refusal),
+                Ok(_) if now.importers.is_some() => None,
+                Ok(grant) => decision::grant_site(head, from, to, *grant),
+            };
             let (change, clause, because) = match &now.grant {
                 Ok(grant) if now.importers.is_none() => {
                     // A plain `may_depend_on` item gives the reason of its rule;
@@ -229,6 +239,7 @@ pub fn permissions(sides: &Sides) -> Vec<PermissionChange> {
                 to: to.clone(),
                 change,
                 clause,
+                through: site.map(|s| s.through().to_vec()).unwrap_or_default(),
                 because: because.map(str::to_string),
             });
         }
@@ -283,6 +294,11 @@ pub struct SurfaceChange {
     /// component for `public`, to the importers removed for `allow_importers`,
     /// to some component its surfaces let in before for `surfaces`.
     pub closes: Vec<String>,
+    /// For `allow_importers`, the glob or set, as written, that each importer of
+    /// `added` or `removed` comes through: the head policy's for one added, the
+    /// merge-base's for one removed. A new component a glob covers is let in so.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub through: BTreeMap<String, String>,
 }
 
 /// The key of a component that says who may import which of its files.
@@ -351,6 +367,7 @@ pub fn surfaces(sides: &Sides, files: &[String]) -> Vec<SurfaceChange> {
                     removed,
                     opens: Vec::new(),
                     closes: Vec::new(),
+                    through: BTreeMap::new(),
                 }
             })
         };
@@ -393,6 +410,19 @@ pub fn surfaces(sides: &Sides, files: &[String]) -> Vec<SurfaceChange> {
             }
             if importers.before.is_none() || (both && !importers.removed.is_empty()) {
                 importers.closes = pick(|then, _| then);
+            }
+            let list = format!("components.{name}.allow_importers");
+            for (config, items) in [
+                (&sides.head.config, &importers.added),
+                (&sides.base.config, &importers.removed),
+            ] {
+                for item in items {
+                    if let Some(through) =
+                        config.written(&list, item).and_then(|w| w.through.clone())
+                    {
+                        importers.through.insert(item.clone(), through);
+                    }
+                }
             }
             changes.push(importers);
         }
@@ -746,11 +776,22 @@ impl SurfaceChange {
             (Some(before), None) => format!("{unset} now (was {})", quoted(before)),
             _ => {
                 let mut parts = Vec::new();
+                // Each item, with the glob or set it comes through.
+                let items = |items: &[String]| {
+                    items
+                        .iter()
+                        .map(|item| match self.through.get(item) {
+                            Some(through) => format!("`{item}` (through `{through}`)"),
+                            None => format!("`{item}`"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
                 if !self.added.is_empty() {
-                    parts.push(format!("added {}", quoted(&self.added)));
+                    parts.push(format!("added {}", items(&self.added)));
                 }
                 if !self.removed.is_empty() {
-                    parts.push(format!("removed {}", quoted(&self.removed)));
+                    parts.push(format!("removed {}", items(&self.removed)));
                 }
                 if parts.is_empty() {
                     parts.push("reordered".to_string());
@@ -824,8 +865,11 @@ impl Review {
                 Change::Rejected => "newly rejected",
             };
             out.push_str(&format!(
-                "  {} -> {} {change} ({})\n",
-                p.from, p.to, p.clause
+                "  {} -> {} {change} ({}{})\n",
+                p.from,
+                p.to,
+                p.clause,
+                explain::through_names(&p.through)
             ));
             if let Some(because) = &p.because {
                 out.push_str(&format!("    because: {because}\n"));
