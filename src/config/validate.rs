@@ -154,6 +154,12 @@ impl Config {
                 .collect(),
         )?;
         for (name, component) in &self.components {
+            // A cycle is keyed by its components joined with `,`.
+            if name.contains(',') {
+                bail!(
+                    "component `{name}` has a `,` in its name, which easement uses to list components"
+                );
+            }
             if component.patterns.as_vec().is_empty() {
                 bail!("component `{name}` has no `in` patterns");
             }
@@ -456,6 +462,20 @@ components:
         )
         .unwrap_err();
         assert!(err.to_string().contains("part"), "{err}");
+    }
+
+    /// A cycle names its components joined by `,`: a name with one in it would
+    /// read as two.
+    #[test]
+    fn a_component_name_has_no_comma() {
+        let err = parse(
+            "version: 1
+components:
+  'a,b': { in: a }
+",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("`a,b`"), "{err}");
     }
 
     #[test]
