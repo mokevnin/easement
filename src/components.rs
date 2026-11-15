@@ -394,30 +394,26 @@ impl ComponentMap {
     }
 
     /// The `allow_in` pattern of the top-level `forbid_symbol` item at `item`
-    /// that lets `rel_path` use its name, the first one written; the component
-    /// that owns the file does not matter.
-    pub fn granted_in(&self, item: usize, rel_path: &str) -> Option<&str> {
+    /// that lets `rel_path` use its name, the first one written, with its index
+    /// in the list; the component that owns the file does not matter.
+    pub fn granted_in(&self, item: usize, rel_path: &str) -> Option<(usize, &str)> {
         self.symbol_grants
             .get(item)?
             .iter()
-            .find(|(_, matcher)| matcher.is_match(rel_path))
-            .map(|(pattern, _)| pattern.as_str())
+            .enumerate()
+            .find(|(_, (_, matcher))| matcher.is_match(rel_path))
+            .map(|(at, (pattern, _))| (at, pattern.as_str()))
     }
 
-    /// Every `allow_in` pattern, as (the index of its item, the index of the
-    /// pattern, the pattern), that matches none of `files`, in the order of the config.
-    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(usize, usize, &str)> {
+    /// Every `allow_in` pattern, with the index of its item, that matches none
+    /// of `files`, in the order of the config.
+    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(usize, &str)> {
         self.symbol_grants
             .iter()
             .enumerate()
-            .flat_map(|(item, patterns)| {
-                patterns
-                    .iter()
-                    .enumerate()
-                    .map(move |(at, (pattern, matcher))| (item, at, pattern, matcher))
-            })
-            .filter(|(_, _, _, matcher)| !files.iter().any(|f| matcher.is_match(f)))
-            .map(|(item, at, pattern, _)| (item, at, pattern.as_str()))
+            .flat_map(|(item, patterns)| patterns.iter().map(move |grant| (item, grant)))
+            .filter(|(_, (_, matcher))| !files.iter().any(|f| matcher.is_match(f)))
+            .map(|(item, (pattern, _))| (item, pattern.as_str()))
             .collect()
     }
 

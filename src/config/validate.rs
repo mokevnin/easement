@@ -328,18 +328,7 @@ impl Config {
             }
             for component in allowed {
                 check(component, &place)?;
-                let own = self.rules.get(component).and_then(|rule| {
-                    rule.forbid_symbol
-                        .iter()
-                        .map(ForbiddenName::name)
-                        .find(|own| crate::symbols::may_name_the_same(own, symbol))
-                });
-                if let Some(own) = own {
-                    let spelled = if own == symbol {
-                        String::new()
-                    } else {
-                        format!(" as `{own}`")
-                    };
+                if let Some(spelled) = crate::symbols::own_ban(self, component, symbol) {
                     bail!(
                         "{place} lets `{component}` use `{symbol}`, which rules.{component}.forbid_symbol forbids{spelled}"
                     );
@@ -347,7 +336,7 @@ impl Config {
             }
         }
         // The key that grants the name, if the item has one.
-        let grants = |item: &ForbiddenName| {
+        let granting_key = |item: &ForbiddenName| {
             if item.allow().is_some() {
                 Some("allow")
             } else if item.allow_in().is_some() {
@@ -358,7 +347,7 @@ impl Config {
         };
         for (i, first) in self.forbid_symbol.iter().enumerate() {
             for (j, second) in self.forbid_symbol.iter().enumerate().skip(i + 1) {
-                if let Some(key) = grants(first).or(grants(second))
+                if let Some(key) = granting_key(first).or(granting_key(second))
                     && crate::symbols::may_name_the_same(first.name(), second.name())
                 {
                     bail!(

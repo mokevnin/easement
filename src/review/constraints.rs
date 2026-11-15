@@ -352,22 +352,23 @@ impl Diff<'_> {
             item.allow_in().unwrap_or_default(),
             old.allow_in().unwrap_or_default(),
         );
-        let only = |from: &[String], other: &[String]| -> Vec<String> {
-            let mut only: Vec<String> = Vec::new();
+        // The patterns of `from` that `other` lacks, once each, in their order.
+        let lacking = |from: &[String], other: &[String]| -> Vec<String> {
+            let mut lacking: Vec<String> = Vec::new();
             for pattern in from {
-                if !other.contains(pattern) && !only.contains(pattern) {
-                    only.push(pattern.clone());
+                if !other.contains(pattern) && !lacking.contains(pattern) {
+                    lacking.push(pattern.clone());
                 }
             }
-            only
+            lacking
         };
         let field = match item.allow_in() {
             Some(_) => format!("forbid_symbol[{index}].allow_in"),
             None => format!("forbid_symbol[{index}]"),
         };
         for (paths, change) in [
-            (only(now, then), Direction::Loosened),
-            (only(then, now), Direction::Tightened),
+            (lacking(now, then), Direction::Loosened),
+            (lacking(then, now), Direction::Tightened),
         ] {
             if paths.is_empty() {
                 continue;

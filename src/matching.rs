@@ -84,7 +84,7 @@ fn unmatched_grants(
 ) -> Vec<Violation> {
     map.unmatched_grants(files)
         .into_iter()
-        .map(|(item, _, pattern)| {
+        .map(|(item, pattern)| {
             let name = policy.config.forbid_symbol[item].name();
             Violation {
                 file: config_file.to_string(),

@@ -11,6 +11,7 @@ use crate::config::{Listed, TESTS};
 use crate::decision::{self, Clause, ClauseId, Decision, Grant, Outside, Refusal};
 use crate::lang::registry;
 use crate::policy::{Policy, Provenance, Site};
+use crate::symbols::own_ban;
 
 /// A path as the config sees it: relative to the project root, `/`-separated.
 /// An absolute path, and a path that exists relative to the working directory,
@@ -318,21 +319,20 @@ pub struct SymbolGrant {
     pub provenance: Provenance,
 }
 
-/// The names of the top-level `forbid_symbol` that `rel` may use through `allow_in`.
+/// The names of the top-level `forbid_symbol` that `rel` may use through
+/// `allow_in`, but for one the own rule of its component forbids, which holds.
 fn symbol_grants(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<SymbolGrant> {
-    policy
-        .config
+    let config = &policy.config;
+    let owner = map.component_of(rel);
+    config
         .forbid_symbol
         .iter()
         .enumerate()
         .filter_map(|(item, listed)| {
-            let pattern = map.granted_in(item, rel)?;
-            let at = listed
-                .allow_in()
-                .unwrap_or_default()
-                .iter()
-                .position(|p| p == pattern)
-                .unwrap_or_default();
+            let (at, pattern) = map.granted_in(item, rel)?;
+            if owner.is_some_and(|component| own_ban(config, component, listed.name()).is_some()) {
+                return None;
+            }
             Some(SymbolGrant {
                 name: listed.name().to_string(),
                 allow_in: pattern.to_string(),

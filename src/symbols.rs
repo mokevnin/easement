@@ -7,7 +7,7 @@ use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, name_first};
 use crate::components::ComponentMap;
 use anyhow::{Result, bail};
 
-use crate::config::{Config, ForbiddenName, TESTS};
+use crate::config::{Config, ForbiddenName};
 use crate::lang::{Dep, Target, registry};
 use crate::policy::Policy;
 use crate::relpath::slash;
@@ -114,41 +114,62 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
     found
 }
 
+/// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a
+/// name that can name the same symbol: empty when spelled alike, else
+/// `` as `own` ``, to follow `forbids` in an error.
+pub fn own_ban(config: &Config, component: &str, symbol: &str) -> Option<String> {
+    let own = config
+        .rules
+        .get(component)?
+        .forbid_symbol
+        .iter()
+        .map(ForbiddenName::name)
+        .find(|own| may_name_the_same(own, symbol))?;
+    Some(if own == symbol {
+        String::new()
+    } else {
+        format!(" as `{own}`")
+    })
+}
+
 /// Fails when an `allow_in` pattern of the top-level `forbid_symbol` matches a
 /// file of a component whose own `forbid_symbol` lists the same name: the
 /// component's list still forbids it there, so the grant says what never holds.
+/// A file belongs to the component that owns it and to the component of each
+/// part of it that `uses` use names from (test code, a part of a manifest).
 /// Only the files tell, so it is found when the policy is judged, not when it
 /// is read.
-pub fn contradicted_grants(config: &Config, map: &ComponentMap, files: &[String]) -> Result<()> {
+pub fn contradicted_grants(
+    config: &Config,
+    map: &ComponentMap,
+    files: &[String],
+    uses: &[SymbolRef],
+) -> Result<()> {
+    let mut parts: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    for used in uses {
+        if let Some(component) = map.component_of_unit(&used.from) {
+            parts
+                .entry(slash(&used.file))
+                .or_default()
+                .insert(component);
+        }
+    }
     for (i, listed) in config.forbid_symbol.iter().enumerate() {
         let symbol = listed.name();
         for file in files {
-            let Some(pattern) = map.granted_in(i, file) else {
+            let Some((_, pattern)) = map.granted_in(i, file) else {
                 continue;
             };
-            let owner = if config.tests.is_some() && registry::is_test_file(file) {
-                Some(TESTS)
-            } else {
-                map.component_of(file)
-            };
-            let Some(component) = owner else {
-                continue;
-            };
-            let own = config.rules.get(component).and_then(|rule| {
-                rule.forbid_symbol
-                    .iter()
-                    .map(ForbiddenName::name)
-                    .find(|own| may_name_the_same(own, symbol))
-            });
-            if let Some(own) = own {
-                let spelled = if own == symbol {
-                    String::new()
-                } else {
-                    format!(" as `{own}`")
-                };
-                bail!(
-                    "forbid_symbol[{i}].allow_in lets `{pattern}` use `{symbol}`, but {file} there belongs to `{component}`, whose rules.{component}.forbid_symbol forbids it{spelled}"
-                );
+            let owners = map
+                .component_of(file)
+                .into_iter()
+                .chain(parts.get(file).into_iter().flatten().copied());
+            for component in owners {
+                if let Some(spelled) = own_ban(config, component, symbol) {
+                    bail!(
+                        "forbid_symbol[{i}].allow_in lets `{pattern}` use `{symbol}`, but {file} there belongs to `{component}`, whose rules.{component}.forbid_symbol forbids it{spelled}"
+                    );
+                }
             }
         }
     }

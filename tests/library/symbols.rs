@@ -415,6 +415,19 @@ fn explain_names_the_forbidden_names_a_path_is_allowed() {
             .is_none()
     );
     assert!(!reports.text().unwrap().contains("forbid_symbol"));
+    // A component whose own rule forbids the name keeps it forbidden: no grant to show.
+    let policy = fs::read_to_string(config(&root)).unwrap().replace(
+        "may_depend_on: [store]",
+        "may_depend_on: [store]\n    forbid_symbol: [store.Client]",
+    );
+    fs::write(config(&root), policy).unwrap();
+    let banned = explained("internal/modules/mailing/send.go");
+    assert!(
+        serde_json::to_value(&banned)
+            .unwrap()
+            .get("symbol_grants")
+            .is_none()
+    );
 }
 
 #[test]
