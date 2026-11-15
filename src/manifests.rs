@@ -38,7 +38,9 @@ pub fn undeclared(
     // Manifest -> what it declares; `None` when it declares no package.
     let mut manifests: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
     let mut unreadable: BTreeSet<String> = BTreeSet::new();
-    let mut sources: BTreeMap<String, String> = BTreeMap::new();
+    // A source file -> its text, `None` when it cannot be read.
+    let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut unread_sources: BTreeSet<String> = BTreeSet::new();
     let mut violations = Vec::new();
     let mut unjudged = BTreeSet::new();
     let mut orphans = BTreeSet::new();
@@ -74,9 +76,16 @@ pub fn undeclared(
         if kind.covers(names, &package) {
             continue;
         }
-        let source = sources
-            .entry(file.clone())
-            .or_insert_with(|| std::fs::read_to_string(root.join(&file)).unwrap_or_default());
+        // Read as text whatever its encoding: an import is ASCII.
+        let source = sources.entry(file.clone()).or_insert_with(|| {
+            std::fs::read(root.join(&file))
+                .ok()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        });
+        let Some(source) = source else {
+            unread_sources.insert(file);
+            continue;
+        };
         if !kind.named_in_source(source, &package) {
             continue;
         }
@@ -109,6 +118,16 @@ pub fn undeclared(
         reasons.push(
             Unjudged::new(format!(
                 "{} could not be read, so the dependencies of the files under it were not checked",
+                list.join(", ")
+            ))
+            .in_files(list),
+        );
+    }
+    if !unread_sources.is_empty() {
+        let list: Vec<String> = unread_sources.into_iter().collect();
+        reasons.push(
+            Unjudged::new(format!(
+                "{} could not be read, so whether it imports the packages its manifest lacks was not checked",
                 list.join(", ")
             ))
             .in_files(list),
@@ -147,8 +166,10 @@ fn package_manifest(
         let declares = manifests
             .entry(manifest.clone())
             .or_insert_with(|| {
-                let text = std::fs::read_to_string(root.join(&manifest)).unwrap_or_default();
-                match kind.declares(&text) {
+                // One that cannot be read is not an empty one, which declares nothing.
+                let declares = std::fs::read_to_string(root.join(&manifest))
+                    .map_or(Declares::Unreadable, |text| kind.declares(&text));
+                match declares {
                     Declares::Package(names) => Some(names),
                     Declares::Marker => None,
                     Declares::Unreadable => {
@@ -222,5 +243,26 @@ mod tests {
         );
         assert_eq!(found.as_deref(), Some("package.json"));
         assert!(unreadable.is_empty());
+    }
+
+    /// A manifest that cannot be read declares nothing that is known: it is
+    /// unreadable, not empty, or every import under it would be undeclared.
+    #[test]
+    #[cfg(unix)]
+    fn a_manifest_that_cannot_be_read_is_unreadable_not_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::os::unix::fs::symlink("missing.toml", dir.path().join("Cargo.toml")).unwrap();
+        let known: BTreeSet<&str> = ["Cargo.toml"].into();
+        let (mut manifests, mut unreadable) = (BTreeMap::new(), BTreeSet::new());
+        let found = package_manifest(
+            "src/lib.rs",
+            Manifest::Cargo,
+            dir.path(),
+            &known,
+            &mut manifests,
+            &mut unreadable,
+        );
+        assert_eq!(found.as_deref(), Some("Cargo.toml"));
+        assert_eq!(unreadable, BTreeSet::from(["Cargo.toml".to_string()]));
     }
 }

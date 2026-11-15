@@ -991,8 +991,10 @@ pub fn required(
             let Some(pattern) = &directives[wanted.name()] else {
                 continue;
             };
+            // Read whatever the encoding of the file: a directive is ASCII.
             let present = unit.files.iter().any(|file| {
-                std::fs::read_to_string(root.join(file)).is_ok_and(|text| pattern.is_match(&text))
+                std::fs::read(root.join(file))
+                    .is_ok_and(|bytes| pattern.is_match(&String::from_utf8_lossy(&bytes)))
             });
             if !present {
                 missing(
@@ -1152,6 +1154,34 @@ mod tests {
             assert_eq!(once.file, want);
             assert_eq!(once.clone().canonical(), once);
         }
+    }
+
+    /// A directive is ASCII: it is found in a file that is not UTF-8.
+    #[test]
+    fn a_directive_is_found_in_a_file_of_another_encoding() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  mappers: { in: mappers }
+rules:
+  mappers: { requires_directive: ['goverter:converter'] }
+",
+        )
+        .unwrap();
+        let map = ComponentMap::new(&config).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("mappers")).unwrap();
+        // "// café" in Latin-1, then the directive.
+        let mut source = b"// calf\xe9\n".to_vec();
+        source.extend_from_slice(b"// goverter:converter\npackage mappers\n");
+        std::fs::write(dir.path().join("mappers/m.go"), source).unwrap();
+        let files = vec!["mappers/m.go".to_string()];
+        let found = required(dir.path(), &config, &map, &[], &files, &files);
+        assert!(
+            found.is_empty(),
+            "{:?}",
+            found.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]

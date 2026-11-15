@@ -239,6 +239,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         std::collections::BTreeMap::new();
     let mut suppressions = Vec::new();
     let mut seen = HashSet::new();
+    // Source files an adapter would parse that cannot be read.
+    let mut unread_sources: Vec<String> = Vec::new();
     for (entry, rel) in walked {
         let path = entry.path();
         let file = slash(&rel);
@@ -263,9 +265,14 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
             .get(&rel)
             .is_some_and(|p| p.len == meta.len() && p.modified == modified && modified.is_some());
         if !fresh {
-            let source = match std::fs::read_to_string(path) {
-                Ok(s) => s,
-                Err(_) => continue, // binary or unreadable
+            // Imports are ASCII: a file in another encoding is read all the same.
+            // One that cannot be read is no file nothing imports: it is uncovered.
+            let source = match std::fs::read(path) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(_) => {
+                    unread_sources.push(file.clone());
+                    continue;
+                }
             };
             let parsed = Parsed {
                 modified,
@@ -380,7 +387,9 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         .filter(|d| !target_only.is_match(d.path.as_str()))
     {
         paths.push(document.path.clone());
-        if let Ok(source) = std::fs::read_to_string(root.join(&document.path)) {
+        if let Ok(bytes) = std::fs::read(root.join(&document.path)) {
+            // Directives and imports are ASCII, whatever the encoding of the file.
+            let source = String::from_utf8_lossy(&bytes);
             suppressions.extend(suppress::parse(&document.path, &source));
             if let Some(written) = lang::registry::of(&document.path)
                 .and_then(|language| language.written_imports.as_ref())
@@ -480,7 +489,13 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         symbols,
         unverified_symbols,
         suppressions,
-        uncovered: indexed.uncovered,
+        uncovered: {
+            let mut uncovered = indexed.uncovered;
+            uncovered.extend(unread_sources);
+            uncovered.sort();
+            uncovered.dedup();
+            uncovered
+        },
         unnamed_uses,
         unresolved_imports,
         parts_doubts,

@@ -258,12 +258,14 @@ fn reached_from<'a>(
     })
 }
 
-/// Whether a file is a program of its own by its text, as its language tells.
+/// Whether a file is a program of its own by its text, as its language tells;
+/// one whose text cannot be read may be one.
 fn program(root: &Path, file: &str) -> bool {
     judged_language(file)
         .and_then(|language| language.program)
         .is_some_and(|program| {
-            std::fs::read_to_string(root.join(file)).is_ok_and(|text| program(&text))
+            std::fs::read(root.join(file))
+                .map_or(true, |bytes| program(&String::from_utf8_lossy(&bytes)))
         })
 }
 
@@ -280,11 +282,12 @@ fn unindexed_uses(
         let Some(find) = judged_language(file).and_then(|language| language.unindexed_uses) else {
             continue;
         };
-        let Ok(text) = std::fs::read_to_string(root.join(file)) else {
+        // What a file names is ASCII, whatever the encoding of the file.
+        let Ok(bytes) = std::fs::read(root.join(file)) else {
             continue;
         };
         found.extend(
-            find(&text, file, &files)
+            find(&String::from_utf8_lossy(&bytes), file, &files)
                 .into_iter()
                 .map(|used| (file.clone(), used)),
         );
@@ -302,6 +305,14 @@ fn package_entries(root: &Path, all_files: &[String]) -> BTreeSet<String> {
             continue;
         };
         let Ok(text) = std::fs::read_to_string(root.join(manifest)) else {
+            // What it exports is not known: every file under it may be.
+            let dir = parent(manifest);
+            entries.extend(
+                all_files
+                    .iter()
+                    .filter(|f| relpath::is_under(f, dir))
+                    .cloned(),
+            );
             continue;
         };
         entries.extend(kind.entries(&text, parent(manifest), &files));
