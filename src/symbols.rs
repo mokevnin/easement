@@ -82,7 +82,7 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
                 let only = if allowed.is_empty() {
                     String::new()
                 } else {
-                    format!(" (only {} may)", allowed.join(", "))
+                    format!(" (only {} may)", in_words(&allowed))
                 };
                 report(
                     format!("{who} must not use {pattern}{only}"),
@@ -112,6 +112,15 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
         }
     }
     found
+}
+
+/// `items` as a sentence lists them: `a`, `a and b`, `a, b and c`.
+fn in_words(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a
@@ -457,6 +466,16 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
         let first = "forbid_symbol[0].allow_in lets `web/b` use `d.T`, but web/b/x.go there belongs to `web`, whose rules.web.forbid_symbol forbids it";
         assert_eq!(said(&["web/a/x.go", "web/b/y.go", "web/b/x.go"]), first);
         assert_eq!(said(&["web/b/x.go", "web/b/y.go", "web/a/x.go"]), first);
+    }
+
+    #[test]
+    fn who_may_use_a_name_reads_as_a_sentence() {
+        assert_eq!(in_words(&["usecase"]), "usecase");
+        assert_eq!(in_words(&["usecase", "wiring"]), "usecase and wiring");
+        assert_eq!(
+            in_words(&["wiring", "runner", "internal/x"]),
+            "wiring, runner and internal/x"
+        );
     }
 
     fn known(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

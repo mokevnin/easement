@@ -297,7 +297,7 @@ forbid_symbol:
 
 A use in a file no component owns is reported as `unowned files must not use …`; an exception for one line is an inline suppression with a reason, as for any `symbol` violation.
 
-A name that only some components may use is listed once, with `allow`: the components that may use it. Every other use is a violation, in files of no component and in the component that defines the name too, its other packages and the other files of the package that defines it; only a use inside the defining file is no use. `allow` covers every file of a component, each instance of an `isolated` one included, and the message says who may use the name (`web must not use tags.DeleteIn (only usecase, wiring may)`):
+A name that only some components may use is listed once, with `allow`: the components that may use it. Every other use is a violation, in files of no component and in the component that defines the name too, its other packages and the other files of the package that defines it; only a use inside the defining file is no use. `allow` covers every file of a component, each instance of an `isolated` one included, and the message says who may use the name (`web must not use tags.DeleteIn (only usecase and wiring may)`):
 
 ```yaml
 forbid_symbol:
@@ -306,7 +306,7 @@ forbid_symbol:
     because: deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first
 ```
 
-`allow_in` lets in paths beside components: globs of files or directories relative to the root, as `in` patterns. A file may use the name when its component is in `allow` or its path matches `allow_in`, whatever component owns it, test code and each instance of an `isolated` component included. A closed list of packages that may hold a name then needs no component of its own, and the message names the paths too (`modules must not use ent.Client (only wiring, internal/modules/billing may)`):
+`allow_in` lets in paths beside components: globs of files or directories relative to the root, as `in` patterns. A file may use the name when its component is in `allow` or its path matches `allow_in`, whatever component owns it, test code and each instance of an `isolated` component included. A closed list of packages that may hold a name then needs no component of its own, and the message names the paths too (`modules must not use ent.Client (only wiring and internal/modules/billing may)`):
 
 ```yaml
 forbid_symbol:
