@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, parse};
+use super::{Adapter, Import, Target, captured_nodes, tree};
 
 const QUERY: &str = "(import_declaration) @node";
 
@@ -95,8 +95,8 @@ impl Adapter for Swift {
         super::registry::is(path, &super::registry::SWIFT)
     }
 
-    fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>> {
-        let tree = parse(&self.language, path, source)?;
+    fn imports(&self, _path: &Path, source: &str) -> Result<Vec<Import>> {
+        let tree = tree(&self.language, source);
         Ok(captured_nodes(&self.query, &tree, source)
             .into_iter()
             .map(|node| Import {
@@ -109,26 +109,27 @@ impl Adapter for Swift {
 
     fn resolve(&self, _file: &Path, specifier: &str) -> super::Resolution {
         let module = specifier.split('.').next().unwrap_or(specifier);
-        let Some(dirs) = self.modules.get(module) else {
+        // A module of the map is a directory that holds it, and its paths come
+        // in the order of the paths.
+        let Some((dirs, first)) = self
+            .modules
+            .get(module)
+            .and_then(|dirs| Some((dirs, dirs.first()?)))
+        else {
             return super::Resolution {
                 target: Target::External(specifier.to_string()),
                 candidates: Vec::new(),
                 ambiguity: None,
             };
         };
-        // A module of the map is a directory that holds it: the set is never
-        // empty, and its paths come in the order of the paths.
-        let candidates: Vec<String> = dirs.iter().cloned().collect();
-        let target = Target::Internal(super::Unit::from(
-            candidates
-                .first()
-                .expect("a module of the map holds a directory")
-                .clone(),
-        ));
-        let many = candidates.len() > 1;
+        let many = dirs.len() > 1;
         super::Resolution {
-            target,
-            candidates: if many { candidates } else { Vec::new() },
+            target: Target::Internal(super::Unit::from(first.clone())),
+            candidates: if many {
+                dirs.iter().cloned().collect()
+            } else {
+                Vec::new()
+            },
             ambiguity: if many { Some(module.to_string()) } else { None },
         }
     }

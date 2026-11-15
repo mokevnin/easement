@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 use super::registry::{Explained, Spelled, TYPESCRIPT, UnindexedUse};
 use super::{Cause, Form, Import};
@@ -100,13 +100,7 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
         "ts" | "mts" | "cts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
         _ => tree_sitter_typescript::LANGUAGE_TSX,
     };
-    let mut parser = Parser::new();
-    parser
-        .set_language(&grammar.into())
-        .expect("the TypeScript grammars match the tree-sitter they are built with");
-    let tree = parser
-        .parse(text, None)
-        .expect("a parse with no timeout and no cancellation ends with a tree");
+    let tree = super::tree(&grammar.into(), text);
     let require = match extension {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
         _ => Form::Require,

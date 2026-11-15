@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 
@@ -352,12 +352,16 @@ pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>>
     Ok(adapters)
 }
 
-pub(crate) fn parse(language: &Language, path: &Path, source: &str) -> Result<Tree> {
+/// The syntax tree of `source` in `language`. Any text has a tree: a syntax
+/// error is a node of it.
+pub(crate) fn tree(language: &Language, source: &str) -> Tree {
     let mut parser = Parser::new();
-    parser.set_language(language)?;
+    parser
+        .set_language(language)
+        .expect("a grammar matches the tree-sitter it is built with");
     parser
         .parse(source, None)
-        .with_context(|| format!("cannot parse {}", path.display()))
+        .expect("a parse with no timeout and no cancellation ends with a tree")
 }
 
 /// Every node captured as `@node` by `query`, in document order.

@@ -1,7 +1,7 @@
 //! Go beyond its index: which files are programs of their own, the imports a
 //! file writes, and the build tags the indexer builds with.
 
-use tree_sitter::{Node, Parser, Tree};
+use tree_sitter::{Node, Tree};
 
 use super::Import;
 use super::registry::Inherited;
@@ -11,13 +11,7 @@ use super::registry::Inherited;
 /// code above all, costs nothing past its imports. Any text has a tree: a syntax
 /// error is a node of it.
 fn head_tree(text: &str) -> Tree {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_go::LANGUAGE.into())
-        .expect("the Go grammar matches the tree-sitter it is built with");
-    parser
-        .parse(&text[..head_end(text)], None)
-        .expect("a parse with no timeout and no cancellation ends with a tree")
+    super::tree(&tree_sitter_go::LANGUAGE.into(), &text[..head_end(text)])
 }
 
 /// Where the head of Go source ends: at the first `func`, `type`, `var` or

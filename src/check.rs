@@ -929,7 +929,7 @@ pub fn required(
     let mut found = Vec::new();
     for ((component, dir), unit) in &units {
         let rule = &config.rules[component];
-        let first = unit.files.first().expect("a unit has files").clone();
+        let first = unit.files.first().expect("a unit has files");
         let shown = if dir.is_empty() { "." } else { dir };
         let mut missing = |target: String, message: String, wanted: &Listed| {
             found.push(Violation {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, parse};
+use super::{Adapter, Import, Target, captured_nodes, tree};
 
 const QUERY: &str = "(import) @node";
 
@@ -262,8 +262,8 @@ impl Adapter for Kotlin {
         super::registry::is(path, &super::registry::KOTLIN)
     }
 
-    fn imports(&self, path: &Path, source: &str) -> Result<Vec<Import>> {
-        let tree = parse(&self.language, path, source)?;
+    fn imports(&self, _path: &Path, source: &str) -> Result<Vec<Import>> {
+        let tree = tree(&self.language, source);
         Ok(captured_nodes(&self.query, &tree, source)
             .into_iter()
             .map(|node| Import {
