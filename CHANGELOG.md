@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.6](https://github.com/mokevnin/easement/compare/v0.6.5...v0.6.6) (2026-11-15)
+
+
+### Features
+
+* **policy:** forbid an external module to every file at the top level ([#149](https://github.com/mokevnin/easement/issues/149)) ([#186](https://github.com/mokevnin/easement/issues/186)) ([2c61967](https://github.com/mokevnin/easement/commit/2c619670a5c6344636791b02820f0740cd8c8920))
+* **policy:** name components by glob or by set in every list of components ([#173](https://github.com/mokevnin/easement/issues/173)) ([e1f76db](https://github.com/mokevnin/easement/commit/e1f76db549233ca7303e43099b98546468d60892))
+
+
+### Bug Fixes
+
+* **manifests:** take the npm packages a file imports from its syntax, not from its text ([#175](https://github.com/mokevnin/easement/issues/175)) ([087e627](https://github.com/mokevnin/easement/commit/087e6274653675e7f8c7831063895597c45f4fcf))
+* **policy:** keep names like `@acme/core`, expand every component list ([#177](https://github.com/mokevnin/easement/issues/177)) ([2e484eb](https://github.com/mokevnin/easement/commit/2e484eb849dc5f30b551b13d0542b1d1459848fa))
+* **unused:** follow the imports of target_only and excluded files the index left unresolved ([#167](https://github.com/mokevnin/easement/issues/167)) ([f5e2674](https://github.com/mokevnin/easement/commit/f5e2674fdcf42e7dbf28b64f128aaae3037605bf)), closes [#144](https://github.com/mokevnin/easement/issues/144)
+
+
+### Performance Improvements
+
+* **manifests:** read the packages a file names once per file ([#174](https://github.com/mokevnin/easement/issues/174)) ([7778531](https://github.com/mokevnin/easement/commit/7778531a4a155d728e7b083636151b6702098fd3))
+
 ## [0.6.5](https://github.com/mokevnin/easement/compare/v0.6.4...v0.6.5) (2026-11-15)
 
 
