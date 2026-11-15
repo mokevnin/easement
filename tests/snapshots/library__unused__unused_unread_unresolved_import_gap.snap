@@ -1,0 +1,22 @@
+---
+source: tests/library/unused.rs
+expression: gaps
+---
+[
+  {
+    "close": "have the indexer resolve the imports the message names (the `unresolved_imports` gap says how for a checked file; it leaves out those of `target_only` and excluded files, which no check reads), then check again",
+    "count": 1,
+    "files": [
+      "src/app/maybe.ts"
+    ],
+    "kind": "unused",
+    "message": "`unused` did not judge 1 file(s) that no `entry` reaches, as an import the indexer did not resolve may reach them: src/gen/gen.ts:1 (`../app/missing`)",
+    "places": [
+      {
+        "file": "src/gen/gen.ts",
+        "line": 1,
+        "specifier": "../app/missing"
+      }
+    ]
+  }
+]

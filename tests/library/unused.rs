@@ -8,7 +8,7 @@ use easement::commands::Outcome;
 use serde_json::Value;
 
 use crate::common::{fixture, project};
-use crate::run::{check, composer_install, config, json, pinned, report_of, text};
+use crate::run::{check, composer_install, config, gap_messages, json, pinned, report_of, text};
 
 /// The unused-rule verdicts and gaps of the check of `root`, as data.
 fn unused_of(root: &Path) -> (Vec<Value>, Vec<Value>) {
@@ -50,6 +50,107 @@ fn a_file_an_unresolved_import_may_reach_is_not_judged_unused() {
     )
     .unwrap();
     assert_eq!(unused_of(&root), (vec![], vec![]));
+}
+
+/// A TypeScript project of `files` whose `src/gen` the checks do not read, as
+/// `unread` (`target_only` or `exclude`) says. `src/main.ts` is the entry and
+/// reaches nothing.
+fn with_unread_gen(
+    unread: &str,
+    files: &[(&str, &str)],
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    let policy = format!(
+        "version: 1\ncomponents:\n  app: {{ in: src/app }}\nentry: [src/main.ts]\n{unread}: [src/gen]\n"
+    );
+    let mut all = vec![
+        ("easement.yml", policy.as_str()),
+        ("src/main.ts", "console.log(1);\n"),
+    ];
+    all.extend_from_slice(files);
+    project(&all)
+}
+
+/// A file only an unread file's unresolved import may reach is not judged
+/// unused, whether `target_only` or `exclude` keeps that file from the checks;
+/// the import is still no gap of `check`.
+#[test]
+fn a_file_an_unread_files_unresolved_import_may_reach_is_not_judged_unused() {
+    for unread in ["target_only", "exclude"] {
+        let (_tmp, root) = with_unread_gen(
+            unread,
+            &[
+                (
+                    "src/gen/gen.ts",
+                    "import { gone } from \"../app/missing\";\nexport const g = gone;\n",
+                ),
+                ("src/app/maybe.ts", "export const maybe = 1;\n"),
+            ],
+        );
+        let (violations, gaps) = unused_of(&root);
+        assert_eq!(violations, [] as [Value; 0], "{unread}");
+        pinned(|| insta::assert_json_snapshot!("unused_unread_unresolved_import_gap", gaps));
+        assert_eq!(
+            gap_messages(&json(&check(&root)), "unresolved_imports"),
+            [] as [Value; 0],
+            "{unread}"
+        );
+    }
+}
+
+/// What an unread file imports reaches a file as a checked file's import does:
+/// a path its text names that the index left unresolved (a `?raw` import a
+/// wildcard declaration catches), and a side-effect import, which `unused`
+/// follows itself. Neither holds the verdict, so a dead file is still unused.
+#[test]
+fn an_unread_files_imports_the_index_left_unresolved_still_reach_files() {
+    for unread in ["target_only", "exclude"] {
+        let (_tmp, root) = with_unread_gen(
+            unread,
+            &[
+                (
+                    "src/shims.d.ts",
+                    "declare module \"*?raw\" { const src: string; export default src; }\n",
+                ),
+                (
+                    "src/gen/gen.ts",
+                    "import raw from \"../app/raw.ts?raw\";\nimport \"../app/effect\";\nexport const g = raw;\n",
+                ),
+                ("src/app/raw.ts", "export const raw = 1;\n"),
+                ("src/app/effect.ts", "(globalThis as any).x = 1;\n"),
+                ("src/app/dead.ts", "export const dead = 1;\n"),
+            ],
+        );
+        let (violations, gaps) = unused_of(&root);
+        let unused: Vec<&Value> = violations.iter().map(|v| &v["file"]).collect();
+        assert_eq!(unused, ["src/app/dead.ts"], "{unread}");
+        assert_eq!(gaps, [] as [Value; 0], "{unread}");
+        assert_eq!(
+            gap_messages(&json(&check(&root)), "unresolved_imports"),
+            [] as [Value; 0],
+            "{unread}"
+        );
+    }
+}
+
+/// A side-effect import between two excluded files is followed too: it holds
+/// no verdict, so a dead file is still unused.
+#[test]
+fn a_side_effect_import_between_excluded_files_holds_no_verdict() {
+    let (_tmp, root) = with_unread_gen(
+        "exclude",
+        &[
+            (
+                "src/gen/gen.ts",
+                "import \"./setup\";\nexport const g = 1;\n",
+            ),
+            ("src/gen/setup.ts", "(globalThis as any).x = 1;\n"),
+            ("src/app/dead.ts", "export const dead = 1;\n"),
+        ],
+    );
+    let (violations, gaps) = unused_of(&root);
+    let unused: Vec<&Value> = violations.iter().map(|v| &v["file"]).collect();
+    assert_eq!(unused, ["src/app/dead.ts"]);
+    assert_eq!(gaps, [] as [Value; 0]);
 }
 
 #[test]

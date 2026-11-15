@@ -71,6 +71,10 @@ pub struct Scan {
     /// missing (scip-go on an import cycle, a package that does not type-check, a
     /// TypeScript import a wildcard declaration catches).
     pub unresolved_imports: Vec<Unresolved>,
+    /// Unresolved imports of the files the checks do not read (`target_only`,
+    /// excluded): no check judges their dependencies, so these are no gap, but
+    /// `unused` cannot follow them.
+    pub unread_unresolved_imports: Vec<Unresolved>,
     /// Files whose test code a finder of parts could not tell from the file's.
     pub parts_doubts: Vec<(String, lang::parts::Doubt)>,
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
@@ -137,6 +141,15 @@ enum Compared {
     Unresolved(Unresolved),
 }
 
+/// What the comparison of the written imports of some files found beyond the index.
+#[derive(Default)]
+struct Written {
+    /// Dependencies read from the text of imports the index took to no source target.
+    spelled: Vec<Dep>,
+    /// Imports whose text names no target either.
+    unresolved: Vec<Unresolved>,
+}
+
 /// `import`, written in `file`, against what the index holds on it (`resolved`).
 /// When the index takes it to no source target, a path its text spells that names
 /// a file that `exists` exactly, or a package it spells, is its dependency; else it
@@ -191,6 +204,22 @@ fn compare(
             .iter()
             .find(|explained| explained.cause == unspelled),
     })
+}
+
+/// Adds to `deps` the dependencies read from the text of imports (`spelled`): one
+/// dependency of a file on a target, the index's, or else the first line that
+/// spells it.
+fn add_spelled(deps: &mut Vec<Dep>, mut spelled: Vec<Dep>) {
+    let mut known: HashSet<(PathBuf, Target)> = deps
+        .iter()
+        .map(|dep| (dep.file.clone(), dep.target.clone()))
+        .collect();
+    spelled.sort_by_key(|dep| dep.line);
+    deps.extend(
+        spelled
+            .into_iter()
+            .filter(|dep| known.insert((dep.file.clone(), dep.target.clone()))),
+    );
 }
 
 /// The project's files (`/`-separated, relative to `root`) without the excluded ones.
@@ -381,45 +410,60 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let names = scip::Names::of(&documents, &hidden);
     let index = scip::Indexed::of(&names);
     let mut types: Vec<TypeDef> = Vec::new();
-    let mut unresolved_imports = Vec::new();
-    // Dependencies read from the text of imports the index took to no source target.
-    let mut spelled_deps: Vec<Dep> = Vec::new();
+    // What the comparison of written imports found, in checked files and in unread ones.
+    let mut checked_imports = Written::default();
+    let mut unread_imports = Written::default();
     // A file the text of an import may name: one of the project, excluded or not.
     let exists = |file: &str| {
         project.contains(file) || excluded.binary_search_by(|f| f.as_str().cmp(file)).is_ok()
     };
-    for document in documents
+    // Every document the index read, and whether the checks read its file: what an
+    // unread file imports still reaches a file for `unused`.
+    let read = documents
         .iter()
-        .filter(|d| !target_only.is_match(d.path.as_str()))
-    {
-        paths.push(document.path.clone());
-        if let Ok(bytes) = std::fs::read(root.join(&document.path)) {
-            // Directives and imports are ASCII, whatever the encoding of the file.
-            let source = String::from_utf8_lossy(&bytes);
-            suppressions.extend(suppress::parse(&document.path, &source));
-            if let Some(written) = lang::registry::of(&document.path)
-                .and_then(|language| language.written_imports.as_ref())
-                // A declaration file describes code that lives elsewhere.
-                .filter(|_| !lang::registry::is_declaration(&document.path))
-            {
-                let lines: Vec<&str> = source.lines().collect();
-                for import in (written.list)(&document.path, &source) {
-                    let resolved = |import: &Import| index.resolution(document, &lines, import);
-                    match compare(&document.path, import, written, resolved, exists) {
-                        Compared::Resolved => {}
-                        Compared::Spelled(dep) => spelled_deps.push(*dep),
-                        Compared::Unresolved(unresolved) => unresolved_imports.push(unresolved),
-                    }
-                }
-            }
-        } else {
-            unreadable.push(document.path.clone());
+        .map(|d| (d, !target_only.is_match(d.path.as_str())))
+        .chain(hidden.iter().map(|d| (d, false)));
+    for (document, checked) in read {
+        if checked {
+            paths.push(document.path.clone());
+            types.extend(document.types.iter().map(|(name, line)| TypeDef {
+                file: document.path.clone(),
+                line: *line,
+                name: name.clone(),
+            }));
         }
-        types.extend(document.types.iter().map(|(name, line)| TypeDef {
-            file: document.path.clone(),
-            line: *line,
-            name: name.clone(),
-        }));
+        let Ok(bytes) = std::fs::read(root.join(&document.path)) else {
+            if checked {
+                unreadable.push(document.path.clone());
+            }
+            continue;
+        };
+        // Directives and imports are ASCII, whatever the encoding of the file.
+        let source = String::from_utf8_lossy(&bytes);
+        if checked {
+            suppressions.extend(suppress::parse(&document.path, &source));
+        }
+        let Some(written) = lang::registry::of(&document.path)
+            .and_then(|language| language.written_imports.as_ref())
+            // A declaration file describes code that lives elsewhere.
+            .filter(|_| !lang::registry::is_declaration(&document.path))
+        else {
+            continue;
+        };
+        let lines: Vec<&str> = source.lines().collect();
+        for import in (written.list)(&document.path, &source) {
+            let resolved = |import: &Import| index.resolution(document, &lines, import);
+            let found = if checked {
+                &mut checked_imports
+            } else {
+                &mut unread_imports
+            };
+            match compare(&document.path, import, written, resolved, exists) {
+                Compared::Resolved => {}
+                Compared::Spelled(dep) => found.spelled.push(*dep),
+                Compared::Unresolved(unresolved) => found.unresolved.push(unresolved),
+            }
+        }
     }
     let flow = (policy.reach == crate::config::Reach::Symbols).then(|| index.flow());
     let facts = index.facts(policy.uses_symbols, &policy.watched_symbols);
@@ -430,18 +474,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let (sources, mut unread_deps): (Vec<Dep>, Vec<Dep>) =
         facts.deps.into_iter().partition(|dep| is_source(&dep.file));
     deps.extend(sources);
-    // One dependency of a file on a target: the index's, or else the first line that
-    // spells it.
-    let mut known: HashSet<(PathBuf, Target)> = deps
-        .iter()
-        .map(|dep| (dep.file.clone(), dep.target.clone()))
-        .collect();
-    spelled_deps.sort_by_key(|dep| dep.line);
-    deps.extend(
-        spelled_deps
-            .into_iter()
-            .filter(|dep| known.insert((dep.file.clone(), dep.target.clone()))),
-    );
+    add_spelled(&mut deps, checked_imports.spelled);
     let mut packages_problems = Vec::new();
     if policy.packages {
         let declared =
@@ -455,6 +488,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     if !hidden.is_empty() {
         unread_deps.extend(index.excluded_facts().deps);
     }
+    add_spelled(&mut unread_deps, unread_imports.spelled);
     let mut unread = excluded;
     unread.extend(
         all_files
@@ -511,7 +545,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
             unreadable
         },
         unnamed_uses,
-        unresolved_imports,
+        unresolved_imports: checked_imports.unresolved,
+        unread_unresolved_imports: unread_imports.unresolved,
         parts_doubts,
         packages_problems,
         declarations_problems: {
