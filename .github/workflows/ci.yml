@@ -95,7 +95,7 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
-          install_args: rust go node pnpm java maven dotnet go:github.com/scip-code/scip-go/cmd/scip-go github:sourcegraph/scip-java
+          install_args: rust github:nextest-rs/nextest go node pnpm java maven dotnet go:github.com/scip-code/scip-go/cmd/scip-go github:sourcegraph/scip-java
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -147,4 +147,9 @@ jobs:
           dotnet tool install --global scip-dotnet --version 0.2.16
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
-      - run: cargo test --locked
+      - name: Run the tests
+        run: cargo nextest run --locked --profile ci
+
+      # nextest does not run doctests.
+      - name: Run the doctests
+        run: cargo test --locked --doc

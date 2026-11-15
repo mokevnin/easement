@@ -144,10 +144,51 @@ pub fn commit_all(root: &Path) {
 }
 
 /// Where the tests keep indexes, shared by every test of the run so a fixture is
-/// indexed once, and apart from the cache of whoever runs them.
+/// indexed once, and apart from the cache of whoever runs them. `cargo test` runs
+/// the tests of a binary as threads of one process, which share a temporary
+/// directory. nextest runs each test in a process of its own, so the run shares a
+/// directory under `target/tmp` named by its id (`NEXTEST_RUN_ID`): an index is
+/// written to a temporary file and renamed into place, so processes never read
+/// half of one. Each run starts empty, as a cache that outlives a run could hide
+/// a change to how an index is made; what earlier runs left is removed.
 pub fn test_cache_dir() -> &'static Path {
-    static DIR: OnceLock<TempDir> = OnceLock::new();
-    DIR.get_or_init(|| TempDir::new().unwrap()).path()
+    enum Dir {
+        Process(TempDir),
+        Run(PathBuf),
+    }
+    static DIR: OnceLock<Dir> = OnceLock::new();
+    let dir = DIR.get_or_init(|| match std::env::var("NEXTEST_RUN_ID") {
+        Ok(run) => {
+            let runs = Path::new(env!("CARGO_TARGET_TMPDIR")).join("test-cache");
+            remove_old_runs(&runs, &run);
+            let dir = runs.join(run);
+            fs::create_dir_all(&dir).unwrap();
+            Dir::Run(dir)
+        }
+        Err(_) => Dir::Process(TempDir::new().unwrap()),
+    });
+    match dir {
+        Dir::Process(dir) => dir.path(),
+        Dir::Run(dir) => dir,
+    }
+}
+
+/// Removes the caches of earlier nextest runs: those not touched for an hour, so
+/// that a run going on in the same checkout keeps its own.
+fn remove_old_runs(runs: &Path, current: &str) {
+    let Ok(entries) = fs::read_dir(runs) else {
+        return;
+    };
+    let hour = std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > hour));
+        if entry.file_name() != current && old {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// Commits every file of `root` on `main`, then checks out `feature`.

@@ -22,6 +22,8 @@ hk = { version = "2.11.1", workflow = "release.yml" }
 pkl = "0.32.2"
 cargo-deny = "0.20.2"
 "github:bnjbvr/cargo-machete" = "0.9.2"
+# Runs the tests (`cargo nextest run`): a process per test, every test binary at once.
+"github:nextest-rs/nextest" = { version = "0.9.152", version_prefix = "cargo-nextest-" }
 # Reviews the snapshots of the tests (`cargo insta review`).
 cargo-insta = "1.49.0"
 jactionlint = { version = "2.4.0", workflow = "release.yaml" }
@@ -118,7 +120,7 @@ fi
 """
 
 [tasks.update]
-description = "Update npm and Cargo dependencies; then run `mise run check` and `cargo test`"
+description = "Update npm and Cargo dependencies; then run `mise run check` and `cargo nextest run`"
 depends = ["update:npm", "update:cargo"]
 
 # The SCIP indexers of package.json are pinned to the versions of mise.toml (the tests and CI use
