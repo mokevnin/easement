@@ -201,7 +201,7 @@ rules:
     because: core stays dependency-free   # printed for lodash
 ```
 
-`may_depend_on`, `must_not_reach`, `may_use_external`, `must_depend_on`, `must_use_external`, `requires_file`, `forbid_file`, `requires_directive` and `forbid_symbol` take the same items; an item of the top-level `forbid_symbol` may also take `allow` (below). For the allow-lists the reason says why the dependency is allowed and is shown by `easement explain`.
+`may_depend_on`, `must_not_reach`, `may_use_external`, `must_depend_on`, `must_use_external`, `requires_file`, `forbid_file`, `requires_directive` and `forbid_symbol` take the same items; an item of the top-level `forbid_symbol` may also take `allow` and `allow_in` (below). For the allow-lists the reason says why the dependency is allowed and is shown by `easement explain`.
 
 Quote a reason that contains a comma or a colon.
 
@@ -306,7 +306,21 @@ forbid_symbol:
     because: deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first
 ```
 
-`allow` works only at the top level; a component's own `forbid_symbol` with it fails to load. So does an `allow` that is empty or names no component, one that lets in a component whose own `forbid_symbol` lists the same name, and a name listed twice at the top level where one of the items has `allow`.
+`allow_in` lets in paths beside components: globs of files or directories relative to the root, as `in` patterns. A file may use the name when its component is in `allow` or its path matches `allow_in`, whatever component owns it, test code and each instance of an `isolated` component included. A closed list of packages that may hold a name then needs no component of its own, and the message names the paths too (`modules must not use ent.Client (only wiring, internal/modules/billing may)`):
+
+```yaml
+forbid_symbol:
+  - name: example.com/app/ent.Client
+    allow: [wiring, runner]
+    allow_in:
+      - internal/domain/sending/bindings
+      - internal/usecase/workspacedeletion
+    because: handlers and modules take a scoped client
+```
+
+An `allow_in` pattern that matches no file fails as `unmatched` at its line in the policy. `explain` on a file lists the names its path may use through `allow_in`, with the pattern (`symbol_grants` in `--format json`, its `provenance` pointing at the pattern), and `review` lists a pattern added to `allow_in` as loosened and one removed as tightened.
+
+`allow` and `allow_in` work only at the top level; a component's own `forbid_symbol` with either fails to load. So does an item whose `allow` and `allow_in` let no one in (an empty list and no other key, or both empty), an `allow` that names no component, one that lets in a component whose own `forbid_symbol` lists the same name, an `allow_in` pattern with a placeholder, and a name listed twice at the top level where one of the items has `allow` or `allow_in`. An `allow_in` pattern that matches a file of a component whose own `forbid_symbol` lists the same name fails too, naming both places, once the files are read: `check` and the commands that judge the code stop on it.
 
 The indexer resolves every name to its definition, so `db.Client` is matched by what it is, not by how it is spelled: an import alias or a local variable that shadows the package name makes no difference, and a method call on a value of that type (`c.Query()`) counts as a use of `Client`.
 

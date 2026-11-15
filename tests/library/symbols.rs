@@ -7,14 +7,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use easement::CacheUse;
-use easement::commands::Outcome;
+use easement::commands::{self, Outcome};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project};
 use crate::languages::{csharp_three, java_three, judged};
 use crate::run::{
-    check, check_in, check_with, composer_install, config, json, leaves_out, no_scip_ruby_here,
-    pinned, text,
+    check, check_in, check_with, composer_install, config, error, json, leaves_out,
+    no_scip_ruby_here, pinned, text, try_check_with,
 };
 
 /// The `symbols` evidence gaps of a JSON report.
@@ -357,6 +357,95 @@ fn a_top_level_forbidden_name_may_be_used_only_by_the_components_it_allows() {
     );
     assert!(!report.contains("internal/domain/tags/tags.go"), "{report}");
     pinned(|| insta::assert_snapshot!("forbid_symbol_allow_text", report));
+}
+
+#[test]
+fn a_top_level_forbidden_name_may_be_used_in_the_paths_it_allows() {
+    let (_tmp, root) = fixture("symbols_allow_in");
+    let own = TempDir::new().unwrap();
+    let checked = check_in(&root, own.path(), CacheUse::Off).unwrap();
+    assert_eq!(checked.outcome(), Outcome::Failed);
+    let report = text(&checked);
+    // Another package of the component whose two packages the paths let in.
+    assert!(
+        report.contains(
+            "internal/modules/reports/report.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing, internal/modules/mailing/*.go may)"
+        ),
+        "{report}"
+    );
+    // A directory, its test code included, and a glob of files; and the component allowed.
+    for granted in [
+        "internal/modules/billing/billing.go",
+        "internal/modules/billing/billing_test.go",
+        "internal/modules/mailing/send.go",
+        "cmd/app/main.go",
+    ] {
+        assert!(!report.contains(granted), "{granted}: {report}");
+    }
+    pinned(|| insta::assert_snapshot!("forbid_symbol_allow_in_text", report));
+}
+
+#[test]
+fn explain_names_the_forbidden_names_a_path_is_allowed() {
+    let (_tmp, root) = fixture("symbols_allow_in");
+    let explained = |path: &str| commands::explain(&config(&root), &root.join(path)).unwrap();
+    let mailing = explained("internal/modules/mailing/send.go");
+    assert_eq!(
+        serde_json::to_value(&mailing).unwrap()["symbol_grants"],
+        serde_json::json!([{
+            "name": "example.com/app/internal/store.Client",
+            "allow_in": "internal/modules/mailing/*.go",
+            "because": "a module takes the scoped client it is given",
+            "provenance": { "field": "forbid_symbol[0].allow_in[1]", "input": "easement.yml" },
+        }])
+    );
+    let said = mailing.text().unwrap();
+    assert!(
+        said.contains(
+            "  may use, although forbid_symbol forbids it: example.com/app/internal/store.Client (allow_in `internal/modules/mailing/*.go`: a module takes the scoped client it is given)\n"
+        ),
+        "{said}"
+    );
+    // Another package of the component: no grant to show.
+    let reports = explained("internal/modules/reports/report.go");
+    assert!(
+        serde_json::to_value(&reports)
+            .unwrap()
+            .get("symbol_grants")
+            .is_none()
+    );
+    assert!(!reports.text().unwrap().contains("forbid_symbol"));
+}
+
+#[test]
+fn a_path_allowed_a_forbidden_name_that_matches_no_file_is_unmatched() {
+    let (_tmp, root) = fixture("symbols_allow_in");
+    let policy = fs::read_to_string(config(&root)).unwrap().replace(
+        "internal/modules/mailing/*.go",
+        "internal/modules/mailer/*.go",
+    );
+    fs::write(config(&root), policy).unwrap();
+    let report = text(&check(&root));
+    assert!(
+        report.contains(
+            "easement.yml:12: `forbid_symbol` `example.com/app/internal/store.Client` is allowed in `internal/modules/mailer/*.go`, which matches no file; fix the pattern or drop it (files that `exclude` or .gitignore hide do not count) [unmatched]"
+        ),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_path_cannot_be_allowed_a_name_its_component_forbids() {
+    let (_tmp, root) = fixture("symbols_allow_in");
+    let policy = fs::read_to_string(config(&root)).unwrap().replace(
+        "may_depend_on: [store]",
+        "may_depend_on: [store]\n    forbid_symbol: [store.Client]",
+    );
+    fs::write(config(&root), policy).unwrap();
+    assert_eq!(
+        error(try_check_with(&root, |_| {})),
+        "forbid_symbol[0].allow_in lets `internal/modules/billing` use `example.com/app/internal/store.Client`, but internal/modules/billing/billing.go there belongs to `modules`, whose rules.modules.forbid_symbol forbids it as `store.Client`"
+    );
 }
 
 #[test]

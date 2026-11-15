@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, name_first};
 use crate::components::ComponentMap;
-use crate::config::Config;
+use anyhow::{Result, bail};
+
+use crate::config::{Config, ForbiddenName, TESTS};
 use crate::lang::{Dep, Target, registry};
 use crate::policy::Policy;
 use crate::relpath::slash;
@@ -38,11 +40,15 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
             .flat_map(|rule| {
                 rule.forbid_symbol
                     .iter()
-                    .map(move |listed| (listed, rule.because.as_deref()))
+                    .map(move |listed| (listed, rule.because.as_deref(), None))
             });
-        let global = config.forbid_symbol.iter().map(|listed| (listed, None));
+        let global = config
+            .forbid_symbol
+            .iter()
+            .enumerate()
+            .map(|(item, listed)| (listed, None, Some(item)));
         let mut seen = std::collections::BTreeSet::new();
-        for (listed, fallback) in global.chain(own) {
+        for (listed, fallback, item) in global.chain(own) {
             let pattern = listed.name();
             if names_symbol(pattern, &used.specifier, &used.name)
                 || used
@@ -54,6 +60,10 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
                 if owner.is_some_and(|component| listed.allows(component)) {
                     continue;
                 }
+                // So may a file in a path the item allows, whatever owns it.
+                if item.is_some_and(|item| map.granted_in(item, &file).is_some()) {
+                    continue;
+                }
                 // A name in both lists is one violation.
                 if !seen.insert(pattern) {
                     continue;
@@ -62,10 +72,18 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
                     Some(component) => component.to_string(),
                     None => "unowned files".to_string(),
                 };
-                let only = listed
+                let allowed: Vec<&str> = listed
                     .allow()
-                    .map(|allowed| format!(" (only {} may)", allowed.join(", ")))
-                    .unwrap_or_default();
+                    .into_iter()
+                    .chain(listed.allow_in())
+                    .flatten()
+                    .map(String::as_str)
+                    .collect();
+                let only = if allowed.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (only {} may)", allowed.join(", "))
+                };
                 report(
                     format!("{who} must not use {pattern}{only}"),
                     pattern.to_string(),
@@ -94,6 +112,47 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
         }
     }
     found
+}
+
+/// Fails when an `allow_in` pattern of the top-level `forbid_symbol` matches a
+/// file of a component whose own `forbid_symbol` lists the same name: the
+/// component's list still forbids it there, so the grant says what never holds.
+/// Only the files tell, so it is found when the policy is judged, not when it
+/// is read.
+pub fn contradicted_grants(config: &Config, map: &ComponentMap, files: &[String]) -> Result<()> {
+    for (i, listed) in config.forbid_symbol.iter().enumerate() {
+        let symbol = listed.name();
+        for file in files {
+            let Some(pattern) = map.granted_in(i, file) else {
+                continue;
+            };
+            let owner = if config.tests.is_some() && registry::is_test_file(file) {
+                Some(TESTS)
+            } else {
+                map.component_of(file)
+            };
+            let Some(component) = owner else {
+                continue;
+            };
+            let own = config.rules.get(component).and_then(|rule| {
+                rule.forbid_symbol
+                    .iter()
+                    .map(ForbiddenName::name)
+                    .find(|own| may_name_the_same(own, symbol))
+            });
+            if let Some(own) = own {
+                let spelled = if own == symbol {
+                    String::new()
+                } else {
+                    format!(" as `{own}`")
+                };
+                bail!(
+                    "forbid_symbol[{i}].allow_in lets `{pattern}` use `{symbol}`, but {file} there belongs to `{component}`, whose rules.{component}.forbid_symbol forbids it{spelled}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Why an index left the package of some names unnamed, as the code that reads

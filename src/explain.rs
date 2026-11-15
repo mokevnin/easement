@@ -300,6 +300,50 @@ pub struct Explanation {
     pub ownership: Ownership,
     #[serde(flatten)]
     pub component: Option<ComponentPolicy>,
+    /// The names of the top-level `forbid_symbol` that the path may use all the
+    /// same through `allow_in`, whatever component owns it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub symbol_grants: Vec<SymbolGrant>,
+}
+
+/// A name of the top-level `forbid_symbol` that an `allow_in` pattern lets a path use.
+#[derive(Debug, Serialize)]
+pub struct SymbolGrant {
+    pub name: String,
+    /// The pattern that matches the path, the first one the item writes.
+    pub allow_in: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub because: Option<String>,
+    /// Where the policy writes the pattern.
+    pub provenance: Provenance,
+}
+
+/// The names of the top-level `forbid_symbol` that `rel` may use through `allow_in`.
+fn symbol_grants(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<SymbolGrant> {
+    policy
+        .config
+        .forbid_symbol
+        .iter()
+        .enumerate()
+        .filter_map(|(item, listed)| {
+            let pattern = map.granted_in(item, rel)?;
+            let at = listed
+                .allow_in()
+                .unwrap_or_default()
+                .iter()
+                .position(|p| p == pattern)
+                .unwrap_or_default();
+            Some(SymbolGrant {
+                name: listed.name().to_string(),
+                allow_in: pattern.to_string(),
+                because: listed.because().map(str::to_string),
+                provenance: policy.provenance(&Site::in_key(
+                    "forbid_symbol",
+                    format!("forbid_symbol[{item}].allow_in[{at}]"),
+                )),
+            })
+        })
+        .collect()
 }
 
 /// Says which component a path belongs to and what that component may do.
@@ -335,6 +379,7 @@ pub fn explain(policy: &Policy, map: &ComponentMap, rel: &str) -> Explanation {
         path: rel.to_string(),
         ownership,
         component: owned.map(|(name, _)| component_policy(policy, map, name)),
+        symbol_grants: symbol_grants(policy, map, rel),
     }
 }
 
@@ -585,6 +630,17 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         if let Some(because) = &rule.because {
             out.push_str(&format!("  because: {because}\n"));
         }
+    }
+    for grant in &explanation.symbol_grants {
+        let because = grant
+            .because
+            .as_deref()
+            .map(|b| format!(": {b}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  may use, although forbid_symbol forbids it: {} (allow_in `{}`{because})\n",
+            grant.name, grant.allow_in
+        ));
     }
     Ok(out)
 }

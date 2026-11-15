@@ -63,10 +63,11 @@ pub struct ConstraintChange {
     pub key: &'static str,
     /// The name, module, glob, component or arrow added or removed, or the
     /// forbidden name that `allow` now lets `components` use or stops them
-    /// using; null for a value that changed as a whole.
+    /// using, or `allow_in` the files in `paths`; null for a value that changed
+    /// as a whole.
     pub item: Option<String>,
     /// Whether the item was added or removed; absent for a value that changed
-    /// as a whole, and for an `allow` that changed.
+    /// as a whole, and for an `allow` or `allow_in` that changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edit: Option<Edit>,
     /// The value at the merge-base, for a value that changed as a whole (null
@@ -79,6 +80,10 @@ pub struct ConstraintChange {
     /// (loosened), or may no longer (tightened).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<String>,
+    /// For an `allow_in` that changed: the patterns whose files may now use
+    /// `item` (loosened), or may no longer (tightened).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
     pub change: Direction,
     /// What a violation of the constraint shows: the item's own reason, or
     /// else the reason of its rule.
@@ -223,6 +228,7 @@ impl Diff<'_> {
             before: found.before,
             after: found.after,
             components: Vec::new(),
+            paths: Vec::new(),
             change: found.change,
             because: found.because.map(str::to_string),
             provenance: policy.provenance(&at.site(key, found.index)),
@@ -279,7 +285,9 @@ impl Diff<'_> {
     /// the name now and not then (loosened), or then and not now (tightened):
     /// one entry each way. A component is judged on every list that forbids
     /// the name, so one let in that its own rule used to forbid is listed
-    /// here, and one whose own rule still forbids it is not.
+    /// here, and one whose own rule still forbids it is not. Then the same for
+    /// the patterns of `allow_in`, told apart as written, of an item both
+    /// policies have: a new item is tightened as a whole.
     fn allow(&mut self) {
         let (base, head) = (&self.sides.base.config, &self.sides.head.config);
         let kept: Vec<&str> = self.sides.kept().collect();
@@ -319,6 +327,7 @@ impl Diff<'_> {
                     before: None,
                     after: None,
                     components,
+                    paths: Vec::new(),
                     change,
                     because: item.because().map(str::to_string),
                     provenance: self
@@ -327,6 +336,58 @@ impl Diff<'_> {
                         .provenance(&Site::in_key("forbid_symbol", field.clone())),
                 });
             }
+            if let Some(old) = old {
+                self.allow_in(index, item, old);
+            }
+        }
+    }
+
+    /// The patterns that the `allow_in` of the top-level `forbid_symbol` item
+    /// at `index` of the head policy has and the merge-base item `old` of the
+    /// same name lacks (loosened), and the other way (tightened): one entry
+    /// each way. A pattern matches the files of no component that forbids the
+    /// name on its own, or the policy fails, so the patterns alone tell.
+    fn allow_in(&mut self, index: usize, item: &ForbiddenName, old: &ForbiddenName) {
+        let (now, then) = (
+            item.allow_in().unwrap_or_default(),
+            old.allow_in().unwrap_or_default(),
+        );
+        let only = |from: &[String], other: &[String]| -> Vec<String> {
+            let mut only: Vec<String> = Vec::new();
+            for pattern in from {
+                if !other.contains(pattern) && !only.contains(pattern) {
+                    only.push(pattern.clone());
+                }
+            }
+            only
+        };
+        let field = match item.allow_in() {
+            Some(_) => format!("forbid_symbol[{index}].allow_in"),
+            None => format!("forbid_symbol[{index}]"),
+        };
+        for (paths, change) in [
+            (only(now, then), Direction::Loosened),
+            (only(then, now), Direction::Tightened),
+        ] {
+            if paths.is_empty() {
+                continue;
+            }
+            self.changes.push(ConstraintChange {
+                component: None,
+                key: "forbid_symbol",
+                item: Some(item.name().to_string()),
+                edit: None,
+                before: None,
+                after: None,
+                components: Vec::new(),
+                paths,
+                change,
+                because: item.because().map(str::to_string),
+                provenance: self
+                    .sides
+                    .head
+                    .provenance(&Site::in_key("forbid_symbol", field.clone())),
+            });
         }
     }
 
@@ -572,6 +633,7 @@ impl Diff<'_> {
                     before: None,
                     after: None,
                     components: Vec::new(),
+                    paths: Vec::new(),
                     change,
                     because: None,
                     provenance: drawn_in(policy),
@@ -757,15 +819,22 @@ impl ConstraintChange {
                 let noun = if self.key == "diagram" { " arrow" } else { "" };
                 format!("{verb}{noun} `{item}`")
             }
-            // Who may use a forbidden name.
-            (Some(item), None) => format!(
-                "`{item}` may {} be used by {}",
-                match self.change {
-                    Direction::Loosened => "now",
-                    Direction::Tightened => "no longer",
-                },
-                shown(Some(&Value::from(self.components.clone())))
-            ),
+            // Who may use a forbidden name, or where.
+            (Some(item), None) => {
+                let (by, who) = if self.paths.is_empty() {
+                    ("by", &self.components)
+                } else {
+                    ("in", &self.paths)
+                };
+                format!(
+                    "`{item}` may {} be used {by} {}",
+                    match self.change {
+                        Direction::Loosened => "now",
+                        Direction::Tightened => "no longer",
+                    },
+                    shown(Some(&Value::from(who.clone())))
+                )
+            }
             _ => format!(
                 "{} (was {})",
                 shown(self.after.as_ref()),
@@ -927,6 +996,62 @@ components:
         // Only reordered: no change.
         let both = item(", allow: [web, db]");
         assert!(compare(&both, &item(", allow: [db, web]"), changes).is_empty());
+    }
+
+    #[test]
+    fn a_path_let_into_a_forbidden_name_loosens_and_one_left_out_tightens() {
+        let item = |grants: &str| {
+            format!(
+                "{TWO}forbid_symbol:\n  - tags.Rename\n  - {{ name: tags.DeleteIn{grants}, because: a use case }}\n"
+            )
+        };
+        let plain = item("");
+        let admin = item(", allow_in: [web/admin]");
+        let found = compare(&plain, &admin, changes);
+        assert_eq!(said(&found), ["forbid_symbol: tags.DeleteIn (Loosened)"]);
+        let wider = &found[0];
+        assert_eq!(wider.edit, None);
+        assert!(wider.components.is_empty());
+        assert_eq!(wider.paths, ["web/admin"]);
+        assert_eq!(wider.because.as_deref(), Some("a use case"));
+        assert_eq!(wider.provenance.field, "forbid_symbol[1].allow_in");
+        assert_eq!(
+            wider.line(),
+            "forbid_symbol: `tags.DeleteIn` may now be used in `web/admin` (loosened)"
+        );
+        // One path let in and another left out, beside a component let in.
+        let swapped = compare(
+            &admin,
+            &item(", allow: [web], allow_in: [db/jobs, db/sweep]"),
+            changes,
+        );
+        let lines: Vec<String> = swapped.iter().map(ConstraintChange::line).collect();
+        assert_eq!(
+            lines,
+            [
+                "forbid_symbol: `tags.DeleteIn` may now be used by `web` (loosened)",
+                "forbid_symbol: `tags.DeleteIn` may now be used in `db/jobs`, `db/sweep` (loosened)",
+                "forbid_symbol: `tags.DeleteIn` may no longer be used in `web/admin` (tightened)",
+            ]
+        );
+        let narrowed = compare(&admin, &plain, changes);
+        assert_eq!(
+            said(&narrowed),
+            ["forbid_symbol: tags.DeleteIn (Tightened)"]
+        );
+        assert_eq!(narrowed[0].paths, ["web/admin"]);
+        // No `allow_in` left to point at: the item itself.
+        assert_eq!(narrowed[0].provenance.field, "forbid_symbol[1]");
+        // Only reordered: no change; a new item is tightened as a whole.
+        let both = item(", allow_in: [web/admin, db/jobs]");
+        assert!(compare(&both, &item(", allow_in: [db/jobs, web/admin]"), changes).is_empty());
+        let new = compare(
+            &format!("{TWO}forbid_symbol: [tags.Rename]\n"),
+            &admin,
+            changes,
+        );
+        assert_eq!(said(&new), ["forbid_symbol: tags.DeleteIn (Tightened)"]);
+        assert_eq!(new[0].edit, Some(Edit::Added));
     }
 
     const RUN: &str = "version: 1

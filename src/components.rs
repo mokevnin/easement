@@ -38,6 +38,9 @@ pub struct ComponentMap {
     surfaces: std::collections::HashMap<String, Vec<NamedSurface>>,
     /// Component -> what it may do with external modules, for components that restrict it.
     externals: std::collections::HashMap<String, Externals>,
+    /// The `allow_in` patterns of each top-level `forbid_symbol` item, as written
+    /// and compiled, in the order of the items.
+    symbol_grants: Vec<Vec<(String, ModuleMatcher)>>,
     /// Path -> (part, the index in `entries` of the entry that owns it) for every
     /// lookup made so far: the entries never change, so an answer stays true for
     /// the life of the map. Scoped threads share the map, hence the lock.
@@ -334,6 +337,21 @@ impl ComponentMap {
                 surfaces.insert(name.clone(), named);
             }
         }
+        let symbol_grants = config
+            .forbid_symbol
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                item.allow_in()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|pattern| {
+                        let place = format!("forbid_symbol[{i}].allow_in");
+                        Ok((pattern.clone(), module_matchers(&place, pattern)?))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect::<Result<Vec<_>>>()?;
         let mut uncovered_ok = GlobSetBuilder::new();
         let mut accepting = Vec::new();
         let mut accepting_of_glob = Vec::new();
@@ -370,8 +388,37 @@ impl ComponentMap {
             public,
             surfaces,
             externals,
+            symbol_grants,
             owners: Owners::default(),
         })
+    }
+
+    /// The `allow_in` pattern of the top-level `forbid_symbol` item at `item`
+    /// that lets `rel_path` use its name, the first one written; the component
+    /// that owns the file does not matter.
+    pub fn granted_in(&self, item: usize, rel_path: &str) -> Option<&str> {
+        self.symbol_grants
+            .get(item)?
+            .iter()
+            .find(|(_, matcher)| matcher.is_match(rel_path))
+            .map(|(pattern, _)| pattern.as_str())
+    }
+
+    /// Every `allow_in` pattern, as (the index of its item, the index of the
+    /// pattern, the pattern), that matches none of `files`, in the order of the config.
+    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(usize, usize, &str)> {
+        self.symbol_grants
+            .iter()
+            .enumerate()
+            .flat_map(|(item, patterns)| {
+                patterns
+                    .iter()
+                    .enumerate()
+                    .map(move |(at, (pattern, matcher))| (item, at, pattern, matcher))
+            })
+            .filter(|(_, _, _, matcher)| !files.iter().any(|f| matcher.is_match(f)))
+            .map(|(item, at, pattern, _)| (item, at, pattern.as_str()))
+            .collect()
     }
 
     /// Whether any of the external modules, each with the file that imports it,

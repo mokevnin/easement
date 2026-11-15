@@ -154,7 +154,8 @@ impl Policy {
     }
 
     /// The line, counted from 1, where the configuration writes `value` under the
-    /// keys `path` (`components.web.in`, `rules.web.forbid_symbol`, `entry`); 1 when
+    /// keys `path` (`components.web.in`, `rules.web.forbid_symbol`, `entry`, a key of
+    /// digits being the index of an item, as in `forbid_symbol.0.allow_in`); 1 when
     /// a file it extends defines the entry that holds it, as reports then name the
     /// configuration.
     pub fn config_line(&self, path: &[&str], value: &str) -> usize {
@@ -618,8 +619,13 @@ fn written_line(text: &str, path: &[&str], value: &str) -> usize {
     let Some((first, rest)) = path.split_first() else {
         return 1;
     };
+    // A key of digits is the index of an item of a list.
     let node = rest.iter().try_fold(document.get(*first), |node, key| {
-        Some(node?.as_mapping()?.get(*key))
+        let node = node?;
+        match (node.as_sequence(), key.parse::<usize>()) {
+            (Some(list), Ok(index)) => Some(list.get(index)),
+            _ => Some(node.as_mapping()?.get(*key)),
+        }
     });
     node.flatten()
         .and_then(|node| holding(&node, value))
@@ -1028,6 +1034,11 @@ entry:
   - cmd/**
 forbid_symbol:
   - { name: d.T, because: banned }
+  - name: e.T
+    allow_in:
+      - src/ab
+      - src/a
+  - { name: f.T, allow_in: [src/a] }
 "#;
         let line = |path: &[&str], value| written_line(text, path, value);
         assert_eq!(line(&["components", "b", "in"], "src/old"), 13);
@@ -1039,6 +1050,10 @@ forbid_symbol:
         assert_eq!(line(&["rules", "b", "forbid_symbol"], "x.Y"), 3);
         assert_eq!(line(&["entry"], "cmd/**"), 15);
         assert_eq!(line(&["forbid_symbol"], "d.T"), 17);
+        // An item of a list by its index: two items may write the same path.
+        assert_eq!(line(&["forbid_symbol", "1", "allow_in"], "src/a"), 21);
+        assert_eq!(line(&["forbid_symbol", "2", "allow_in"], "src/a"), 22);
+        assert_eq!(line(&["forbid_symbol", "3", "allow_in"], "src/a"), 1);
         // What the text does not write there, such as a component from `extends`.
         assert_eq!(line(&["components", "legacy", "in"], "src/gone"), 1);
         assert_eq!(line(&["components", "a", "in"], "src/x"), 1);

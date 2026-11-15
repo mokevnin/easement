@@ -83,6 +83,7 @@ impl Project {
     ) -> Result<Judgment> {
         let config = &policy.config;
         let map = ComponentMap::new(config)?;
+        symbols::contradicted_grants(config, &map, &scan.all_files)?;
         let (mut violations, edges, mut stats) = check::evaluate(config, &map, &scan.deps);
         violations.extend(symbols::symbols(config, &map, &scan.symbols));
         violations.extend(check::naming(config, &map, &scan.types)?);

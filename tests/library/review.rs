@@ -664,6 +664,42 @@ fn review_names_the_component_a_moved_forbidden_name_lets_in() {
     });
 }
 
+/// A path added to `allow_in` loosens and one dropped from it tightens, each
+/// naming its patterns.
+#[test]
+fn review_names_the_paths_a_forbidden_name_is_let_into_or_out_of() {
+    let item = |paths: &str| {
+        format!(
+            "{APP_WEB_WIRING}forbid_symbol:\n  - {{ name: os.Getenv, allow: [wiring], allow_in: [{paths}], because: {SETTINGS} }}\n"
+        )
+    };
+    let (_tmp, root) = project(&[
+        ("easement.yml", item("src/app").as_str()),
+        ("src/app/run.ts", "export const run = 1;\n"),
+        ("src/web/admin/page.ts", "export const page = 1;\n"),
+        ("src/wiring/main.ts", "export const main = 1;\n"),
+    ]);
+    commit_all(&root);
+    git(&root, &["checkout", "-q", "-b", "feature"]);
+    fs::write(config(&root), item("src/web/admin")).unwrap();
+    let said = review_text(&root);
+    let section = said
+        .split("\n\n")
+        .find(|part| part.starts_with("Constraints:"))
+        .unwrap_or_default();
+    assert!(
+        said.contains("1 constraint(s) loosened, 1 tightened"),
+        "{said}"
+    );
+    pinned(|| {
+        insta::assert_json_snapshot!(
+            "review_allow_in_paths_json",
+            review_json(&root)["constraints"]
+        );
+        insta::assert_snapshot!("review_allow_in_paths_text", section);
+    });
+}
+
 /// The policy of `web` importing `storage`, with the diagram that draws it.
 const DRAWN_POLICY: &str = "version: 1
 components:
