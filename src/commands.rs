@@ -123,6 +123,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         map,
         edges,
         accepted,
+        unindexed,
         ..
     } = project.analysis(scan)?;
     let current = violations.iter().map(check::Violation::key).collect();
@@ -152,7 +153,12 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         .partition(|v| project.config().warns(v.rule));
     let mut verdict = Verdict::judge(judged, warnings, &current, baseline.as_ref());
     verdict.owners = project.config().owners();
-    verdict.stale.retain(|k| scope.contains(&map, &k.file));
+    // A file no indexer read shows none of its debt, which is not paid for
+    // that: `baseline` keeps its entries, so they are not stale (the evidence
+    // gaps name the file).
+    verdict
+        .stale
+        .retain(|k| scope.contains(&map, &k.file) && !unindexed.contains(&k.file));
     verdict.sort();
     // Judged in full, the change narrows nothing.
     let narrowed = report::narrowed(

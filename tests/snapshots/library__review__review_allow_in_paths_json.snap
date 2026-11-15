@@ -1,0 +1,34 @@
+---
+source: tests/library/review.rs
+expression: "review_json(&root)[\"constraints\"]"
+---
+[
+  {
+    "because": "settings come through the getenv Run is given",
+    "change": "loosened",
+    "component": null,
+    "item": "os.Getenv",
+    "key": "forbid_symbol",
+    "paths": [
+      "src/web/admin"
+    ],
+    "provenance": {
+      "field": "forbid_symbol[0].allow_in",
+      "input": "easement.yml"
+    }
+  },
+  {
+    "because": "settings come through the getenv Run is given",
+    "change": "tightened",
+    "component": null,
+    "item": "os.Getenv",
+    "key": "forbid_symbol",
+    "paths": [
+      "src/app"
+    ],
+    "provenance": {
+      "field": "forbid_symbol[0].allow_in",
+      "input": "easement.yml"
+    }
+  }
+]

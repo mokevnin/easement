@@ -76,7 +76,7 @@
       ]
     },
     "forbid_symbol": {
-      "description": "Names that no checked file may use, components and files that belong to none alike, as `package.Name` or `import/path.Name`, a member after its type (`ent.Client.Query`). A component's own `forbid_symbol` adds to it. An item may carry its own reason, and `allow`: the components that may use the name all the same.",
+      "description": "Names that no checked file may use, components and files that belong to none alike, as `package.Name` or `import/path.Name`, a member after its type (`ent.Client.Query`). A component's own `forbid_symbol` adds to it. An item may carry its own reason, `allow`: the components that may use the name all the same, and `allow_in`: the paths whose files may.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/ForbiddenName"
@@ -447,7 +447,7 @@
       ]
     },
     "ForbiddenName": {
-      "description": "A name in a `forbid_symbol` list: a plain name, or one with a reason of its own and, at the top level, the components that may use it all the same.",
+      "description": "A name in a `forbid_symbol` list: a plain name, or one with a reason of its own and, at the top level, the components and paths that may use it all the same.",
       "anyOf": [
         {
           "type": "string"
@@ -462,6 +462,17 @@
       "properties": {
         "allow": {
           "description": "Only in the top-level `forbid_symbol`: the components that may use the name. Every other use is a violation, in the component that defines the name too.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_in": {
+          "description": "Only in the top-level `forbid_symbol`: globs of the paths whose files may use the name, each a file or a directory relative to the root, as an `in` pattern, whatever component owns the file (test code and each instance of an isolated component too). A pattern that matches no file fails as unmatched.",
           "type": [
             "array",
             "null"

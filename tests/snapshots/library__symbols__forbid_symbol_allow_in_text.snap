@@ -1,0 +1,8 @@
+---
+source: tests/library/symbols.rs
+expression: report
+---
+internal/modules/reports/report.go:5: modules must not use example.com/app/internal/store.Client (only wiring, internal/modules/billing, internal/modules/mailing/*.go may) [symbol]
+  because: a module takes the scoped client it is given
+
+easement failed: 1 violation(s), 0 stale, 0 legalized; 6 files, 7 internal deps

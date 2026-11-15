@@ -70,6 +70,32 @@ pub fn unmatched(
                 }),
         )
         .chain(unmatched_parts(policy, deps, config_file))
+        .chain(unmatched_grants(policy, map, files, config_file))
+        .collect()
+}
+
+/// An `allow_in` pattern of the top-level `forbid_symbol` that matches no file:
+/// it lets no one use the name, so it is a typo or a path gone.
+fn unmatched_grants(
+    policy: &Policy,
+    map: &ComponentMap,
+    files: &[String],
+    config_file: &str,
+) -> Vec<Violation> {
+    map.unmatched_grants(files)
+        .into_iter()
+        .map(|(item, pattern)| {
+            let name = policy.config.forbid_symbol[item].name();
+            Violation {
+                file: config_file.to_string(),
+                line: policy.config_line(&["forbid_symbol", &item.to_string(), "allow_in"], pattern),
+                message: format!(
+                    "`forbid_symbol` `{name}` is allowed in `{pattern}`, which matches no file; fix the pattern or drop it (files that `exclude` or .gitignore hide do not count)"
+                ),
+                target: pattern.to_string(),
+                ..Violation::of(RuleId::Unmatched)
+            }
+        })
         .collect()
 }
 

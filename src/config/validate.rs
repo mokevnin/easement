@@ -108,10 +108,15 @@ impl Config {
                     bail!("rules.{from}.forbid_symbol `{symbol}` must look like `package.Name`");
                 }
                 // A component's own list binds only its files, so it has no one to let in.
-                if listed.allow().is_some() {
-                    bail!(
-                        "rules.{from}.forbid_symbol `{symbol}` has `allow`, which works only in the top-level forbid_symbol"
-                    );
+                for (key, set) in [
+                    ("allow", listed.allow().is_some()),
+                    ("allow_in", listed.allow_in().is_some()),
+                ] {
+                    if set {
+                        bail!(
+                            "rules.{from}.forbid_symbol `{symbol}` has `{key}`, which works only in the top-level forbid_symbol"
+                        );
+                    }
                 }
             }
             for pattern in rule.requires_directive.iter().map(Listed::name) {
@@ -281,50 +286,72 @@ impl Config {
         Ok(())
     }
 
-    /// Rejects an `allow` of the top-level `forbid_symbol` that lets no one in,
-    /// names what is no component, lets in a component whose own rule forbids
-    /// the name, or sits on a name another item can name too, spelled alike or
-    /// under a longer qualifier, where which item holds is unclear.
+    /// Rejects an `allow` or `allow_in` of the top-level `forbid_symbol` that
+    /// lets no one in, an `allow` that names what is no component or lets in a
+    /// component whose own rule forbids the name, an `allow_in` pattern that is
+    /// no plain glob, and either on a name another item can name too, spelled
+    /// alike or under a longer qualifier, where which item holds is unclear. An
+    /// `allow_in` pattern over a file of a component whose own rule forbids the
+    /// name is found once the files are known ([`crate::symbols::contradicted_grants`]).
     fn validate_forbid_symbol_allow(
         &self,
         check: &impl Fn(&str, &str) -> Result<()>,
     ) -> Result<()> {
         for (i, listed) in self.forbid_symbol.iter().enumerate() {
+            let symbol = listed.name();
+            if let Some(paths) = listed.allow_in() {
+                let place = format!("forbid_symbol[{i}].allow_in");
+                match listed.allow() {
+                    _ if !paths.is_empty() => {}
+                    Some([]) => bail!(
+                        "forbid_symbol[{i}] lets no one use `{symbol}`: `allow` and `allow_in` are both empty; leave them out instead"
+                    ),
+                    None => bail!("{place} lists no path; leave the key out instead"),
+                    Some(_) => {}
+                }
+                for pattern in paths {
+                    if pattern.contains('<') {
+                        bail!(
+                            "`{pattern}` in {place}: a placeholder like `<feature>` works only in `in`"
+                        );
+                    }
+                    globset::Glob::new(pattern)
+                        .with_context(|| format!("bad pattern `{pattern}` in {place}"))?;
+                }
+            }
             let Some(allowed) = listed.allow() else {
                 continue;
             };
             let place = format!("forbid_symbol[{i}].allow");
-            if allowed.is_empty() {
+            if allowed.is_empty() && listed.allow_in().is_none() {
                 bail!("{place} lists no component; leave the key out instead");
             }
-            let symbol = listed.name();
             for component in allowed {
                 check(component, &place)?;
-                let own = self.rules.get(component).and_then(|rule| {
-                    rule.forbid_symbol
-                        .iter()
-                        .map(ForbiddenName::name)
-                        .find(|own| crate::symbols::may_name_the_same(own, symbol))
-                });
-                if let Some(own) = own {
-                    let spelled = if own == symbol {
-                        String::new()
-                    } else {
-                        format!(" as `{own}`")
-                    };
+                if let Some(spelled) = crate::symbols::own_ban(self, component, symbol) {
                     bail!(
                         "{place} lets `{component}` use `{symbol}`, which rules.{component}.forbid_symbol forbids{spelled}"
                     );
                 }
             }
         }
+        // The key that grants the name, if the item has one.
+        let granting_key = |item: &ForbiddenName| {
+            if item.allow().is_some() {
+                Some("allow")
+            } else if item.allow_in().is_some() {
+                Some("allow_in")
+            } else {
+                None
+            }
+        };
         for (i, first) in self.forbid_symbol.iter().enumerate() {
             for (j, second) in self.forbid_symbol.iter().enumerate().skip(i + 1) {
-                if (first.allow().is_some() || second.allow().is_some())
+                if let Some(key) = granting_key(first).or(granting_key(second))
                     && crate::symbols::may_name_the_same(first.name(), second.name())
                 {
                     bail!(
-                        "forbid_symbol[{i}] `{}` and forbid_symbol[{j}] `{}` can name the same symbol, and one of them has `allow`, so who may use it is ambiguous: list it once",
+                        "forbid_symbol[{i}] `{}` and forbid_symbol[{j}] `{}` can name the same symbol, and one of them has `{key}`, so who may use it is ambiguous: list it once",
                         first.name(),
                         second.name()
                     );
@@ -735,6 +762,96 @@ components:
         }
         // A name under another package is another name.
         assert!(three("forbid_symbol: [{ name: tags.DeleteIn, allow: [usecase] }]\nrules:\n  usecase: { forbid_symbol: [labels.DeleteIn] }\n").is_ok());
+    }
+
+    #[test]
+    fn a_top_level_forbidden_name_may_allow_paths() {
+        let config = three(
+            "forbid_symbol:\n  - { name: tags.DeleteIn, allow_in: [usecase/tagdeletion, 'web/admin/*.go'] }\n  - tags.Rename\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.forbid_symbol[0].allow_in(),
+            Some(
+                &[
+                    "usecase/tagdeletion".to_string(),
+                    "web/admin/*.go".to_string()
+                ][..]
+            )
+        );
+        assert_eq!(config.forbid_symbol[0].allow(), None);
+        assert_eq!(config.forbid_symbol[1].allow_in(), None);
+        // Beside components; an empty `allow` is fine while the paths let someone in.
+        assert!(
+            three(
+                "forbid_symbol: [{ name: tags.DeleteIn, allow: [web], allow_in: [usecase/x] }]\n"
+            )
+            .is_ok()
+        );
+        assert!(
+            three("forbid_symbol: [{ name: tags.DeleteIn, allow: [], allow_in: [usecase/x] }]\n")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn allow_in_works_only_in_the_top_level_forbid_symbol() {
+        let err = three(
+            "rules:\n  web: { forbid_symbol: [{ name: tags.DeleteIn, allow_in: [usecase/x] }] }\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "rules.web.forbid_symbol `tags.DeleteIn` has `allow_in`, which works only in the top-level forbid_symbol"
+        );
+    }
+
+    #[test]
+    fn a_forbidden_name_lets_someone_in_when_it_grants() {
+        for (item, said) in [
+            (
+                "allow_in: []",
+                "forbid_symbol[0].allow_in lists no path; leave the key out instead",
+            ),
+            (
+                "allow: [], allow_in: []",
+                "forbid_symbol[0] lets no one use `tags.DeleteIn`: `allow` and `allow_in` are both empty; leave them out instead",
+            ),
+        ] {
+            let err = three(&format!(
+                "forbid_symbol: [{{ name: tags.DeleteIn, {item} }}]\n"
+            ))
+            .unwrap_err();
+            assert_eq!(err.to_string(), said, "{item}");
+        }
+    }
+
+    #[test]
+    fn allow_in_takes_plain_globs() {
+        let err =
+            three("forbid_symbol: [{ name: tags.DeleteIn, allow_in: ['web/[x'] }]\n").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bad pattern `web/[x` in forbid_symbol[0].allow_in"
+        );
+        let err = three("forbid_symbol: [{ name: tags.DeleteIn, allow_in: ['usecase/<case>'] }]\n")
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`usecase/<case>` in forbid_symbol[0].allow_in: a placeholder like `<feature>` works only in `in`"
+        );
+    }
+
+    #[test]
+    fn a_name_with_allow_in_is_listed_once_at_the_top_level() {
+        let err = three(
+            "forbid_symbol: [tags.DeleteIn, { name: example.com/app/tags.DeleteIn, allow_in: [web] }]\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "forbid_symbol[0] `tags.DeleteIn` and forbid_symbol[1] `example.com/app/tags.DeleteIn` can name the same symbol, and one of them has `allow_in`, so who may use it is ambiguous: list it once"
+        );
     }
 
     #[test]

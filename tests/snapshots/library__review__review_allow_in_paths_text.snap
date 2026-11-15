@@ -1,0 +1,9 @@
+---
+source: tests/library/review.rs
+expression: section
+---
+Constraints:
+  forbid_symbol: `os.Getenv` may now be used in `src/web/admin` (loosened)
+    because: settings come through the getenv Run is given
+  forbid_symbol: `os.Getenv` may no longer be used in `src/app` (tightened)
+    because: settings come through the getenv Run is given

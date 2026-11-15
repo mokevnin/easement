@@ -39,8 +39,9 @@ pub struct Config {
     pub rules: BTreeMap<String, Rule>,
     /// Names that no checked file may use, components and files that belong to none alike,
     /// as `package.Name` or `import/path.Name`, a member after its type (`ent.Client.Query`).
-    /// A component's own `forbid_symbol` adds to it. An item may carry its own reason, and
-    /// `allow`: the components that may use the name all the same.
+    /// A component's own `forbid_symbol` adds to it. An item may carry its own reason,
+    /// `allow`: the components that may use the name all the same, and `allow_in`: the
+    /// paths whose files may.
     #[serde(default)]
     pub forbid_symbol: Vec<ForbiddenName>,
     /// Globs of paths to skip.
@@ -285,7 +286,7 @@ impl Listed {
 }
 
 /// A name in a `forbid_symbol` list: a plain name, or one with a reason of its
-/// own and, at the top level, the components that may use it all the same.
+/// own and, at the top level, the components and paths that may use it all the same.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ForbiddenName {
@@ -304,6 +305,12 @@ pub struct ForbiddenNameItem {
     /// other use is a violation, in the component that defines the name too.
     #[serde(default)]
     allow: Option<Vec<String>>,
+    /// Only in the top-level `forbid_symbol`: globs of the paths whose files may use the
+    /// name, each a file or a directory relative to the root, as an `in` pattern, whatever
+    /// component owns the file (test code and each instance of an isolated component too).
+    /// A pattern that matches no file fails as unmatched.
+    #[serde(default)]
+    allow_in: Option<Vec<String>>,
 }
 
 impl ForbiddenName {
@@ -326,6 +333,14 @@ impl ForbiddenName {
         match self {
             ForbiddenName::Plain(_) => None,
             ForbiddenName::Detailed(item) => item.allow.as_deref(),
+        }
+    }
+
+    /// The globs of the paths whose files may use the name, when the item lists them.
+    pub fn allow_in(&self) -> Option<&[String]> {
+        match self {
+            ForbiddenName::Plain(_) => None,
+            ForbiddenName::Detailed(item) => item.allow_in.as_deref(),
         }
     }
 

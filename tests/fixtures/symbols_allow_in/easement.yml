@@ -1,0 +1,27 @@
+version: 1
+
+tests: auto
+
+# Only the wiring and two of the modules hold a store client: every other use is a
+# violation, in another module of `modules` too.
+forbid_symbol:
+  - name: example.com/app/internal/store.Client
+    allow: [wiring]
+    allow_in:
+      - internal/modules/billing
+      - internal/modules/mailing/*.go
+    because: a module takes the scoped client it is given
+
+components:
+  wiring:
+    in: cmd/app
+  modules:
+    in: internal/modules
+  store:
+    in: internal/store
+
+rules:
+  wiring:
+    may_depend_on: [modules, store]
+  modules:
+    may_depend_on: [store]

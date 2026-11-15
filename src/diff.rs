@@ -36,6 +36,8 @@ impl Changes {
         let merge_base = merge_base(root, base)?;
         // Working tree against the merge-base: committed and uncommitted changes.
         // --relative limits the diff to the project root and makes paths relative to it.
+        // A moved file is deleted and added: in its new place every line is new,
+        // where a rename would leave only the lines edited on the way.
         let diff = git(
             root,
             &[
@@ -44,7 +46,7 @@ impl Changes {
                 "diff",
                 "--relative",
                 "--unified=0",
-                "--find-renames",
+                "--no-renames",
                 "--no-color",
                 "--no-ext-diff",
                 "--no-prefix",
