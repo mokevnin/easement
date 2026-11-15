@@ -240,6 +240,31 @@ impl Site {
         Some(site)
     }
 
+    /// `layers`, where it puts `from` and `to`, with the globs and sets of the rows
+    /// that name them.
+    pub fn of_layers(config: &Config, from: &str, to: &str) -> Self {
+        let mut site = Self::of_key("layers");
+        for name in [from, to] {
+            if let Some(through) = config
+                .written("layers", name)
+                .and_then(|w| w.through.clone())
+                && !site.through.contains(&through)
+            {
+                site.through.push(through);
+            }
+        }
+        site
+    }
+
+    /// The item that names `name` in the top-level list `key` (`no_cycles`): the
+    /// name itself, or the glob or set it comes through.
+    pub fn of_top_item(config: &Config, key: &str, name: &str) -> Option<Self> {
+        let written = config.written(key, name)?;
+        let mut site = Self::in_key(key, format!("{key}[{}]", written.index));
+        site.through.extend(written.through.clone());
+        Some(site)
+    }
+
     /// The globs and sets that bring the clause to the component it is about.
     pub fn through(&self) -> &[String] {
         &self.through

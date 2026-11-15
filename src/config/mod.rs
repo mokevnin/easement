@@ -66,7 +66,8 @@ pub struct Config {
     /// Path of the baseline file, default easement.baseline.yml.
     #[serde(default)]
     pub baseline: Option<PathBuf>,
-    /// Fail on dependency cycles between components: true for all, or a list of components.
+    /// Fail on dependency cycles between components: true for all, or a list of components,
+    /// which may name them by glob (`'api-*'`) or by set (`'@drivers'`).
     #[serde(default)]
     pub no_cycles: NoCycles,
     /// What `must_not_reach` follows: `files` (the default) takes an import for everything
@@ -632,7 +633,8 @@ pub struct Rule {
     #[schemars(with = "Vec<Listed>")]
     pub forbid_symbol: Vec<ForbiddenName>,
     /// Components that every directory of this component must import at least once. An item
-    /// may carry its own reason.
+    /// may carry its own reason, and may be a glob or a set: each component it covers is
+    /// required.
     #[serde(default)]
     pub must_depend_on: Vec<Listed>,
     /// External modules that every directory of this component must use; a pattern covers

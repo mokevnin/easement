@@ -109,7 +109,7 @@
       "default": false
     },
     "no_cycles": {
-      "description": "Fail on dependency cycles between components: true for all, or a list of components.",
+      "description": "Fail on dependency cycles between components: true for all, or a list of components, which may name them by glob (`'api-*'`) or by set (`'@drivers'`).",
       "allOf": [
         {
           "$ref": "#/definitions/NoCycles"
@@ -696,7 +696,7 @@
           }
         },
         "must_depend_on": {
-          "description": "Components that every directory of this component must import at least once. An item may carry its own reason.",
+          "description": "Components that every directory of this component must import at least once. An item may carry its own reason, and may be a glob or a set: each component it covers is required.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/Listed"

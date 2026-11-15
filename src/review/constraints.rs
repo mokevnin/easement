@@ -128,6 +128,16 @@ impl At<'_> {
         }
     }
 
+    /// The site of the item of the list of components `key` that names `name`,
+    /// when `key` is such a list.
+    fn listed_site(self, config: &Config, key: &str, name: &str) -> Option<Site> {
+        match self {
+            At::Top => Site::of_top_item(config, key, name),
+            At::Rule(rule) => Site::of_rule_item(config, rule, key, name),
+            At::Component(_) => None,
+        }
+    }
+
     /// The site of `key`, or of its item at `index`, in `config`.
     fn site(self, config: &Config, key: &str, index: Option<usize>) -> Site {
         let item = index.map(|i| format!("[{i}]")).unwrap_or_default();
@@ -220,6 +230,14 @@ impl Diff<'_> {
         } else {
             Edit::Removed
         });
+        // An item of a list of components is written where the policy names it,
+        // maybe through a glob or a set; any other at its index.
+        let config = &policy.config;
+        let site = found
+            .item
+            .as_deref()
+            .and_then(|item| at.listed_site(config, key, item))
+            .unwrap_or_else(|| at.site(config, key, found.index));
         self.changes.push(ConstraintChange {
             component: at.component(),
             key,
@@ -231,7 +249,7 @@ impl Diff<'_> {
             paths: Vec::new(),
             change: found.change,
             because: found.because.map(str::to_string),
-            provenance: policy.provenance(&at.site(&policy.config, key, found.index)),
+            provenance: policy.provenance(&site),
         });
     }
 
