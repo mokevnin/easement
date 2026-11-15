@@ -149,4 +149,62 @@ mod tests {
         assert!(is_under("src/a.ts", "src"));
         assert!(!is_under("srcs/a.ts", "src"));
     }
+
+    /// A project path: one to four names, a name of letters with an
+    /// optional extension, none of them `.` or `..`.
+    fn path() -> impl proptest::strategy::Strategy<Value = String> {
+        proptest::collection::vec("[a-z]{1,3}(\\.[a-z]{1,2})?", 1..5)
+            .prop_map(|names| names.join("/"))
+    }
+
+    /// The root `""` or a project path.
+    fn dir() -> impl proptest::strategy::Strategy<Value = String> {
+        proptest::prop_oneof![proptest::strategy::Just(String::new()), path()]
+    }
+
+    use proptest::strategy::Strategy as _;
+
+    proptest::proptest! {
+        #[test]
+        fn a_path_is_its_directory_and_its_name(path in path()) {
+            proptest::prop_assert_eq!(join(parent(&path), file_name(&path)), path);
+        }
+
+        /// Without `.` or `..`, `resolve` is `join`; each `..` takes one name
+        /// off the directory, and one more than it has climbs above the root.
+        #[test]
+        fn resolve_climbs_one_directory_per_dot_dot(dir in dir(), rel in path(), up in 0usize..6) {
+            proptest::prop_assert_eq!(resolve(&dir, &rel), Some(join(&dir, &rel)));
+            let names: Vec<&str> = dir.split('/').filter(|n| !n.is_empty()).collect();
+            let climbed = format!("{}{rel}", "../".repeat(up));
+            let expected = (up <= names.len()).then(|| join(&names[..names.len() - up].join("/"), &rel));
+            proptest::prop_assert_eq!(resolve(&dir, &climbed), expected);
+            proptest::prop_assert_eq!(resolve(&dir, &format!("./{rel}/.")), Some(join(&dir, &rel)));
+        }
+
+        /// A path is under itself and the directories above it, never under a
+        /// directory whose last name only begins its own.
+        #[test]
+        fn a_path_is_under_its_directories_only(dir in dir(), rest in path()) {
+            let path = join(&dir, &rest);
+            proptest::prop_assert!(is_under(&path, &dir));
+            let longer = format!("{path}x");
+            proptest::prop_assert!(is_under(&path, &path));
+            proptest::prop_assert!(!is_under(&longer, &path));
+            proptest::prop_assert!(!is_under(&dir, &path) || dir == path);
+        }
+
+        /// A pattern matches its own path and every path below it, and no path
+        /// that only begins with its last name.
+        #[test]
+        fn a_glob_set_holds_a_path_and_what_is_below_it(pattern in path(), rest in path(), slash: bool) {
+            let written = if slash { format!("{pattern}/") } else { pattern.clone() };
+            let set = glob_set(&[written], "include").unwrap();
+            proptest::prop_assert!(set.is_match(&pattern));
+            proptest::prop_assert!(set.is_match(join(&pattern, &rest)));
+            let (longer, below_longer) = (format!("{pattern}x"), format!("{pattern}x/{rest}"));
+            proptest::prop_assert!(!set.is_match(longer));
+            proptest::prop_assert!(!set.is_match(below_longer));
+        }
+    }
 }
