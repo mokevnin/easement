@@ -171,8 +171,7 @@ cargo mutants --in-diff target/mutants.diff --output target
 # target/bench-{cached,uncached}.json. Run it on main and on a branch to compare.
 [tasks.bench]
 description = "Time `easement check` on this repository, with the index cached and without"
-# From its GitHub release: the aqua entry of 2.0.0 installs the x86_64 build on arm64 macOS, off PATH.
-tools = { "github:sharkdp/hyperfine" = "2.0.0" }
+tools = { hyperfine = "2.0.0" }
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
