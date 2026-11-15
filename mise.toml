@@ -122,7 +122,7 @@ description = "Update npm and Cargo dependencies; then run `mise run check` and 
 depends = ["update:npm", "update:cargo"]
 
 # The SCIP indexers of package.json are pinned to the versions of mise.toml (the tests and CI use
-# them); Renovate moves both together, so ncu leaves them alone.
+# them); `mise run upgrade` moves both together, so ncu and Dependabot leave them alone.
 [tasks."update:npm"]
 description = "Bump the npm dev tools (not the SCIP indexers)"
 run = "pnpm dlx npm-check-updates -u --reject '@sourcegraph/*' && pnpm install"
