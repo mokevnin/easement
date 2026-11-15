@@ -733,6 +733,13 @@ pub fn nests(parent: &str, name: &str) -> bool {
     parents(every_module_separator(), name).any(|above| above == parent)
 }
 
+/// The parents of the module `name`, outermost first, cut at a separator of
+/// any language: what a module is read as when no file says which language
+/// writes it (`lodash` of `lodash/fp`, `okhttp3` of `okhttp3.Client`).
+pub fn module_parents_anywhere(name: &str) -> impl Iterator<Item = &str> {
+    parents(every_module_separator(), name)
+}
+
 /// The parents of the module `name`, outermost first, cut at `separators`.
 fn parents<'a>(
     separators: &'static [&'static str],

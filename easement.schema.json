@@ -75,6 +75,13 @@
         }
       ]
     },
+    "forbid_external": {
+      "description": "External modules that no checked file may use, components and files that belong to none alike; a pattern covers submodules (lodash covers lodash/fp) and `$std` stands for the standard library of the importing file's language. A component's own `forbid_external` adds to it, and a component whose `may_use_external` lists a module an item forbids it fails to load. An item may carry its own reason, `allow`: the components that may use the module all the same, and `allow_in`: the paths whose files may.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ForbiddenName"
+      }
+    },
     "forbid_symbol": {
       "description": "Names that no checked file may use, components and files that belong to none alike, as `package.Name` or `import/path.Name`, a member after its type (`ent.Client.Query`). A component's own `forbid_symbol` adds to it. An item may carry its own reason, `allow`: the components that may use the name all the same, and `allow_in`: the paths whose files may.",
       "type": "array",
@@ -458,7 +465,7 @@
       ]
     },
     "ForbiddenName": {
-      "description": "A name in a `forbid_symbol` list: a plain name, or one with a reason of its own and, at the top level, the components and paths that may use it all the same.",
+      "description": "An item of a `forbid_symbol` or `forbid_external` list: a plain name or module, or one with a reason of its own and, at the top level, the components and paths that may use it all the same.",
       "anyOf": [
         {
           "type": "string"
@@ -472,7 +479,7 @@
       "type": "object",
       "properties": {
         "allow": {
-          "description": "Only in the top-level `forbid_symbol`: the components that may use the name. Every other use is a violation, in the component that defines the name too. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
+          "description": "Only at the top level: the components that may use it. Every other use is a violation, in the component that defines a forbidden name too. An item may be a glob over component names (`'api-*'`) or a set (`'@drivers'`).",
           "type": [
             "array",
             "null"
@@ -483,7 +490,7 @@
           }
         },
         "allow_in": {
-          "description": "Only in the top-level `forbid_symbol`: globs of the paths whose files may use the name, each a file or a directory relative to the root, as an `in` pattern, whatever component owns the file (test code and each instance of an isolated component too). A pattern that matches no file fails as unmatched.",
+          "description": "Only at the top level: globs of the paths whose files may use it, each a file or a directory relative to the root, as an `in` pattern, whatever component owns the file (test code and each instance of an isolated component too). A pattern that matches no file fails as unmatched.",
           "type": [
             "array",
             "null"
@@ -494,7 +501,7 @@
           }
         },
         "because": {
-          "description": "Why this name is forbidden; shown instead of the reason of the whole rule.",
+          "description": "Why this is forbidden; shown instead of the reason of the whole rule.",
           "type": [
             "string",
             "null"
@@ -639,7 +646,7 @@
           "default": null
         },
         "forbid_external": {
-          "description": "External modules this component must not use. $std stands for the standard library of the importing file's language. An item may carry its own reason.",
+          "description": "External modules this component must not use, besides those the top-level `forbid_external` forbids. $std stands for the standard library of the importing file's language. An item may carry its own reason.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/Listed"

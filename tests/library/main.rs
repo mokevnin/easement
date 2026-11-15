@@ -18,6 +18,7 @@ mod diff;
 mod evidence;
 mod examples;
 mod exclude;
+mod externals;
 mod formats;
 mod imports;
 mod indexers;

@@ -55,6 +55,15 @@ pub struct Config {
     /// paths whose files may.
     #[serde(default)]
     pub forbid_symbol: Vec<ForbiddenName>,
+    /// External modules that no checked file may use, components and files that belong to
+    /// none alike; a pattern covers submodules (lodash covers lodash/fp) and `$std` stands
+    /// for the standard library of the importing file's language. A component's own
+    /// `forbid_external` adds to it, and a component whose `may_use_external` lists a module
+    /// an item forbids it fails to load. An item may carry its own reason, `allow`: the
+    /// components that may use the module all the same, and `allow_in`: the paths whose
+    /// files may.
+    #[serde(default)]
+    pub forbid_external: Vec<ForbiddenName>,
     /// Globs of paths to skip.
     #[serde(default)]
     pub exclude: Vec<String>,
@@ -269,6 +278,27 @@ pub enum TestsMode {
 /// The component that `tests: auto` creates.
 pub const TESTS: &str = "tests";
 
+/// What a list that forbids bans: the names code uses (`forbid_symbol`) or the
+/// external modules it imports (`forbid_external`). At the top level, an item
+/// of either may let components or paths use it all the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Ban {
+    Symbol,
+    External,
+}
+
+impl Ban {
+    pub const ALL: [Ban; 2] = [Ban::Symbol, Ban::External];
+
+    /// The key of the list, at the top level and in a rule alike.
+    pub fn key(self) -> &'static str {
+        match self {
+            Ban::Symbol => "forbid_symbol",
+            Ban::External => "forbid_external",
+        }
+    }
+}
+
 /// A name in a rule's list, optionally with a reason of its own that is shown
 /// instead of the reason of the whole rule.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -302,8 +332,9 @@ impl Listed {
     }
 }
 
-/// A name in a `forbid_symbol` list: a plain name, or one with a reason of its
-/// own and, at the top level, the components and paths that may use it all the same.
+/// An item of a `forbid_symbol` or `forbid_external` list: a plain name or module, or
+/// one with a reason of its own and, at the top level, the components and paths that
+/// may use it all the same.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ForbiddenName {
@@ -315,18 +346,18 @@ pub enum ForbiddenName {
 #[serde(deny_unknown_fields)]
 pub struct ForbiddenNameItem {
     name: String,
-    /// Why this name is forbidden; shown instead of the reason of the whole rule.
+    /// Why this is forbidden; shown instead of the reason of the whole rule.
     #[serde(default)]
     because: Option<String>,
-    /// Only in the top-level `forbid_symbol`: the components that may use the name. Every
-    /// other use is a violation, in the component that defines the name too. An item may
-    /// be a glob over component names (`'api-*'`) or a set (`'@drivers'`).
+    /// Only at the top level: the components that may use it. Every other use is a
+    /// violation, in the component that defines a forbidden name too. An item may be a
+    /// glob over component names (`'api-*'`) or a set (`'@drivers'`).
     #[serde(default)]
     allow: Option<Vec<String>>,
-    /// Only in the top-level `forbid_symbol`: globs of the paths whose files may use the
-    /// name, each a file or a directory relative to the root, as an `in` pattern, whatever
-    /// component owns the file (test code and each instance of an isolated component too).
-    /// A pattern that matches no file fails as unmatched.
+    /// Only at the top level: globs of the paths whose files may use it, each a file or a
+    /// directory relative to the root, as an `in` pattern, whatever component owns the
+    /// file (test code and each instance of an isolated component too). A pattern that
+    /// matches no file fails as unmatched.
     #[serde(default)]
     allow_in: Option<Vec<String>>,
 }
@@ -620,10 +651,13 @@ pub struct Rule {
     /// importing file's language. An item may carry its own reason.
     #[serde(default)]
     pub may_use_external: Option<Vec<Listed>>,
-    /// External modules this component must not use. $std stands for the standard library of
-    /// the importing file's language. An item may carry its own reason.
+    /// External modules this component must not use, besides those the top-level
+    /// `forbid_external` forbids. $std stands for the standard library of the importing
+    /// file's language. An item may carry its own reason.
     #[serde(default)]
-    pub forbid_external: Vec<Listed>,
+    // Read with `allow` so that loading refuses it by name; editors are not offered it.
+    #[schemars(with = "Vec<Listed>")]
+    pub forbid_external: Vec<ForbiddenName>,
     /// Names this component must not use, as `package.Name` or `import/path.Name`
     /// (`ent.Client`), a member after its type (`ent.Client.Query`). In a language whose uses
     /// of names easement does not read, the report has a `symbols` evidence gap instead. An
@@ -665,7 +699,25 @@ pub struct Rule {
     pub because: Option<String>,
 }
 
+impl Rule {
+    /// The list of the rule that forbids what `ban` bans.
+    pub fn own_bans(&self, ban: Ban) -> &[ForbiddenName] {
+        match ban {
+            Ban::Symbol => &self.forbid_symbol,
+            Ban::External => &self.forbid_external,
+        }
+    }
+}
+
 impl Config {
+    /// The top-level list that forbids what `ban` bans.
+    pub fn top_bans(&self, ban: Ban) -> &[ForbiddenName] {
+        match ban {
+            Ban::Symbol => &self.forbid_symbol,
+            Ban::External => &self.forbid_external,
+        }
+    }
+
     /// The config of a value merged from the configuration at `path` and the
     /// files it extends (`policy::Policy::load`); `path` names it in errors.
     pub fn from_merged(value: Value, path: &Path) -> Result<Self> {

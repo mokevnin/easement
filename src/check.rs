@@ -461,6 +461,25 @@ pub struct Stats {
     pub new_dependencies: Vec<String>,
 }
 
+/// Who a violation is of, as a message names it: the component `from`, or the
+/// files of no component, which only the top-level lists judge (`from` empty).
+pub fn who(from: &str) -> &str {
+    if from.is_empty() {
+        "unowned files"
+    } else {
+        from
+    }
+}
+
+/// `items` as a sentence lists them: `a`, `a and b`, `a, b and c`.
+pub fn in_words(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 /// A name used through an import, with the import resolved.
 #[derive(Debug, Clone)]
 pub struct SymbolRef {
@@ -517,6 +536,16 @@ pub fn evaluate(
             Err(why) => {
                 if !external && why == decision::Outside::Unowned {
                     unmapped.insert(file);
+                } else if external
+                    && why == decision::Outside::Unowned
+                    && map.forbids_std()
+                    && !crate::stdlib::knows(&file)
+                {
+                    // `$std` at the top level judges the files of no component too.
+                    let ext = relpath::extension(&file).to_string();
+                    if !stats.std_unknown.contains(&ext) {
+                        stats.std_unknown.push(ext);
+                    }
                 }
                 continue;
             }
@@ -690,7 +719,7 @@ pub fn violation(decision: &Decision, dep: &Dep, reexport: &Reexport) -> Option<
     };
     let spec = &format!("{}{reexported}", dep.specifier);
     let message = match clause {
-        Clause::External(what) => format!("{from} -> external {target} {what}"),
+        Clause::External { what, .. } => format!("{} -> external {target} {what}", who(from)),
         Clause::ExcludedTarget => format!(
             "{from} depends on {target}, which `exclude` hides, so no rule checks it; list it in `target_only` if it is generated, in a component or `unowned` if it is part of the project, else drop the dependency"
         ),

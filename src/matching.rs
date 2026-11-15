@@ -102,8 +102,9 @@ fn unmatched_names(policy: &Policy, config_file: &str) -> Vec<Violation> {
         .collect()
 }
 
-/// An `allow_in` pattern of the top-level `forbid_symbol` that matches no file:
-/// it lets no one use the name, so it is a typo or a path gone.
+/// An `allow_in` pattern of the top-level `forbid_symbol` or `forbid_external`
+/// that matches no file: it lets no one use what the item forbids, so it is a
+/// typo or a path gone.
 fn unmatched_grants(
     policy: &Policy,
     map: &ComponentMap,
@@ -112,13 +113,14 @@ fn unmatched_grants(
 ) -> Vec<Violation> {
     map.unmatched_grants(files)
         .into_iter()
-        .map(|(item, pattern)| {
-            let name = policy.config.forbid_symbol[item].name();
+        .map(|(ban, item, pattern)| {
+            let key = ban.key();
+            let name = policy.config.top_bans(ban)[item].name();
             Violation {
                 file: config_file.to_string(),
-                line: policy.config_line(&["forbid_symbol", &item.to_string(), "allow_in"], pattern),
+                line: policy.config_line(&[key, &item.to_string(), "allow_in"], pattern),
                 message: format!(
-                    "`forbid_symbol` `{name}` is allowed in `{pattern}`, which matches no file; fix the pattern or drop it (files that `exclude` or .gitignore hide do not count)"
+                    "`{key}` `{name}` is allowed in `{pattern}`, which matches no file; fix the pattern or drop it (files that `exclude` or .gitignore hide do not count)"
                 ),
                 target: pattern.to_string(),
                 ..Violation::of(RuleId::Unmatched)
