@@ -2,8 +2,6 @@
 # (Dependabot leaves it alone too), so the rules it breaks are ignored there alone; every workflow
 # written by hand is held to all of them. Hardening it through dist: #172.
 rules:
-  unpinned-uses:
-    ignore: [release.yml]
   unpinned-images:
     ignore: [release.yml]
   excessive-permissions:
