@@ -5,7 +5,7 @@ use serde_sarif::sarif::{self, ResultLevel};
 use std::collections::BTreeMap;
 
 use crate::baseline::{Severity, Verdict};
-use crate::check::{self, Framework, Key, Place, RuleId, Stats, Unjudged, Violation};
+use crate::check::{self, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
 
@@ -25,7 +25,7 @@ struct JsonReport<'a> {
     /// The frameworks `unused` found in packages: it took the files each loads by
     /// convention as entries.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    frameworks: &'a [Framework],
+    frameworks: &'a [RecognisedFramework],
     /// Set when indexes came from the cache: what their key leaves out and how
     /// to index again.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -512,7 +512,7 @@ pub fn gap_lines(
 }
 
 /// The frameworks `unused` found, one line per package.
-fn framework_lines(frameworks: &[Framework]) -> String {
+fn framework_lines(frameworks: &[RecognisedFramework]) -> String {
     let mut by_package: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for framework in frameworks {
         by_package
@@ -520,8 +520,9 @@ fn framework_lines(frameworks: &[Framework]) -> String {
             .or_default()
             .push(format!("{} (`{}`)", framework.name, framework.dependency));
     }
-    let mut out =
-        String::from("Frameworks (`unused` took the files they load by convention as entries):\n");
+    let mut out = String::from(
+        "Frameworks `unused` recognised, by package (it took the files each loads by convention as entries, or every file of a package an evidence gap names):\n",
+    );
     for (package, names) in by_package {
         out.push_str(&format!("  {package}: {}\n", names.join(", ")));
     }

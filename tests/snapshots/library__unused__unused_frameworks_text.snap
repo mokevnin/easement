@@ -2,5 +2,5 @@
 source: tests/library/unused.rs
 expression: section
 ---
-Frameworks (`unused` took the files they load by convention as entries):
+Frameworks `unused` recognised, by package (it took the files each loads by convention as entries, or every file of a package an evidence gap names):
   package.json: SvelteKit (`@sveltejs/kit`)
