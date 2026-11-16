@@ -54,15 +54,18 @@ expression: mailing
       "input": "easement.yml"
     }
   },
-  "symbol_grants": [
-    {
-      "name": "example.com/app/internal/store.Client",
-      "allow_in": "internal/modules/mailing/*.go",
-      "because": "a module takes the scoped client it is given",
-      "provenance": {
-        "field": "forbid_symbol[0].allow_in[1]",
-        "input": "easement.yml"
+  "symbols": {
+    "forbidden": [],
+    "allowed": [
+      {
+        "name": "example.com/app/internal/store.Client",
+        "allow_in": "internal/modules/mailing/*.go",
+        "because": "a module takes the scoped client it is given",
+        "provenance": {
+          "field": "forbid_symbol[0].allow_in[1]",
+          "input": "easement.yml"
+        }
       }
-    }
-  ]
+    ]
+  }
 }

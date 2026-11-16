@@ -1,0 +1,11 @@
+---
+source: tests/library/symbols.rs
+expression: said
+---
+internal/usecase/tagdeletion/delete.go
+  component: usecase (matches `internal/usecase/*`)
+  isolated: instances of this component must not depend on each other
+  instance: internal/usecase/tagdeletion
+  may depend on: domain (may_depend_on)
+  not allowed: web
+  may use, although forbid_symbol forbids it: example.com/app/internal/domain/tags.DeleteIn (allow `usecase`: deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first)

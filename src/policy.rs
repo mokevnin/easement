@@ -295,6 +295,17 @@ impl Site {
         Some(site)
     }
 
+    /// The item of the `allow` of item `item` of the top-level list `key`
+    /// (`forbid_symbol`) that names `component`: the name itself, or the glob or
+    /// set it comes through.
+    pub fn of_top_allow(config: &Config, key: &str, item: usize, component: &str) -> Option<Self> {
+        let list = format!("{key}[{item}].allow");
+        let written = config.written(&list, component)?;
+        let mut site = Self::in_key(key, format!("{list}[{}]", written.index));
+        site.through.extend(written.through.clone());
+        Some(site)
+    }
+
     /// The globs and sets that bring the clause to the component it is about.
     pub fn through(&self) -> &[String] {
         &self.through

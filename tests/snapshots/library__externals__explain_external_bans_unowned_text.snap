@@ -3,6 +3,6 @@ source: tests/library/externals.rs
 expression: unowned
 ---
 scripts/Seed.kt
-  component: none, so only the top-level lists judge it; of the external modules:
+  component: none, so only the top-level lists judge it
   forbid_external forbids: org.koin (only wiring may: no domain module or handler sees the DI container)
   forbid_external forbids: org.threeten.bp (only src/utils/Dates.kt may: dates go through src/utils/Dates.kt)

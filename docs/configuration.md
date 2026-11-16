@@ -381,7 +381,7 @@ forbid_symbol:
     because: handlers and modules take a scoped client
 ```
 
-An `allow_in` pattern that matches no file fails as `unmatched` at its line in the policy. `explain` on a file lists the names its path may use through `allow_in`, with the pattern (`symbol_grants` in `--format json`, its `provenance` pointing at the pattern), and `review` lists a pattern added to `allow_in` as loosened and one removed as tightened.
+An `allow_in` pattern that matches no file fails as `unmatched` at its line in the policy. `explain` on a file lists the names it may not use and those it may use through `allow` or `allow_in`, with the grant (`symbols` in `--format json`, its `forbidden` and `allowed` each with the `provenance` of the item or of the grant), and the `public_symbols` of the components it may depend on, and `review` lists a pattern added to `allow_in` as loosened and one removed as tightened.
 
 `allow` and `allow_in` work only at the top level; a component's own `forbid_symbol` with either fails to load. So does an item whose `allow` and `allow_in` let no one in (an empty list and no other key, or both empty), an `allow` that names no component, one that lets in a component whose own `forbid_symbol` lists the same name, an `allow_in` pattern with a placeholder, and a name listed twice at the top level where one of the items has `allow` or `allow_in`. An `allow_in` pattern that matches a file of a component whose own `forbid_symbol` lists the same name fails too, naming both places, once the files are read: `check` and the commands that judge the code stop on it.
 

@@ -1,0 +1,64 @@
+---
+source: tests/library/symbols.rs
+expression: usecase
+---
+{
+  "path": "internal/usecase/tagdeletion/delete.go",
+  "ownership": {
+    "status": "owned",
+    "component": "usecase",
+    "pattern": "internal/usecase/*",
+    "instance": "internal/usecase/tagdeletion",
+    "test": false,
+    "target_only": false,
+    "provenance": {
+      "field": "components.usecase.in",
+      "input": "easement.yml"
+    }
+  },
+  "priority": 0,
+  "isolated": true,
+  "surfaces": [],
+  "grants": [
+    {
+      "to": "domain",
+      "allowed": true,
+      "grant": "may_depend_on",
+      "provenance": {
+        "field": "rules.usecase.may_depend_on[0]",
+        "input": "easement.yml"
+      }
+    }
+  ],
+  "prohibitions": [],
+  "not_allowed": [
+    {
+      "to": "web",
+      "allowed": false,
+      "rejected_by": "not_granted",
+      "rules": [
+        "dependency"
+      ]
+    }
+  ],
+  "rule": {
+    "provenance": {
+      "field": "rules.usecase",
+      "input": "easement.yml"
+    }
+  },
+  "symbols": {
+    "forbidden": [],
+    "allowed": [
+      {
+        "name": "example.com/app/internal/domain/tags.DeleteIn",
+        "allow": "usecase",
+        "because": "deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first",
+        "provenance": {
+          "field": "forbid_symbol[0].allow[0]",
+          "input": "easement.yml"
+        }
+      }
+    ]
+  }
+}

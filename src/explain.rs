@@ -7,12 +7,11 @@ use serde::Serialize;
 
 use crate::check::RuleId;
 use crate::components::ComponentMap;
-use crate::config::{Ban, ForbiddenName, TESTS};
+use crate::config::{Ban, TESTS};
 use crate::decision::{self, Clause, ClauseId, Decision, Grant, Outside};
 use crate::lang::registry;
 use crate::policy::{Policy, Provenance, Site};
-use crate::resolved::{self, Dependencies, RuleView, SurfaceView, Toward};
-use crate::symbols::own_ban;
+use crate::resolved::{self, Dependencies, FileSymbols, RuleView, SurfaceView, Toward};
 
 /// A path as the config sees it: relative to the project root, `/`-separated.
 /// An absolute path, and a path that exists relative to the working directory,
@@ -153,10 +152,11 @@ pub struct Explanation {
     pub ownership: Ownership,
     #[serde(flatten)]
     pub component: Option<ComponentPolicy>,
-    /// The names of the top-level `forbid_symbol` that the path may use all the
-    /// same through `allow_in`, whatever component owns it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub symbol_grants: Vec<SymbolGrant>,
+    /// How the symbol rules bind the path: the names it may not use, those of the
+    /// top-level `forbid_symbol` it may use all the same, and the `public_symbols`
+    /// of the components it may depend on.
+    #[serde(skip_serializing_if = "FileSymbols::is_empty")]
+    pub symbols: FileSymbols,
     /// The items of the top-level `forbid_external`, which bind the path whatever
     /// component owns it, or none: each with what lets the path use the module all
     /// the same, if anything does.
@@ -227,61 +227,10 @@ fn external_bans(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<External
                 allowed: (allow.is_some() || allow_in.is_some()) && !own,
                 allow,
                 allow_in: allow_in.map(|(_, pattern)| pattern.to_string()),
-                only: who_may(listed),
+                only: listed.who_may(),
                 because: listed.because().map(str::to_string),
                 provenance: policy.provenance(&Site::in_key(Ban::External.key(), field)),
             }
-        })
-        .collect()
-}
-
-/// Who an item of a top-level list lets use what it forbids: the components,
-/// then the paths, as written.
-fn who_may(listed: &ForbiddenName) -> Vec<String> {
-    listed
-        .allow()
-        .into_iter()
-        .chain(listed.allow_in())
-        .flatten()
-        .cloned()
-        .collect()
-}
-
-/// A name of the top-level `forbid_symbol` that an `allow_in` pattern lets a path use.
-#[derive(Debug, Serialize)]
-pub struct SymbolGrant {
-    pub name: String,
-    /// The pattern that matches the path, the first one the item writes.
-    pub allow_in: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-    /// Where the policy writes the pattern.
-    pub provenance: Provenance,
-}
-
-/// The names of the top-level `forbid_symbol` that `rel` may use through
-/// `allow_in`, but for one the own rule of its component forbids, which holds.
-fn symbol_grants(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<SymbolGrant> {
-    let config = &policy.config;
-    let owner = map.component_of(rel);
-    config
-        .forbid_symbol
-        .iter()
-        .enumerate()
-        .filter_map(|(item, listed)| {
-            let (at, pattern) = map.granted_in(Ban::Symbol, item, rel)?;
-            if owner.is_some_and(|component| own_ban(config, component, listed.name()).is_some()) {
-                return None;
-            }
-            Some(SymbolGrant {
-                name: listed.name().to_string(),
-                allow_in: pattern.to_string(),
-                because: listed.because().map(str::to_string),
-                provenance: policy.provenance(&Site::in_key(
-                    "forbid_symbol",
-                    format!("forbid_symbol[{item}].allow_in[{at}]"),
-                )),
-            })
         })
         .collect()
 }
@@ -315,11 +264,13 @@ pub fn explain(policy: &Policy, map: &ComponentMap, rel: &str) -> Explanation {
             })
         }),
     };
+    let component = owned.map(|(name, _)| component_policy(policy, map, name));
+    let grants = component.as_ref().map_or(&[][..], |c| c.grants.as_slice());
     Explanation {
         path: rel.to_string(),
         ownership,
-        component: owned.map(|(name, _)| component_policy(policy, map, name)),
-        symbol_grants: symbol_grants(policy, map, rel),
+        symbols: FileSymbols::of(policy, map, rel, grants),
+        component,
         forbid_external: external_bans(policy, map, rel),
     }
 }
@@ -368,13 +319,13 @@ pub fn render(explanation: &Explanation) -> Result<String> {
         &explanation.component,
     ) else {
         // Only the top-level lists bind a file of no component.
-        if explanation.forbid_external.is_empty() || ownership.status == Status::Excluded {
+        if (explanation.forbid_external.is_empty() && explanation.symbols.is_empty())
+            || ownership.status == Status::Excluded
+        {
             bail!("{rel} belongs to no component, so easement does not check it");
         }
-        let mut out = format!(
-            "{rel}\n  component: none, so only the top-level lists judge it; of the external modules:\n"
-        );
-        top_level_bans(explanation, &mut out);
+        let mut out = format!("{rel}\n  component: none, so only the top-level lists judge it\n");
+        symbol_and_external_lines(explanation, &mut out);
         return Ok(out);
     };
     let mut out = format!("{rel}\n  component: {name} (matches `{pattern}`)\n");
@@ -443,23 +394,16 @@ pub fn render(explanation: &Explanation) -> Result<String> {
             out.push_str(&format!("  {line}\n"));
         }
     }
-    for grant in &explanation.symbol_grants {
-        let because = grant
-            .because
-            .as_deref()
-            .map(|b| format!(": {b}"))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "  may use, although forbid_symbol forbids it: {} (allow_in `{}`{because})\n",
-            grant.name, grant.allow_in
-        ));
-    }
-    top_level_bans(explanation, &mut out);
+    symbol_and_external_lines(explanation, &mut out);
     Ok(out)
 }
 
-/// The lines of the items of the top-level `forbid_external` that bind the path.
-fn top_level_bans(explanation: &Explanation, out: &mut String) {
+/// The lines of the symbol rules and of the items of the top-level
+/// `forbid_external` that bind the path.
+fn symbol_and_external_lines(explanation: &Explanation, out: &mut String) {
+    for line in explanation.symbols.lines() {
+        out.push_str(&format!("  {line}\n"));
+    }
     for ban in &explanation.forbid_external {
         let because = ban
             .because
@@ -476,25 +420,11 @@ fn top_level_bans(explanation: &Explanation, out: &mut String) {
                 "may use, although forbid_external forbids it: {} ({granted}{because})",
                 ban.name
             ),
-            _ => {
-                let who: Vec<&str> = ban.only.iter().map(String::as_str).collect();
-                let only = if who.is_empty() {
-                    String::new()
-                } else {
-                    format!("only {} may", crate::check::in_words(&who))
-                };
-                let parts: Vec<&str> = [only.as_str()]
-                    .into_iter()
-                    .chain(ban.because.as_deref())
-                    .filter(|part| !part.is_empty())
-                    .collect();
-                let said = if parts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", parts.join(": "))
-                };
-                format!("forbid_external forbids: {}{said}", ban.name)
-            }
+            _ => format!(
+                "forbid_external forbids: {}{}",
+                ban.name,
+                resolved::who_may_and_why(&ban.only, ban.because.as_deref())
+            ),
         };
         out.push_str(&format!("  {line}\n"));
     }
@@ -621,6 +551,65 @@ tests: auto
             assert_eq!(ownership.test, test, "{rel}");
             assert_eq!(ownership.component.as_deref() == Some(TESTS), test, "{rel}");
         }
+    }
+
+    /// A grant through a glob of `allow` points at the glob, and says it in text.
+    #[test]
+    fn a_name_allowed_through_a_glob_names_the_glob() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("easement.yml");
+        std::fs::write(
+            &path,
+            "version: 1
+components:
+  core: { in: src/core }
+  ee-sso: { in: src/ee/sso }
+  web: { in: src/web }
+forbid_symbol:
+  - { name: lic.Key, allow: [core, 'ee-*'], because: only the licensed code reads the key }
+  - os.Exit
+rules:
+  web: { forbid_symbol: [os.Exit, lic.Key, log.Fatal, log.Panic], because: the web layer returns errors }
+",
+        )
+        .unwrap();
+        let policy = Policy::load(&path, None).unwrap();
+        let map = ComponentMap::new(&policy.config).unwrap();
+        let sso = explain(&policy, &map, "src/ee/sso/login.go");
+        let allowed = &sso.symbols.allowed[0];
+        assert_eq!(allowed.allow.as_deref(), Some("ee-sso"));
+        assert_eq!(allowed.provenance.field, "forbid_symbol[0].allow[1]");
+        assert_eq!(allowed.provenance.through, ["ee-*"]);
+        // A name the top-level list and the component's own both forbid is given
+        // once, as the top-level item writes it, as a violation tells it.
+        let web = explain(&policy, &map, "src/web/page.go");
+        let forbidden: Vec<(&str, &str)> = web
+            .symbols
+            .forbidden
+            .iter()
+            .map(|f| (f.name.as_str(), f.provenance.field.as_str()))
+            .collect();
+        assert_eq!(
+            forbidden,
+            [
+                ("lic.Key", "forbid_symbol[0]"),
+                ("os.Exit", "forbid_symbol[1]"),
+                ("log.Fatal", "rules.web.forbid_symbol[2]"),
+                ("log.Panic", "rules.web.forbid_symbol[3]"),
+            ]
+        );
+        assert_eq!(web.symbols.forbidden[1].because, None);
+        // The own names that say the same share a line in text.
+        let said = render(&web).unwrap();
+        assert!(
+            said.contains("  may not use: log.Fatal, log.Panic (the web layer returns errors)\n"),
+            "{said}"
+        );
+        assert!(
+            render(&sso).unwrap().contains(
+                "  may use, although forbid_symbol forbids it: lic.Key (allow `ee-sso` through `ee-*`: only the licensed code reads the key)\n"
+            )
+        );
     }
 
     #[test]

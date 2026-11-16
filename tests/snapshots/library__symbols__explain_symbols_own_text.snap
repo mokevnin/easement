@@ -1,0 +1,9 @@
+---
+source: tests/library/symbols.rs
+expression: said
+---
+internal/handlers/books.go
+  component: handler (matches `internal/handlers`)
+  may depend on: db (may_depend_on)
+  may not use: db.Client (use db.Scoped so every query is tenant-bound)
+  public symbols of db: Scoped, Tx (handlers get a scoped client, never the raw one)
