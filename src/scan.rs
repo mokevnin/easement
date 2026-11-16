@@ -222,22 +222,36 @@ fn add_spelled(deps: &mut Vec<Dep>, mut spelled: Vec<Dep>) {
     );
 }
 
-/// The project's files (`/`-separated, relative to `root`) without the excluded ones.
-pub fn project_files(root: &Path, policy: &ScanPolicy) -> Result<Vec<String>> {
+/// The files of a project as [`scan`] walks them, `/`-separated and relative to the root.
+pub struct ProjectFiles {
+    /// Every file that is not excluded.
+    pub files: Vec<String>,
+    /// The files `exclude` hides (not the ones .gitignore hides), sorted.
+    pub excluded: Vec<String>,
+}
+
+/// The project's files, as [`scan`] walks them and hands them to the indexers.
+pub fn project_files(root: &Path, policy: &ScanPolicy) -> Result<ProjectFiles> {
     let exclude = glob_set(&policy.exclude, "exclude")?;
     let mut files = Vec::new();
+    let mut excluded = BTreeSet::new();
     for entry in walker(root).build() {
         let entry = entry?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if let Some(rel) = lang::relative(root, entry.path())
-            && !exclude.is_match(&rel)
-        {
-            files.push(slash(&rel));
+        if let Some(rel) = lang::relative(root, entry.path()) {
+            if exclude.is_match(&rel) {
+                excluded.insert(slash(&rel));
+            } else {
+                files.push(slash(&rel));
+            }
         }
     }
-    Ok(files)
+    Ok(ProjectFiles {
+        files,
+        excluded: excluded.into_iter().collect(),
+    })
 }
 
 /// Reads the project as `policy`, the scan-relevant part of the policy, asks.

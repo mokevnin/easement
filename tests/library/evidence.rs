@@ -380,7 +380,9 @@ uncovered_ok:
     // The import of lib is in the file no indexer read.
     let config = config(&root);
     let found = commands::suggest(&config, &mut cache()).unwrap();
-    assert_eq!(found.outcome(true), Outcome::Passed);
+    assert!(found.suggestions.removable.is_empty());
+    let checked = check_with(&root, |o| o.suggest = true);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
     let said = found.text();
     assert!(
         said.contains("Evidence gaps (a suggestion about this code may be wrong):"),

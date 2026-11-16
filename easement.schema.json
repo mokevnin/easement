@@ -201,7 +201,7 @@
       "minimum": 0
     },
     "warn": {
-      "description": "Rules whose violations are reported as warnings and do not fail the check. Rules about the config, such as unmatched, cannot be listed.",
+      "description": "Rules whose violations are reported as warnings and do not fail the check. Mistakes in the config, unmatched and example, cannot be listed; unused-allowance can.",
       "type": "array",
       "default": [],
       "items": {
@@ -223,7 +223,8 @@
           "unused",
           "naming",
           "diagram",
-          "undeclared"
+          "undeclared",
+          "unused-allowance"
         ]
       }
     }

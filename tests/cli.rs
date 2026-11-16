@@ -436,12 +436,66 @@ fn require_evidence_exits_4_on_an_evidence_gap() {
     easement(&root, &["check", "--require-evidence"]).code(4);
 }
 
-/// `suggest --check` judges the report, `--patch` prints a patch instead: the
-/// two flags conflict.
+/// `check --suggest` fails on unused allowances with exit code 1; it judges the
+/// whole project, so a narrowed run is a usage error. `suggest --check`, which it
+/// replaces, is gone.
 #[test]
-fn suggest_check_conflicts_with_patch() {
-    let (_tmp, root) = fixture("ts");
-    easement(&root, &["suggest", "--check", "--patch"]).code(2);
+fn check_suggest_exits_1_on_an_unused_allowance_and_refuses_narrowing() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\n  lib: { in: src/lib }\nrules:\n  app: { may_depend_on: [lib] }\n",
+        ),
+        ("src/app/a.ts", "export const a = 1;\n"),
+        ("src/lib/l.ts", "export const l = 1;\n"),
+    ]);
+    easement(&root, &["check"]).success();
+    easement(&root, &["check", "--suggest"])
+        .code(1)
+        .stdout(contains("easement.yml:6: `app` -> `lib`"))
+        .stdout(contains("[unused-allowance]"));
+    for narrowed in [
+        &["--diff", "HEAD"][..],
+        &["--scope", "src"],
+        &["--component", "app"],
+    ] {
+        easement(&root, &[&["check", "--suggest"][..], narrowed].concat())
+            .code(2)
+            .stderr(contains("cannot be used with"));
+    }
+    easement(&root, &["suggest", "--check"])
+        .code(2)
+        .stderr(contains("unexpected argument '--check'"));
+}
+
+/// `doctor --cache` exits 3 while an index is not cached and 0 once every one
+/// is, and says so in text and JSON; why an index misses is tested through the
+/// library.
+#[test]
+fn doctor_cache_exits_3_until_every_index_is_cached() {
+    let (_tmp, root) = fixture("go");
+    let cache = TempDir::new().unwrap();
+    easement_cached(&root, &["doctor", "--cache"], cache.path())
+        .code(3)
+        .stdout(contains(
+            "go (.): would run: no cached index of this directory",
+        ));
+    easement_cached(&root, &["check"], cache.path());
+    easement_cached(&root, &["doctor", "--cache"], cache.path())
+        .success()
+        .stdout(contains("go (.): cached"));
+    let output = easement_cached(
+        &root,
+        &["doctor", "--cache", "--format", "json"],
+        cache.path(),
+    )
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(report["cached"], true, "{report}");
+    assert_eq!(report["indexes"][0]["language"], "go", "{report}");
 }
 
 /// `--plan -` reads the plan from stdin.

@@ -519,6 +519,18 @@ pub struct Indexed {
     pub uncovered: Vec<String>,
 }
 
+/// The indexers of the languages with source files among `files`, each with the
+/// directories it indexes. Source files with no `go.mod` or `tsconfig.json` above
+/// them are not indexed; they are reported as uncovered, or can be `exclude`d.
+fn groups(files: &[String]) -> Vec<(&'static Indexer, Vec<String>)> {
+    INDEXERS
+        .iter()
+        .filter(|language| files.iter().any(|f| language.covers(f)))
+        .map(|language| (language, language.roots(files)))
+        .filter(|(_, roots)| !roots.is_empty())
+        .collect()
+}
+
 /// Indexes every language that has source files among `files` (project files,
 /// `/`-separated, relative to `root`), each with the `settings` the policy writes
 /// for it. `excluded` are files that `exclude` hides: they are not indexed for
@@ -533,20 +545,10 @@ pub fn run(
 ) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
     let keyed: Vec<String> = files.iter().chain(excluded).cloned().collect();
-    let mut wanted: Vec<&String> = Vec::new();
-    let mut groups = Vec::new();
-    for language in INDEXERS {
-        wanted.extend(files.iter().filter(|f| language.covers(f)));
-        if !files.iter().any(|f| language.covers(f)) {
-            continue;
-        }
-        // Source files with no `go.mod` or `tsconfig.json` above them are not
-        // indexed; they are reported as uncovered, or can be `exclude`d.
-        let roots = language.roots(files);
-        if !roots.is_empty() {
-            groups.push((language, roots));
-        }
-    }
+    let wanted = INDEXERS
+        .iter()
+        .flat_map(|language| files.iter().filter(|f| language.covers(f)));
+    let groups = groups(files);
     let results = in_parallel(&groups, indexing.jobs.get(), |(language, roots)| {
         roots
             .iter()
@@ -569,7 +571,6 @@ pub fn run(
     };
     let indexed: BTreeSet<&str> = documents.0.iter().map(|d| d.path.as_str()).collect();
     let uncovered = wanted
-        .into_iter()
         .filter(|f| !indexed.contains(f.as_str()))
         .cloned()
         .collect();
@@ -703,7 +704,7 @@ fn fingerprint(
     files: &[String],
     env: &[(String, String)],
     environment: &Environment,
-) -> u64 {
+) -> Key {
     let mut hasher = StableHasher::default();
     language.name().hash(&mut hasher);
     env.hash(&mut hasher);
@@ -716,6 +717,8 @@ fn fingerprint(
         &multiplexers(environment, &cwd),
     )
     .hash(&mut hasher);
+    let indexer = hasher.finish();
+    let mut hasher = StableHasher::default();
     let above = |f: &str| {
         let parent = relpath::parent(f);
         parent.len() < dir.len() && relpath::is_under(dir, parent)
@@ -733,7 +736,19 @@ fn fingerprint(
         .collect();
     seen.sort();
     seen.hash(&mut hasher);
-    hasher.finish()
+    Key {
+        indexer,
+        files: hasher.finish(),
+    }
+}
+
+/// The cache key of an index, in two parts, both in the name of its entry, so that
+/// a miss can say which changed: the indexer (its build, arguments and environment)
+/// or the files it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Key {
+    indexer: u64,
+    files: u64,
 }
 
 /// The environment an indexer runs with, as far as it changes the index: the
@@ -887,14 +902,145 @@ fn first_word(hash: blake3::Hash) -> u64 {
     u64::from_le_bytes(word)
 }
 
-/// The file the index of `dir` is kept in; the name carries the fingerprint, so a
-/// changed project misses it, and `prefix` finds the entries of the same directory
-/// and indexer, which are pruned to the most recently used few.
-fn cache_file(language: &Indexer, cache_dir: &Path, dir: &str, key: u64) -> (PathBuf, String) {
+/// Where the index of one directory is kept in the cache for the project as it is now.
+struct Slot {
+    /// The name of the entry; it carries the key, so a changed project misses it.
+    name: String,
+    /// What the names of the entries of the same directory and indexer begin with:
+    /// they are pruned to the most recently used few.
+    prefix: String,
+    /// What the names of those entries that the same indexer wrote begin with.
+    indexer_prefix: String,
+}
+
+/// The slot of the index of `dir` in the cache, keyed on everything the indexer at
+/// `binary` reads ([`fingerprint`]): what `check` reads and writes, and what
+/// `doctor --cache` looks for, so the two cannot drift.
+fn slot(
+    language: &Indexer,
+    binary: &Path,
+    root: &Path,
+    dir: &str,
+    files: &[String],
+    env: &[(&str, String)],
+    environment: &Environment,
+) -> Slot {
+    let key = fingerprint(
+        language,
+        binary,
+        root,
+        dir,
+        files,
+        &key_env(language, environment.vars(), env),
+        environment,
+    );
     let mut hasher = StableHasher::default();
     (language.name(), dir).hash(&mut hasher);
     let prefix = format!("{:016x}-", hasher.finish());
-    (cache_dir.join(format!("{prefix}{key:016x}.scip")), prefix)
+    let indexer_prefix = format!("{prefix}{:016x}-", key.indexer);
+    Slot {
+        name: format!("{indexer_prefix}{:016x}.scip", key.files),
+        prefix,
+        indexer_prefix,
+    }
+}
+
+/// Whether the index of one directory is in the cache for the project as it is now.
+#[derive(Debug, serde::Serialize)]
+pub struct Probe {
+    pub language: &'static str,
+    /// The directory indexed, relative to the root; `.` for the root.
+    pub dir: String,
+    pub cached: bool,
+    /// Why the indexer would run, when it would.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<Miss>,
+}
+
+/// Why an index is not in the cache, so that a run would index again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Miss {
+    /// No cache directory: neither `EASEMENT_CACHE_DIR` nor a user cache directory.
+    NoCacheDir,
+    /// The indexer is not on the `PATH`, so its key, its build, cannot be known.
+    NotInstalled,
+    /// The cache holds no index of this directory by this indexer.
+    NoEntry,
+    /// The cache holds one by the same indexer, of other files.
+    FilesChanged,
+    /// The cache holds one by another build of the indexer, or with other
+    /// arguments or environment variables.
+    IndexerChanged,
+}
+
+impl Miss {
+    pub fn text(self) -> &'static str {
+        match self {
+            Miss::NoCacheDir => "no cache directory",
+            Miss::NotInstalled => "the indexer is not installed",
+            Miss::NoEntry => "no cached index of this directory",
+            Miss::FilesChanged => "the files it reads changed",
+            Miss::IndexerChanged => "the indexer, its arguments or its environment changed",
+        }
+    }
+}
+
+/// For every directory `run` would index: is its index in the cache under the key
+/// `run` would compute? It reads no index and runs no indexer; an entry that is
+/// there but cannot be read counts as cached, and `run` indexes it again.
+pub fn probe(
+    root: &Path,
+    files: &[String],
+    excluded: &[String],
+    indexing: &Indexing,
+    settings: &registry::IndexerSettings,
+) -> Vec<Probe> {
+    let environment = &indexing.environment;
+    let keyed: Vec<String> = files.iter().chain(excluded).cloned().collect();
+    let names: Vec<String> = indexing
+        .cache_dir
+        .as_deref()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".scip"))
+        .collect();
+    let mut probes = Vec::new();
+    for (language, roots) in groups(files) {
+        let env = registry::settings_env(language.language, settings, &|key| environment.text(key));
+        for dir in roots {
+            let reason = match (
+                indexing.cache_dir.as_deref(),
+                environment.which(language.binary, &cwd(root, &dir)),
+            ) {
+                (None, _) => Some(Miss::NoCacheDir),
+                (_, None) => Some(Miss::NotInstalled),
+                (Some(cache_dir), Some(binary)) => {
+                    let slot = slot(language, &binary, root, &dir, &keyed, &env, environment);
+                    let any = |prefix: &str| names.iter().any(|n| n.starts_with(prefix));
+                    if cache_dir.join(&slot.name).is_file() {
+                        None
+                    } else if any(&slot.indexer_prefix) {
+                        Some(Miss::FilesChanged)
+                    } else if any(&slot.prefix) {
+                        Some(Miss::IndexerChanged)
+                    } else {
+                        Some(Miss::NoEntry)
+                    }
+                }
+            };
+            probes.push(Probe {
+                language: language.name(),
+                dir: if dir.is_empty() { ".".to_string() } else { dir },
+                cached: reason.is_none(),
+                reason,
+            });
+        }
+    }
+    probes
 }
 
 /// Whether the indexer of one language can run in a project.
@@ -968,6 +1114,15 @@ fn version_of(binary: &Path, flag: &str, environment: &Environment) -> Option<St
     })
 }
 
+/// The directory the indexer of `dir` runs in.
+fn cwd(root: &Path, dir: &str) -> PathBuf {
+    if dir.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(dir)
+    }
+}
+
 fn index_dir(
     language: &Indexer,
     root: &Path,
@@ -978,11 +1133,7 @@ fn index_dir(
 ) -> Result<(Vec<Document>, bool)> {
     let environment = &indexing.environment;
     let env = registry::settings_env(language.language, settings, &|key| environment.text(key));
-    let cwd = if dir.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(dir)
-    };
+    let cwd = cwd(root, dir);
     let shown = if dir.is_empty() { "." } else { dir };
     let binary = environment.which(language.binary, &cwd).ok_or_else(|| {
         anyhow::anyhow!(
@@ -998,16 +1149,8 @@ fn index_dir(
         .as_deref()
         .filter(|_| indexing.cache != CacheUse::Off)
         .map(|cache_dir| {
-            let key = fingerprint(
-                language,
-                &binary,
-                root,
-                dir,
-                files,
-                &key_env(language, environment.vars(), &env),
-                environment,
-            );
-            cache_file(language, cache_dir, dir, key)
+            let slot = slot(language, &binary, root, dir, files, &env, environment);
+            (cache_dir.join(slot.name), slot.prefix)
         });
     if let Some((path, _)) = &cached
         && let Ok(bytes) = std::fs::read(path)

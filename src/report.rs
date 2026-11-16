@@ -8,6 +8,7 @@ use crate::baseline::{Severity, Verdict};
 use crate::check::{self, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
+use crate::suggest::{self, Pair};
 
 #[derive(Serialize)]
 struct JsonReport<'a> {
@@ -32,6 +33,10 @@ struct JsonReport<'a> {
     cached: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<DiffInfo<'a>>,
+    /// Under `--suggest`, the `may_depend_on` entries no import among the files read
+    /// uses, next to files no indexer read: whether they are used is not known.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    unreliable_allowances: &'a [Pair],
     stats: &'a Stats,
 }
 
@@ -426,6 +431,8 @@ pub struct Report<'a> {
     pub diff: Option<&'a Diff>,
     /// `--require-evidence`: an evidence gap fails a run without violations.
     pub require_evidence: bool,
+    /// Under `--suggest`, the `may_depend_on` entries it could not judge.
+    pub unreliable_allowances: &'a [Pair],
 }
 
 /// How many files a text list names before it counts the rest.
@@ -574,6 +581,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            unreliable_allowances,
         } = self;
         let report = JsonReport {
             passed: self.passed(),
@@ -591,6 +599,7 @@ impl Report<'_> {
                 policy_changed: &d.attribution.policy_changed,
                 in_full: &d.attribution.in_full,
             }),
+            unreliable_allowances,
             stats,
         };
         serde_json::to_string_pretty(&report).expect("report serializes")
@@ -614,6 +623,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            unreliable_allowances,
         } = self;
         let mut out = String::new();
         if let Some(d) = diff {
@@ -667,6 +677,9 @@ impl Report<'_> {
         }
         if !stats.frameworks.is_empty() {
             section(&mut out, &framework_lines(&stats.frameworks));
+        }
+        if !unreliable_allowances.is_empty() {
+            section(&mut out, &suggest::unreliable_text(unreliable_allowances));
         }
         let gaps = gap_lines(
             &coverage.evidence_gaps,
@@ -981,6 +994,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            unreliable_allowances,
         } = self;
         let mut out = String::new();
         for (severity, v) in verdict.reported() {
@@ -1002,6 +1016,16 @@ impl Report<'_> {
                 "::error title={}::{}\n",
                 escape_property(&format!("easement {STALE}")),
                 escape_command(&stale_message(k))
+            ));
+        }
+        for pair in unreliable_allowances {
+            out.push_str(&format!(
+                "::notice title={}::{}\n",
+                escape_property("easement unused-allowance"),
+                escape_command(&format!(
+                    "Not judged, next to files no indexer read: {}",
+                    pair.unreliable_line()
+                ))
             ));
         }
         if !stats.new_dependencies.is_empty() {
@@ -1241,6 +1265,7 @@ mod tests {
             coverage: &Coverage::default(),
             diff: None,
             require_evidence: false,
+            unreliable_allowances: &[],
         }
         .github();
         assert!(out.starts_with(
@@ -1286,6 +1311,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                unreliable_allowances: &[],
             }
             .json(),
         )
@@ -1301,6 +1327,7 @@ mod tests {
             coverage: &Coverage::default(),
             diff: None,
             require_evidence: false,
+            unreliable_allowances: &[],
         }
         .text();
         assert!(out.contains(cached), "{out}");
@@ -1312,6 +1339,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                unreliable_allowances: &[],
             }
             .json(),
         )
@@ -1324,6 +1352,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                unreliable_allowances: &[],
             }
             .text()
             .contains("--no-cache")
@@ -1349,6 +1378,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence: false,
+            unreliable_allowances: &[],
         }
         .text();
         assert!(
@@ -1406,6 +1436,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence,
+            unreliable_allowances: &[],
         };
         assert!(report(false).passed());
         let github = report(false).github();
@@ -1459,6 +1490,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence,
+            unreliable_allowances: &[],
         };
         let sarif: serde_json::Value = serde_json::from_str(&report(false).sarif()).unwrap();
         let said: Vec<(String, String)> =
@@ -1509,6 +1541,7 @@ mod tests {
             coverage: &Coverage::of_check(&stats, vec![], vec![]),
             diff: None,
             require_evidence: false,
+            unreliable_allowances: &[],
         }
         .github();
         assert!(
@@ -1530,6 +1563,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                unreliable_allowances: &[],
             }
             .github()
             .contains("::warning")
@@ -1547,6 +1581,7 @@ mod tests {
             coverage: &narrowed,
             diff: None,
             require_evidence: false,
+            unreliable_allowances: &[],
         }
         .github();
         assert!(

@@ -1,6 +1,7 @@
 //! The index cache: when an index is reused (another checkout, a touched file,
 //! the other language of the project) and when it is built again, how many
-//! languages are indexed at once, and `CacheUse::Only`, which runs no indexer.
+//! languages are indexed at once, `CacheUse::Only`, which runs no indexer, and
+//! `doctor --cache`, which says what a run would read from the cache.
 
 use std::fs;
 use std::path::Path;
@@ -10,7 +11,7 @@ use easement::{Cache, CacheUse, Environment, Indexing, Jobs, NotCached};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project, test_cache_dir};
-use crate::run::{check_in, config, indexing_in, json, text};
+use crate::run::{check_in, config, indexing_in, json, parse, pinned, text};
 
 /// What a run says about the code, without how the indexes were obtained.
 fn verdict(root: &Path, cache: &Path) -> (serde_json::Value, serde_json::Value) {
@@ -239,4 +240,103 @@ fn an_index_built_with_other_goflags_is_not_reused() {
     let again = check_with_env(Environment::of_process().with("GOFLAGS", ""));
     assert!(again.contains("came from the cache"), "{again}");
     assert!(again.contains("--no-cache"), "{again}");
+}
+
+/// `doctor --cache` says, for each index, whether a run would read it from the
+/// cache, and why not, with the key `check` computes: it agrees with `check`
+/// before and after a change, and it reads no index and runs no indexer.
+#[test]
+fn doctor_cache_says_which_indexes_a_check_would_read_from_the_cache() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  api: { in: api }\n  web: { in: web }\nexclude: [web/gen]\n",
+        ),
+        ("go.mod", "module example.com/shop\n\ngo 1.22\n"),
+        ("api/api.go", "package api\n\nconst Name = \"shop\"\n"),
+        ("web/a.ts", "export const a = 1;\n"),
+        // Excluded, but in the key: the index resolves imports of it.
+        ("web/gen/g.ts", "export const g = 1;\n"),
+    ]);
+    let cache = TempDir::new().unwrap();
+    let probe = |environment: Environment| {
+        let indexing = Indexing {
+            environment,
+            ..indexing_in(cache.path(), CacheUse::On)
+        };
+        commands::doctor_cache(&config(&root), &indexing).unwrap()
+    };
+    let states = |probed: &commands::Probed| -> Vec<(String, serde_json::Value)> {
+        parse(&probed.json())["indexes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["language"].as_str().unwrap().to_string(),
+                    p["reason"].clone(),
+                )
+            })
+            .collect()
+    };
+    let missed = |reason: &str| serde_json::Value::from(reason);
+    let hit = serde_json::Value::Null;
+
+    let empty = probe(Environment::of_process());
+    assert_eq!(empty.outcome(), Outcome::NotCached);
+    assert_eq!(
+        states(&empty),
+        [
+            ("go".to_string(), missed("no_entry")),
+            ("typescript".to_string(), missed("no_entry"))
+        ]
+    );
+    // Nothing ran: the cache is still empty.
+    assert_eq!(fs::read_dir(cache.path()).unwrap().count(), 0);
+
+    verdict(&root, cache.path());
+    let warm = probe(Environment::of_process());
+    assert_eq!(warm.outcome(), Outcome::Passed, "{}", warm.text());
+    assert_eq!(
+        states(&warm),
+        [
+            ("go".to_string(), hit.clone()),
+            ("typescript".to_string(), hit.clone())
+        ]
+    );
+    pinned(|| insta::assert_snapshot!("doctor_cache_text_warm", warm.text()));
+
+    let file = root.join("web/a.ts");
+    fs::write(&file, "export const a = 2;\n").unwrap();
+    let changed = probe(Environment::of_process());
+    assert_eq!(changed.outcome(), Outcome::NotCached);
+    assert_eq!(
+        states(&changed),
+        [
+            ("go".to_string(), hit.clone()),
+            ("typescript".to_string(), missed("files_changed"))
+        ]
+    );
+    pinned(|| insta::assert_snapshot!("doctor_cache_text_changed", changed.text()));
+    // `check` agrees: it indexes TypeScript again and reads Go from the cache.
+    let stats = verdict(&root, cache.path()).1;
+    assert_eq!(
+        (&stats["indexed"], &stats["from_cache"]),
+        (&1.into(), &1.into())
+    );
+
+    let goflags = probe(Environment::of_process().with("GOFLAGS", "-tags=race"));
+    assert_eq!(
+        states(&goflags),
+        [
+            ("go".to_string(), missed("indexer_changed")),
+            ("typescript".to_string(), hit.clone())
+        ]
+    );
+
+    // An index that cannot be read still counts: `doctor --cache` reads none.
+    for entry in fs::read_dir(cache.path()).unwrap() {
+        fs::write(entry.unwrap().path(), "not an index").unwrap();
+    }
+    assert_eq!(probe(Environment::of_process()).outcome(), Outcome::Passed);
 }

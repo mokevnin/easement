@@ -1,0 +1,8 @@
+---
+source: tests/library/cache.rs
+expression: changed.text()
+---
+go (.): cached
+typescript (.): would run: the files it reads changed
+
+easement doctor --cache: 1 index(es) not cached; a run indexes them, so set up the toolchains of their indexers first

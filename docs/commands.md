@@ -60,7 +60,9 @@ easement propose <file> <target>  # the decision on an import not written yet, a
 easement impact --diff main   # every file that depends on what this branch changed
 easement review --base main   # what this branch's change to the policy permits and accepts
 easement suggest              # allowances nothing uses, imports nothing allows
+easement check --suggest      # check, and fail on allowances nothing uses too
 easement doctor               # are the indexers the project needs installed
+easement doctor --cache       # would a check read every index from the cache
 ```
 
 `easement --help` and `easement <command> --help` list the rest: the report formats for CI, `graph`, `schema`, `--watch`, the cache flags, shell completions (`easement completions zsh > ~/.zfunc/_easement`). The text report is coloured on a terminal; `--color auto|always|never` overrides that, and `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`.
@@ -81,7 +83,8 @@ easement doctor               # are the indexers the project needs installed
 An entry next to files no indexer covered is listed apart as unreliable, because the dependency it would remove may be in a file that was never read. Check those by hand before removing anything. `--format json` gives the same lists as data (`removable`, `unreliable`, `not_allowed`, `forbidden`, `stale_arrows`, `isolation`), each item next to unread files with `unread`, the files of each component no indexer read, and the `evidence_gaps`, `accepted_gaps` and `cached` of `check`.
 
 - `--patch` prints the removals as a patch: `easement suggest --patch | git apply`. It edits the text of `easement.yml`, so comments and `because` reasons stay, and it never touches an entry next to unindexed files. An entry it cannot place (a rule that comes from `extends` or an alias, a list written over several lines) is named on stderr to remove by hand, and so is a glob or a set of components, a rule key or an item, with the allowances no import uses: it covers other components too.
-- `--check` prints the same report and exits 1 while an unused entry is left that `--patch` would remove, so a CI step keeps the allowances from piling up.
+
+`easement check --suggest` gives both verdicts in one pass, so that CI keeps the allowances from piling up without reading the indexes twice. Each entry `--patch` would remove fails as `unused-allowance`, at its line in `easement.yml`, with the message `suggest` gives and the `provenance` of the entry. Like `unmatched`, it is about the policy: the baseline never accepts it and no comment suppresses it, but `warn: [unused-allowance]` reports it without failing. An entry `--patch` leaves alone does not fail: one next to files no indexer covered is listed under `unreliable_allowances` in `--format json` and under its heading in the text, and one that comes through a glob or a set may be used by another component it covers. Whether an allowance is used depends on every import, so `--suggest` judges the whole project and refuses `--diff`, `--component` and `--scope` (exit 2).
 
 ## impact and why
 
@@ -132,3 +135,10 @@ Each component, rule, decision and item carries its `provenance` (the settings c
 `easement doctor` looks at the languages the project has and says, for each, whether its indexer is on the `PATH`, which version, and whether what it needs is in place (`node_modules` for TypeScript, `composer install` for PHP). For a missing indexer it prints how to install it and, where mise can, the lines for the `[tools]` of a `mise.toml`.
 
 It exits 1 when something is missing, so a script or an agent can run it first and read `--format json`.
+
+`easement doctor --cache` says instead, for each directory an indexer would index, whether a run would read its index from the cache: `cached`, or `would run` with the reason (no cache directory, the indexer not installed, no cached index of the directory, the files it reads changed, or the indexer, its arguments or its environment changed). It computes the key `check` computes, with the same function, but reads no index, runs no indexer and judges nothing, so it answers in the time it takes to hash the files. It exits 0 when every index is cached and 3 when one is not, the code of `--cache-only`; `--format json` gives `cached` and, per index, `language`, `dir`, `cached` and `reason` (`no_cache_dir`, `not_installed`, `no_entry`, `files_changed`, `indexer_changed`). An entry that is there but cannot be read counts as cached; `check` then indexes again. A CI job runs it first and sets up an indexer's toolchain only when it exits 3, then runs `check`:
+
+```sh
+easement doctor --cache || setup-toolchains   # pnpm install, the Go module cache, …
+easement check --suggest
+```
