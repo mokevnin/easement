@@ -27,6 +27,21 @@ pub struct Import {
 }
 
 impl Import {
+    /// The import of `specifier` in `form` at `line`, recorded on its specifier.
+    pub fn new(specifier: impl Into<String>, line: usize, form: Form) -> Self {
+        Self {
+            specifier: specifier.into(),
+            line,
+            form,
+            recorded_on: None,
+        }
+    }
+
+    /// The import of `specifier` in `form`, at the line `node` starts on.
+    pub(crate) fn at(node: Node, specifier: impl Into<String>, form: Form) -> Self {
+        Self::new(specifier, node.start_position().row + 1, form)
+    }
+
     /// The text its index records it on: [`Import::recorded_on`], else the specifier.
     pub fn recorded_text(&self) -> &str {
         self.recorded_on.as_deref().unwrap_or(&self.specifier)
@@ -395,6 +410,19 @@ pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>>
         adapters.push(build(root, files)?);
     }
     Ok(adapters)
+}
+
+/// `root` and every named node below it, each before its children, in the
+/// order of the text.
+pub(crate) fn preorder(root: Node) -> impl Iterator<Item = Node> {
+    let mut pending = vec![root];
+    std::iter::from_fn(move || {
+        let node = pending.pop()?;
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.named_children(&mut cursor).collect();
+        pending.extend(children.into_iter().rev());
+        Some(node)
+    })
 }
 
 /// Whether `node` has a named child of `kind`.

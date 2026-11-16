@@ -266,11 +266,9 @@ impl Adapter for Kotlin {
         let tree = tree(&self.language, source);
         Ok(captured_nodes(&self.query, &tree, source)
             .into_iter()
-            .map(|node| Import {
-                specifier: specifier(node.utf8_text(source.as_bytes()).unwrap_or_default()),
-                line: node.start_position().row + 1,
-                form: super::Form::Static,
-                recorded_on: None,
+            .map(|node| {
+                let text = node.utf8_text(source.as_bytes()).unwrap_or_default();
+                Import::at(node, specifier(text), super::Form::Static)
             })
             .collect())
     }

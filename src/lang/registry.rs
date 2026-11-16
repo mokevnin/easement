@@ -99,13 +99,11 @@ pub struct Explained {
 /// What the text of a specifier spells, without resolving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Spelled {
-    /// A path relative to the file that writes it, as it names a file: a query
-    /// (`?raw`) left off, no extension or `index` added.
-    Path(String),
-    /// Paths relative to the file that writes it, any one of which it may name
-    /// (Python's `.x`: `x.py` or the package `x/__init__.py`): it names the one
-    /// that exists, and none when more than one does.
-    OneOf(Vec<String>),
+    /// The paths, relative to the file that writes it, of the files it may name,
+    /// each as the language reads it: a query (`?raw`) left off, no extension or
+    /// `index` guessed; Python's `.x` is `x.py` or the package `x/__init__.py`.
+    /// It names the one of them that exists, and none when not exactly one does.
+    Paths(Vec<String>),
     /// A package, by its name (`some-pkg` of `some-pkg/style.css`).
     Package(String),
     /// Neither: an alias of the build (`#lib/x`, `$lib/x`), a scheme (`virtual:x`).

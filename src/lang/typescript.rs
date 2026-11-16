@@ -101,20 +101,9 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
         _ => Form::Require,
     };
-    let mut imports = Vec::new();
-    let mut pending = vec![tree.root_node()];
-    while let Some(node) = pending.pop() {
-        if let Some(import) = import_at(node, text, require) {
-            imports.push(import);
-        }
-        let mut cursor = node.walk();
-        pending.extend(
-            node.named_children(&mut cursor)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev(),
-        );
-    }
+    let mut imports: Vec<Import> = super::preorder(tree.root_node())
+        .filter_map(|node| import_at(node, text, require))
+        .collect();
     imports.sort_by_key(|import| import.line);
     imports
 }
@@ -127,8 +116,7 @@ pub fn unrelated(file: &str, text: &str) -> Vec<UnrelatedSpan> {
     let tree = super::tree(&grammar(file), text);
     let lines = |node: Node| node.start_position().row + 1..=node.end_position().row + 1;
     let mut found = Vec::new();
-    let mut pending = vec![tree.root_node()];
-    while let Some(node) = pending.pop() {
+    for node in super::preorder(tree.root_node()) {
         if matches!(node.kind(), "interface_declaration" | "class") {
             found.push(UnrelatedSpan {
                 lines: lines(node),
@@ -150,8 +138,6 @@ pub fn unrelated(file: &str, text: &str) -> Vec<UnrelatedSpan> {
                 through_alias: true,
             });
         }
-        let mut cursor = node.walk();
-        pending.extend(node.named_children(&mut cursor));
     }
     found.sort_by_key(|span| *span.lines.start());
     found
@@ -184,11 +170,11 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
             let string = clause
                 .and_then(|clause| clause.child_by_field_name("source"))
                 .or_else(|| node.child_by_field_name("source"))?;
-            literal(string, text).map(|specifier| at(string, specifier, form))
+            literal(string, text).map(|specifier| Import::at(string, specifier, form))
         }
         "export_statement" => {
             let string = node.child_by_field_name("source")?;
-            literal(string, text).map(|specifier| at(string, specifier, Form::Static))
+            literal(string, text).map(|specifier| Import::at(string, specifier, Form::Static))
         }
         "call_expression" => {
             let function = node.child_by_field_name("function")?;
@@ -203,9 +189,11 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
             let argument = arguments.named_children(&mut cursor).next()?;
             match literal(argument, text) {
                 // A glob is a pattern of targets, never one.
-                Some(specifier) if form != Form::Computed => Some(at(argument, specifier, form)),
-                Some(pattern) => Some(at(argument, pattern, Form::Computed)),
-                None => Some(at(argument, source(argument)?.to_string(), Form::Computed)),
+                Some(specifier) if form != Form::Computed => {
+                    Some(Import::at(argument, specifier, form))
+                }
+                Some(pattern) => Some(Import::at(argument, pattern, Form::Computed)),
+                None => Some(Import::at(argument, source(argument)?, Form::Computed)),
             }
         }
         _ => None,
@@ -225,16 +213,6 @@ fn literal(node: Node, text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The import of `specifier` in `form`, at the line `node` starts on.
-fn at(node: Node, specifier: String, form: Form) -> Import {
-    Import {
-        specifier,
-        line: node.start_position().row + 1,
-        form,
-        recorded_on: None,
-    }
-}
-
 /// What a specifier spells when the index takes it to no source target: a
 /// relative path, without the query a bundler reads (`?raw`); a package; or
 /// neither, such as an alias that `paths` or the bundler defines.
@@ -243,7 +221,7 @@ pub fn spelled(specifier: &str) -> Spelled {
         let path = specifier
             .split_once('?')
             .map_or(specifier, |(path, _)| path);
-        return Spelled::Path(path.to_string());
+        return Spelled::Paths(vec![path.to_string()]);
     }
     match crate::lang::registry::Manifest::Npm.named_by(specifier) {
         Some(package) => Spelled::Package(package),
@@ -353,10 +331,13 @@ export const q = 1;
 
     #[test]
     fn a_specifier_spells_a_path_without_its_query_a_package_or_neither() {
-        assert_eq!(spelled("./app.css"), Spelled::Path("./app.css".into()));
+        assert_eq!(
+            spelled("./app.css"),
+            Spelled::Paths(vec!["./app.css".into()])
+        );
         assert_eq!(
             spelled("../lib/util.ts?raw"),
-            Spelled::Path("../lib/util.ts".into())
+            Spelled::Paths(vec!["../lib/util.ts".into()])
         );
         assert_eq!(
             spelled("some-pkg/style.css"),

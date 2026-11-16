@@ -39,19 +39,9 @@ pub const EXPLAINED: &[Explained] = &[
 /// `from __future__ import …` is a directive of the compiler, no module.
 pub fn written_imports(_file: &str, text: &str) -> Vec<Import> {
     let tree = super::tree(&tree_sitter_python::LANGUAGE.into(), text);
-    let mut imports = Vec::new();
-    let mut pending = vec![tree.root_node()];
-    while let Some(node) = pending.pop() {
-        imports.extend(imports_at(node, text));
-        let mut cursor = node.walk();
-        pending.extend(
-            node.named_children(&mut cursor)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev(),
-        );
-    }
-    imports
+    super::preorder(tree.root_node())
+        .flat_map(|node| imports_at(node, text))
+        .collect()
 }
 
 /// The imports `node` writes: none unless it is an import.
@@ -81,12 +71,10 @@ fn imports_at(node: Node, text: &str) -> Vec<Import> {
                 .filter_map(|name| {
                     let bare = unaliased(name)?;
                     let module = format!("{dots}{}", squeezed(source(bare)));
-                    Some(at(
-                        name,
-                        module,
-                        Some(source(name).to_string()),
-                        Form::Static,
-                    ))
+                    Some(Import {
+                        recorded_on: Some(source(name).to_string()),
+                        ..Import::at(name, module, Form::Static)
+                    })
                 })
                 .collect()
         }
@@ -113,8 +101,8 @@ fn imports_at(node: Node, text: &str) -> Vec<Import> {
                 return Vec::new();
             };
             vec![match literal(argument, text) {
-                Some(module) => at(argument, module, None, Form::ImportCall),
-                None => at(argument, source(argument).to_string(), None, Form::Computed),
+                Some(module) => Import::at(argument, module, Form::ImportCall),
+                None => Import::at(argument, source(argument), Form::Computed),
             }]
         }
         _ => Vec::new(),
@@ -156,23 +144,14 @@ fn literal(node: Node, text: &str) -> Option<String> {
     Some(content)
 }
 
-/// The import of `specifier` in `form`, at the line `node` starts on, which the
-/// index records on `recorded_on` when that is given, else on the specifier.
-fn at(node: Node, specifier: String, recorded_on: Option<String>, form: Form) -> Import {
-    Import {
-        line: node.start_position().row + 1,
-        specifier,
-        form,
-        recorded_on,
-    }
-}
-
 /// The import of the module `node` names, whose text is `module`: a dotted name
 /// read without the white space it may hold, on the text as written.
 fn module_at(node: Node, module: &str) -> Import {
     let specifier = squeezed(module);
-    let recorded_on = (specifier != module).then(|| module.to_string());
-    at(node, specifier, recorded_on, Form::Static)
+    Import {
+        recorded_on: (specifier != module).then(|| module.to_string()),
+        ..Import::at(node, specifier, Form::Static)
+    }
 }
 
 /// What the module of an import spells when the index takes it to no source
@@ -191,10 +170,10 @@ pub fn spelled(specifier: &str) -> Spelled {
         _ => "../".repeat(dots - 1),
     };
     if rest.is_empty() {
-        return Spelled::OneOf(vec![format!("{up}__init__.py")]);
+        return Spelled::Paths(vec![format!("{up}__init__.py")]);
     }
     let path = format!("{up}{}", rest.replace('.', "/"));
-    Spelled::OneOf(vec![format!("{path}.py"), format!("{path}/__init__.py")])
+    Spelled::Paths(vec![format!("{path}.py"), format!("{path}/__init__.py")])
 }
 
 #[cfg(test)]
@@ -304,7 +283,7 @@ i = other.load("not.this")
     #[test]
     fn a_relative_module_spells_its_file_or_its_package() {
         let one_of =
-            |paths: &[&str]| Spelled::OneOf(paths.iter().map(|path| path.to_string()).collect());
+            |paths: &[&str]| Spelled::Paths(paths.iter().map(|path| path.to_string()).collect());
         assert_eq!(spelled(".x"), one_of(&["./x.py", "./x/__init__.py"]));
         assert_eq!(
             spelled("..x.y"),

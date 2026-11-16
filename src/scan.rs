@@ -180,8 +180,7 @@ fn compare(
             let spelled = written.spelled.filter(|_| form != Form::ImportCall);
             let target = match spelled.map(|spelled| spelled(&import.specifier)) {
                 _ if resolution == scip::Resolution::Target => return Compared::Resolved,
-                Some(Spelled::Path(path)) => only_file(file, &[path], &exists),
-                Some(Spelled::OneOf(paths)) => only_file(file, &paths, &exists),
+                Some(Spelled::Paths(paths)) => only_file(file, &paths, &exists),
                 Some(Spelled::Package(package)) => Some(Target::External(package)),
                 Some(Spelled::Neither) | None => None,
             };

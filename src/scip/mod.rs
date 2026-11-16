@@ -2711,12 +2711,7 @@ mod tests {
             Indexed::of(&names).resolution(
                 document,
                 &lines,
-                &Import {
-                    specifier: specifier.into(),
-                    line,
-                    form: crate::lang::Form::Static,
-                    recorded_on: None,
-                },
+                &Import::new(specifier, line, crate::lang::Form::Static),
             )
         };
         let resolved = |line, specifier: &str| resolution(&document, line, specifier);
@@ -2790,12 +2785,7 @@ mod tests {
             index.resolution(
                 &main,
                 &lines,
-                &Import {
-                    specifier: specifier.into(),
-                    line,
-                    form: crate::lang::Form::Static,
-                    recorded_on: None,
-                },
+                &Import::new(specifier, line, crate::lang::Form::Static),
             )
         };
         assert_eq!(resolution(1, "./app.css"), Resolution::Wildcard);
@@ -2869,10 +2859,8 @@ mod tests {
                 &main,
                 &lines,
                 &Import {
-                    specifier: specifier.into(),
-                    line,
-                    form: crate::lang::Form::Static,
                     recorded_on: Some(recorded_on.into()),
+                    ..Import::new(specifier, line, crate::lang::Form::Static)
                 },
             )
         };
