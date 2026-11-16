@@ -97,11 +97,9 @@ where
             Target::Internal(unit) => map.component_of_unit(unit),
             Target::External(_) => None,
         };
-        // A file of no component is a side of its own.
-        let crossing = matches!(import.target, Target::External(_))
-            || from_component.is_none()
-            || to_component.is_none()
-            || from_component != to_component;
+        // A file of no component is a side of its own, and an external module
+        // is in none.
+        let crossing = from_component.is_none() || from_component != to_component;
         if !crossing {
             continue;
         }

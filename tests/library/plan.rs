@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use easement::commands::{Checked, Outcome};
 use tempfile::TempDir;
 
-use crate::common::{git, on_feature, project, stub_packages, write_all};
+use crate::common::{commit_all, fixture, git, on_feature, project, stub_packages, write_all};
 use crate::diff::diff_main;
 use crate::run::{check_with, error, json, pinned, text, try_check_with};
 
@@ -259,6 +259,43 @@ fn an_import_of_a_file_of_no_component_is_compared() {
     let first = &report["plan"]["unplanned"][0];
     assert_eq!(first["component"], serde_json::Value::Null, "{report}");
     assert_eq!(first["target_component"], "core", "{report}");
+
+    // Each file of no component is a side of its own.
+    write_all(
+        &root,
+        &[
+            (
+                "src/tools/x.ts",
+                "import { y } from \"./y\";\nexport const x = y;\n",
+            ),
+            ("src/tools/y.ts", "export const y = 1;\n"),
+        ],
+    );
+    let report = json(&check_plan(
+        &root,
+        r#"[{"from": "src/web/a.ts", "external": "lodash"}]"#,
+    ));
+    assert_eq!(
+        unplanned(&report),
+        ["src/tools/x.ts:1 -> src/tools/y.ts"],
+        "{report}"
+    );
+}
+
+/// An import the change left alone is not compared, though its file changed.
+#[test]
+fn an_import_the_change_left_alone_is_not_compared() {
+    let (_tmp, root) = web_and_core();
+    let before = "import { b } from \"../core/b\";\nexport const a = b;\n";
+    write_all(&root, &[("src/web/a.ts", before)]);
+    git(&root, &["commit", "-q", "-am", "web uses core"]);
+    git(&root, &["branch", "-f", "main"]);
+    let report = compared(
+        &root,
+        &format!("{before}export const more = 2;\n"),
+        r#"[{"from": "src/web/a.ts", "to": "src/core/c.ts"}]"#,
+    );
+    assert_eq!(unplanned(&report), Vec::<String>::new(), "{report}");
 }
 
 /// The checks do not read a file `exclude` hides, so the comparison cannot
@@ -273,6 +310,28 @@ fn an_entry_of_a_file_the_checks_do_not_read_is_not_unrealized() {
     assert_eq!(
         report["plan"]["unrealized"],
         serde_json::json!([]),
+        "{report}"
+    );
+}
+
+/// What no indexer read cannot be told to lack an import: the evidence gaps name
+/// the file, and its entries are not reported as missing.
+#[test]
+fn an_entry_of_a_file_no_indexer_read_is_not_unrealized() {
+    let (_tmp, root) = fixture("uncovered");
+    commit_all(&root);
+    let report = json(&check_plan(
+        &root,
+        r#"[{"from": "tools/gen.go", "external": "fmt"},
+            {"from": "app/main.go", "external": "net/http"}]"#,
+    ));
+    assert_eq!(
+        report["plan"]["unrealized"],
+        serde_json::json!([{"from": "app/main.go", "external": "net/http"}]),
+        "{report}"
+    );
+    assert_eq!(
+        report["evidence_gaps"][0]["files"][0], "tools/gen.go",
         "{report}"
     );
 }
@@ -343,6 +402,13 @@ fn a_scoped_run_compares_only_the_files_in_scope() {
         );
     });
     assert_eq!(checked.outcome(), Outcome::Passed);
+    let said = text(&checked);
+    assert!(
+        said.contains("Planned, not in the code:\n  src/web/a.ts -> src/core/b.ts\n"),
+        "{said}"
+    );
+    assert!(!said.contains("Not in the plan"), "{said}");
+    assert!(!said.contains("matches the plan"), "{said}");
     let report = json(&checked);
     assert_eq!(unplanned(&report), Vec::<String>::new(), "{report}");
     assert_eq!(
