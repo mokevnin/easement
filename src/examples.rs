@@ -31,8 +31,8 @@ pub fn check(policy: &Policy, map: &ComponentMap, root: &Path) -> Vec<Violation>
         .filter_map(|(i, example)| {
             let (judged, why) = match &example.symbol {
                 Some(symbol) => {
-                    let judged = used(&policy.config, map, example, symbol);
-                    let why = unjudged(&judged).or_else(|| undefined(map, example));
+                    let judged = judge_use(&policy.config, map, example, symbol);
+                    let why = unjudged(&judged).or_else(|| unjudged_definition(map, example));
                     (judged, why)
                 }
                 None => {
@@ -80,23 +80,9 @@ pub fn label(example: &Example) -> String {
 /// proposes, taken from its paths alone, as [`symbols::judge`] takes the scan's.
 /// A source no component owns is judged by the top-level `forbid_symbol` alone,
 /// and is otherwise `unowned`, as for a dependency.
-fn used(config: &Config, map: &ComponentMap, example: &Example, symbol: &str) -> Judged {
+fn judge_use(config: &Config, map: &ComponentMap, example: &Example, symbol: &str) -> Judged {
     let from = example.from.as_str();
-    let undecided = |decision| Judged {
-        from: from.to_string(),
-        to: None,
-        external: None,
-        component: None,
-        target_component: None,
-        decision,
-        grant: None,
-        rule: None,
-        message: None,
-        because: None,
-        public_surface: Vec::new(),
-        named_surfaces: Vec::new(),
-        warning: false,
-    };
+    let undecided = |decision| Judged::of(from, decision);
     match decision::unread(map, from) {
         Some(Outside::Excluded) => return undecided(Kind::Excluded),
         Some(Outside::TargetOnly) => return undecided(Kind::TargetOnly),
@@ -137,7 +123,7 @@ fn used(config: &Config, map: &ComponentMap, example: &Example, symbol: &str) ->
 
 /// Why the `defined_in` of the example says nothing of `public_symbols`: no
 /// component owns it, `exclude` hiding it among the reasons.
-fn undefined(map: &ComponentMap, example: &Example) -> Option<String> {
+fn unjudged_definition(map: &ComponentMap, example: &Example) -> Option<String> {
     let path = example.defined_in.as_deref()?;
     if decision::unread(map, path) == Some(Outside::Excluded) {
         return Some(format!("`exclude` hides {path}"));

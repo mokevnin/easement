@@ -627,13 +627,13 @@ impl Examples {
         // is one change; with several (`extends` joins the lists), which
         // became which is unknown, so they stay added and removed.
         let named_once = |list: &[Example], example: &Example| {
-            list.iter().filter(|e| same_dependency(e, example)).count() == 1
+            list.iter().filter(|e| same_subject(e, example)).count() == 1
         };
         let removed = missing(base, head, same_expectation)
             .into_iter()
             .filter_map(|before| {
                 let after = (named_once(base, &before) && named_once(head, &before))
-                    .then(|| added.iter().position(|a| same_dependency(a, &before)))
+                    .then(|| added.iter().position(|a| same_subject(a, &before)))
                     .flatten();
                 match after {
                     Some(i) => {
@@ -661,7 +661,7 @@ impl Examples {
 
 /// Whether both are examples of the same proposed dependency, or of the same
 /// use of a name.
-fn same_dependency(a: &Example, b: &Example) -> bool {
+fn same_subject(a: &Example, b: &Example) -> bool {
     (&a.from, &a.to, &a.external, &a.symbol, &a.defined_in)
         == (&b.from, &b.to, &b.external, &b.symbol, &b.defined_in)
 }
@@ -669,7 +669,7 @@ fn same_dependency(a: &Example, b: &Example) -> bool {
 /// Whether both expect the same decision of the same dependency; the reason
 /// they give does not count.
 fn same_expectation(a: &Example, b: &Example) -> bool {
-    same_dependency(a, b) && (a.expect, a.rule) == (b.expect, b.rule)
+    same_subject(a, b) && (a.expect, a.rule) == (b.expect, b.rule)
 }
 
 /// The example and what it expects: `web/a.ts -> db/b.ts: expects rejected`.

@@ -195,9 +195,19 @@ impl Judged {
             To::External(module) => (None, Some(module.clone())),
         };
         Judged {
-            from: proposal.from.clone(),
             to,
             external,
+            ..Judged::of(&proposal.from, decision)
+        }
+    }
+
+    /// A decision of `kind` on something the file `from` would do, imports or
+    /// names, with nothing else said of it.
+    pub fn of(from: &str, decision: Kind) -> Self {
+        Judged {
+            from: from.to_string(),
+            to: None,
+            external: None,
             component: None,
             target_component: None,
             decision,

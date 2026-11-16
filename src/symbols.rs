@@ -84,8 +84,10 @@ impl<'a> Use<'a> {
     /// The use of `symbol` in `file`, written as `forbid_symbol` writes a name:
     /// `example.com/app/ent.Client`, and a member after its type, `ent.Client.Query`
     /// or `db::client::Client.query`. Without the index, whether the qualifier ends
-    /// in a type is unknown, so it is read both ways. `None` when `symbol` has no
-    /// qualifier.
+    /// in a type cannot always be told (the registry cuts it, see
+    /// [`registry::member_type`]), so a name that may be a member is read both
+    /// ways: a ban on either names it, and `public_symbols` listing either lets
+    /// it through. `None` when `symbol` has no qualifier.
     pub fn written(
         file: &'a str,
         owner: Option<&'a str>,
@@ -93,23 +95,13 @@ impl<'a> Use<'a> {
         symbol: &'a str,
     ) -> Option<Self> {
         let (qualifier, name) = symbol.rsplit_once('.')?;
-        // The type a member would be used through: the qualifier cut at its last
-        // `.` or `::`, never inside a path of modules.
-        let types: Vec<(&str, &str)> = [".", "::"]
-            .into_iter()
-            .filter_map(|separator| qualifier.rsplit_once(separator))
-            .filter(|(outer, ty)| !outer.is_empty() && !ty.is_empty() && !ty.contains('/'))
-            .collect();
+        let ty = registry::member_type(file, qualifier);
         Some(Use {
             file,
             owner,
             defined_by,
-            called: std::iter::once((qualifier, name))
-                .chain(types.iter().copied())
-                .collect(),
-            public_as: std::iter::once(name)
-                .chain(types.iter().map(|(_, ty)| *ty))
-                .collect(),
+            called: std::iter::once((qualifier, name)).chain(ty).collect(),
+            public_as: std::iter::once(name).chain(ty.map(|(_, ty)| ty)).collect(),
             name,
             target: symbol.to_string(),
         })
@@ -592,12 +584,25 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
                 vec!["Query", "Client"]
             )
         );
+        let read_in = |file, symbol| {
+            let used = Use::written(file, Some("web"), None, symbol).unwrap();
+            (used.called, used.public_as)
+        };
         assert_eq!(
-            read("db::client::Client.query"),
+            read_in("web/a.rs", "db::client::Client.query"),
             (
                 vec![("db::client::Client", "query"), ("db::client", "Client")],
                 vec!["query", "Client"]
             )
+        );
+        // Go joins a member with `.`, not `::`; a file of no language reads no type.
+        assert_eq!(
+            read("db::client::Client.query").0,
+            [("db::client::Client", "query")]
+        );
+        assert_eq!(
+            read_in("web/a.txt", "ent.Client.Query").0,
+            [("ent.Client", "Query")]
         );
         assert!(Use::written("web/a.go", None, None, "Client").is_none());
     }

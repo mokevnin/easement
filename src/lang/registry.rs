@@ -252,6 +252,10 @@ pub struct Language {
     /// Where its module names are cut into parents (`/` of `lodash/fp`, `::` of
     /// `serde::de`): a pattern of a parent covers what is below it.
     pub module_separators: &'static [&'static str],
+    /// What joins a type and a member of it in a name as `forbid_symbol` writes it
+    /// (`.` of `db.Client.Query`, `::` of `db::client::Client.query`), as its index
+    /// is read in `src/scip/symbol.rs`.
+    pub member_separator: &'static str,
 }
 
 const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
@@ -290,6 +294,7 @@ pub static GO: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["/"],
+    member_separator: ".",
     settings: &[Setting {
         key: "tags",
         value: "a build tag (letters, digits, `_` and `.`)",
@@ -333,6 +338,7 @@ pub static TYPESCRIPT: Language = Language {
     third_party: &["node_modules"],
     part_names: &[],
     module_separators: &["/"],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -364,6 +370,7 @@ pub static PYTHON: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["."],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -397,6 +404,7 @@ pub static JAVA: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["."],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -430,6 +438,7 @@ pub static KOTLIN: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["."],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -461,6 +470,7 @@ pub static CSHARP: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["."],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -491,6 +501,7 @@ pub static PHP: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["\\"],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -521,6 +532,7 @@ pub static SWIFT: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["."],
+    member_separator: ".",
     settings: &[],
 };
 
@@ -551,6 +563,7 @@ pub static RUBY: Language = Language {
     third_party: &[],
     part_names: &[],
     module_separators: &["::"],
+    member_separator: "::",
     settings: &[],
 };
 
@@ -599,6 +612,7 @@ pub static RUST: Language = Language {
     third_party: &[],
     part_names: &["cfg(test)"],
     module_separators: &["::"],
+    member_separator: "::",
     settings: &[],
 };
 
@@ -794,6 +808,20 @@ fn module_separators(file: &str) -> &'static [&'static str] {
         .map_or(every_module_separator(), |language| {
             language.module_separators
         })
+}
+
+/// The type that a member, written in a name used in `file` as `forbid_symbol`
+/// writes it, would be used through: `qualifier` cut at the member separator of
+/// the file's language into the qualifier of the type and the type (`ent` and
+/// `Client` of `ent.Client`), never inside the name of a module. `None` for a
+/// file of no language, or a qualifier that names no type. Where the language
+/// cuts its modules at the same separator, the cut may be a module's instead.
+pub fn member_type<'a>(file: &str, qualifier: &'a str) -> Option<(&'a str, &'a str)> {
+    let language = of(file)?;
+    let (outer, ty) = qualifier.rsplit_once(language.member_separator)?;
+    let module = |separator: &&str| ty.contains(*separator);
+    (!outer.is_empty() && !ty.is_empty() && !language.module_separators.iter().any(module))
+        .then_some((outer, ty))
 }
 
 /// Every separator some language cuts its module names at, for a name that

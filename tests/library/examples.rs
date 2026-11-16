@@ -435,7 +435,10 @@ fn a_symbol_example_no_component_owns_cannot_be_judged() {
   - {{ from: internal/gen/x.go, symbol: example.com/app/ent.Client, expect: rejected }}
   - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, defined_in: internal/gone/x.go, expect: allowed }}
   - {{ from: internal/gone/x.go, symbol: example.com/app/ent.Client, expect: rejected, rule: symbol }}
+  - {{ from: internal/pb/x.go, symbol: example.com/app/billing.Charge, expect: allowed }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, defined_in: internal/gen/y.go, expect: allowed }}
 exclude: [internal/gen]
+target_only: [internal/pb]
 "
     );
     let (_tmp, root) = symbol_examples_project(&policy);
@@ -446,6 +449,39 @@ exclude: [internal/gen]
             (16, "example internal/gone/x.go uses example.com/app/billing.Charge: cannot be judged: internal/gone/x.go belongs to no component; point it at a path a component owns, or drop it".to_string()),
             (17, "example internal/gen/x.go uses example.com/app/ent.Client: cannot be judged: `exclude` hides internal/gen/x.go; point it at a path a component owns, or drop it".to_string()),
             (18, "example internal/web/page.go uses example.com/app/billing.Charge defined in internal/gone/x.go: cannot be judged: internal/gone/x.go belongs to no component; point it at a path a component owns, or drop it".to_string()),
+            (20, "example internal/pb/x.go uses example.com/app/billing.Charge: cannot be judged: `target_only` names internal/pb/x.go; point it at a path a component owns, or drop it".to_string()),
+            (21, "example internal/web/page.go uses example.com/app/billing.Charge defined in internal/gen/y.go: cannot be judged: `exclude` hides internal/gen/y.go; point it at a path a component owns, or drop it".to_string()),
         ]
+    );
+}
+
+/// An `allow_in` grant reaches a use of a name by its path: dropping it fails
+/// the example that pins the use as allowed.
+#[test]
+fn a_symbol_example_is_granted_by_a_path() {
+    let policy = SYMBOL_EXAMPLES_POLICY
+        .replace(
+            "allow: [wiring]\n",
+            "allow: [wiring]\n    allow_in: [internal/web/admin]\n",
+        )
+        .replace(
+            "examples:\n",
+            "examples:\n  - { from: internal/web/admin/raw.go, symbol: example.com/app/ent.Client, expect: allowed }\n",
+        );
+    let (_tmp, root) = symbol_examples_project(&policy);
+    // An `allow_in` pattern that matches no file fails as `unmatched`.
+    fs::create_dir_all(root.join("internal/web/admin")).unwrap();
+    fs::write(root.join("internal/web/admin/raw.go"), "package admin\n").unwrap();
+    let checked = check(&root);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+
+    let dropped = policy.replace("    allow_in: [internal/web/admin]\n", "");
+    fs::write(root.join("easement.yml"), dropped).unwrap();
+    assert_eq!(
+        example_failures(&root),
+        [(
+            14,
+            "example internal/web/admin/raw.go uses example.com/app/ent.Client: expects allowed, but the policy now decides rejected [symbol]: web must not use example.com/app/ent.Client (only wiring may); restore what the policy meant, or update the example if the change is meant".to_string()
+        )]
     );
 }
