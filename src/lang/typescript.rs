@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::Node;
 
-use super::registry::{Explained, Spelled, TYPESCRIPT, UnindexedUse};
+use super::registry::{Explained, Spelled, TYPESCRIPT, UnindexedUse, UnrelatedSpan};
 use super::{Cause, Form, Import};
 use crate::relpath::{self, parent};
 
@@ -121,19 +121,39 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
 
 /// The declarations of a TypeScript or JavaScript file that scip-typescript
 /// gives no relations, though they may extend or implement a type: interface
-/// declarations and class expressions.
-pub fn unrelated(file: &str, text: &str) -> Vec<std::ops::RangeInclusive<usize>> {
+/// declarations and class expressions, and the `implements` clause of a class
+/// declaration, which counts only when it names a type alias.
+pub fn unrelated(file: &str, text: &str) -> Vec<UnrelatedSpan> {
     let tree = super::tree(&grammar(file), text);
+    let lines = |node: Node| node.start_position().row + 1..=node.end_position().row + 1;
     let mut found = Vec::new();
     let mut pending = vec![tree.root_node()];
     while let Some(node) = pending.pop() {
         if matches!(node.kind(), "interface_declaration" | "class") {
-            found.push(node.start_position().row + 1..=node.end_position().row + 1);
+            found.push(UnrelatedSpan {
+                lines: lines(node),
+                through_alias: false,
+            });
+        }
+        let declared = node
+            .parent()
+            .and_then(|heritage| heritage.parent())
+            .is_some_and(|class| {
+                matches!(
+                    class.kind(),
+                    "class_declaration" | "abstract_class_declaration"
+                )
+            });
+        if node.kind() == "implements_clause" && declared {
+            found.push(UnrelatedSpan {
+                lines: lines(node),
+                through_alias: true,
+            });
         }
         let mut cursor = node.walk();
         pending.extend(node.named_children(&mut cursor));
     }
-    found.sort_by_key(|lines| *lines.start());
+    found.sort_by_key(|span| *span.lines.start());
     found
 }
 
@@ -252,8 +272,13 @@ mod tests {
     #[test]
     fn interfaces_and_class_expressions_are_the_declarations_without_relations() {
         let text = "export interface Port {\n  run(): void;\n}\n\nexport class Named implements Port {\n  run() {}\n}\n\nexport const Anonymous = class implements Port {\n  run() {}\n};\n";
-        // The interface, and the class expression; the named class has relations.
-        assert_eq!(unrelated("a.ts", text), [1..=3, 9..=11]);
+        let spans: Vec<(std::ops::RangeInclusive<usize>, bool)> = unrelated("a.ts", text)
+            .into_iter()
+            .map(|span| (span.lines, span.through_alias))
+            .collect();
+        // The interface and the class expression; the `implements` clause of the
+        // named class, which has relations unless it names a type alias.
+        assert_eq!(spans, [(1..=3, false), (5..=5, true), (9..=11, false)]);
     }
 
     #[test]

@@ -76,6 +76,9 @@ pub struct Document {
     /// index relates them: (type, supertype). Only a language whose relations are
     /// declared gives them, directly or through ancestors as its indexer does.
     pub supertypes: Vec<(String, String)>,
+    /// The classes of this file the index gives no type but whose methods it
+    /// relates to the methods they implement (a Java anonymous class).
+    pub anonymous: Vec<Anonymous>,
     /// The methods and functions this file defines that the index gave a range.
     pub scopes: Vec<Scope>,
     /// The parts of the file that a dependency can belong to instead of the file.
@@ -99,28 +102,114 @@ fn is_type(symbol: &str) -> bool {
     split(symbol).is_some_and(|parsed| matches!(parsed.descriptors.last(), Some((_, Kind::Type))))
 }
 
-/// The supertypes the types of `document` declare, as (type, supertype): the
-/// relations of a type to a type that are implementations and no reference.
-/// scip-java also relates an interface to a record that implements it, as a
-/// reference too; that one is no supertype. A method's relation to the method it
-/// overrides follows from its type's and is not read.
-fn supertypes_of(document: &scip::types::Document) -> Vec<(String, String)> {
+/// The supertypes the types of `document`, at `path`, declare, as (type,
+/// supertype): the relations of a type to a type that are implementations and no
+/// reference. scip-java also relates an interface to a record that implements it,
+/// as a reference too; that one is no supertype. A method's relation to the method
+/// it overrides follows from its type's and is not read. A type the index names
+/// locally (`local 0`, a class inside a function) is read under [`local_key`].
+fn supertypes_of(document: &scip::types::Document, path: &str) -> Vec<(String, String)> {
+    let key = |symbol: &str| match is_local(symbol) {
+        true => local_key(path, symbol),
+        false => symbol.to_string(),
+    };
     let mut found = Vec::new();
     for information in &document.symbols {
-        if !is_type(&information.symbol) {
+        if !is_type(&information.symbol) && !is_local(&information.symbol) {
             continue;
         }
         for relationship in &information.relationships {
             if relationship.is_implementation
                 && !relationship.is_reference
                 && relationship.symbol != information.symbol
-                && is_type(&relationship.symbol)
+                && (is_type(&relationship.symbol) || is_local(&relationship.symbol))
             {
-                found.push((information.symbol.clone(), relationship.symbol.clone()));
+                found.push((key(&information.symbol), key(&relationship.symbol)));
             }
         }
     }
     found
+}
+
+/// A class the index gives no type, told by its methods that implement methods
+/// of types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Anonymous {
+    /// The 1-based line of the first of those methods.
+    pub line: usize,
+    /// The types whose methods they implement.
+    pub implements: Vec<String>,
+}
+
+/// The classes of `document` the index gives no type, as their methods show them:
+/// a method it names locally that implements a method of a type, grouped by the
+/// class that encloses it when the index says which. `local_types` are the types
+/// it names locally, whose relations are read as such.
+fn anonymous_of(
+    document: &scip::types::Document,
+    path: &str,
+    local_types: &HashSet<String>,
+) -> Vec<Anonymous> {
+    // The type a method symbol (`Port#find().`) is a member of.
+    let owner = |method: &str| {
+        let cut = method.rfind('#')?;
+        let owner = &method[..=cut];
+        (method.ends_with(").") && is_type(owner)).then(|| owner.to_string())
+    };
+    let mut classes: BTreeMap<String, (Vec<&str>, Vec<String>)> = BTreeMap::new();
+    for information in &document.symbols {
+        let symbol = information.symbol.as_str();
+        if !is_local(symbol) || local_types.contains(&local_key(path, symbol)) {
+            continue;
+        }
+        let implemented: Vec<String> = information
+            .relationships
+            .iter()
+            .filter(|r| r.is_implementation)
+            .filter_map(|r| owner(&r.symbol))
+            .collect();
+        if implemented.is_empty() {
+            continue;
+        }
+        let class = match information.enclosing_symbol.as_str() {
+            "" => symbol.to_string(),
+            enclosing => enclosing.to_string(),
+        };
+        let (methods, types) = classes.entry(class).or_default();
+        methods.push(symbol);
+        for t in implemented {
+            if !types.contains(&t) {
+                types.push(t);
+            }
+        }
+    }
+    let mut found: Vec<Anonymous> = classes
+        .into_values()
+        .filter_map(|(methods, implements)| {
+            let line = document
+                .occurrences
+                .iter()
+                .filter(|o| {
+                    o.symbol_roles & DEFINITION != 0 && methods.contains(&o.symbol.as_str())
+                })
+                .map(|o| line_of(o) + 1)
+                .min()?;
+            Some(Anonymous { line, implements })
+        })
+        .collect();
+    found.sort_by_key(|anonymous| anonymous.line);
+    found
+}
+
+/// Whether the index names `symbol` only within its document.
+fn is_local(symbol: &str) -> bool {
+    symbol.starts_with("local ")
+}
+
+/// The key of a symbol the index names only within the document at `path`: no
+/// symbol of another document has it.
+fn local_key(path: &str, symbol: &str) -> String {
+    format!("{symbol} in {path}")
 }
 
 /// A name whose definition the index marks as standing for other names: a type
@@ -296,18 +385,48 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
         let encoding = document.position_encoding.enum_value_or_default();
         let mut source: Option<Vec<String>> = None;
         let declared = registry::of(&path).is_some_and(|language| language.relations.declared());
+        let supertypes = match declared {
+            true => supertypes_of(document, &path),
+            false => Vec::new(),
+        };
+        // The types the index names locally that declare a supertype.
+        let local_types: HashSet<String> = supertypes
+            .iter()
+            .filter(|(sub, _)| is_local(sub))
+            .map(|(sub, _)| sub.clone())
+            .collect();
+        let anonymous = match declared {
+            true => anonymous_of(document, &path, &local_types),
+            false => Vec::new(),
+        };
         let mut parsed = Document {
             path,
+            anonymous,
             encoding,
             aliases: aliases_of(document),
-            supertypes: match declared {
-                true => supertypes_of(document),
-                false => Vec::new(),
-            },
+            supertypes,
             ..Document::default()
         };
         for occurrence in &document.occurrences {
-            if occurrence.symbol.is_empty() || occurrence.symbol.starts_with("local ") {
+            if is_local(&occurrence.symbol)
+                && occurrence.symbol_roles & DEFINITION != 0
+                && local_types.contains(&local_key(&parsed.path, &occurrence.symbol))
+            {
+                // Its name is the text the definition stands on.
+                let lines = source.get_or_insert_with(|| read_lines(root, &parsed.path));
+                let name = single_line(occurrence)
+                    .and_then(|(line, start, end)| {
+                        between(lines.get(line)?, (start, end), encoding)
+                    })
+                    .unwrap_or("a local class")
+                    .to_string();
+                parsed.types.push(DefinedType {
+                    symbol: local_key(&parsed.path, &occurrence.symbol),
+                    name,
+                    line: line_of(occurrence) + 1,
+                });
+            }
+            if occurrence.symbol.is_empty() || is_local(&occurrence.symbol) {
                 continue;
             }
             if occurrence.symbol_roles & DEFINITION != 0 {
@@ -334,16 +453,7 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
             } else {
                 let spelled = match occurrence.symbol.starts_with(UNNAMED_NPM) {
                     true => {
-                        let lines = source.get_or_insert_with(|| {
-                            // An import is ASCII, whatever the encoding of the file. One
-                            // that cannot be read spells nothing; the scan reports it.
-                            String::from_utf8_lossy(
-                                &std::fs::read(root.join(&parsed.path)).unwrap_or_default(),
-                            )
-                            .lines()
-                            .map(str::to_string)
-                            .collect()
-                        });
+                        let lines = source.get_or_insert_with(|| read_lines(root, &parsed.path));
                         spelled_module(lines, occurrence, encoding)
                             .filter(|module| installed(&root.join(&parsed.path), module))
                     }
@@ -360,6 +470,16 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
         documents.push(parsed);
     }
     Ok(documents)
+}
+
+/// The lines of the file at `path` under `root`. A name or an import is ASCII,
+/// whatever the encoding of the file; one that cannot be read has no lines, and
+/// the scan reports it.
+fn read_lines(root: &Path, path: &str) -> Vec<String> {
+    String::from_utf8_lossy(&std::fs::read(root.join(path)).unwrap_or_default())
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 /// Whether the npm package of `module` is in a `node_modules` above `file`,
@@ -677,24 +797,44 @@ impl<'a> Indexed<'a> {
         }
     }
 
-    /// The files that define the names `document` refers to on `lines`: a checked
-    /// file, or an excluded one for a name no checked file defines.
-    pub fn files_referred(
+    /// The files that define the names `document` writes on `lines`, and the names
+    /// an alias among them stands for: a checked file, or an excluded one for a name
+    /// no checked file defines. With `through_alias`, none unless one is an alias.
+    pub fn files_written(
         &self,
         document: &Document,
         lines: &std::ops::RangeInclusive<usize>,
+        through_alias: bool,
+    ) -> BTreeSet<String> {
+        let written: Vec<&str> = document
+            .references
+            .iter()
+            .filter(|reference| lines.contains(&reference.line))
+            .map(|reference| reference.symbol.as_str())
+            .collect();
+        if through_alias && !written.iter().any(|s| self.aliases.contains_key(s)) {
+            return BTreeSet::new();
+        }
+        self.files_defining(written)
+    }
+
+    /// The files that define `symbols`, and the names an alias among them stands for.
+    pub fn files_defining<'s>(
+        &self,
+        symbols: impl IntoIterator<Item = &'s str>,
     ) -> BTreeSet<String> {
         let lookup = Lookup {
             mine: &self.checked,
             others: &self.hidden,
         };
-        document
-            .references
-            .iter()
-            .filter(|reference| lines.contains(&reference.line))
-            .filter_map(|reference| lookup.defined_at(&reference.symbol))
-            .map(str::to_string)
-            .collect()
+        let mut files = BTreeSet::new();
+        for symbol in symbols {
+            files.extend(lookup.defined_at(symbol));
+            for (stood, _) in self.stood_for(symbol) {
+                files.extend(lookup.defined_at(stood));
+            }
+        }
+        files.into_iter().map(str::to_string).collect()
     }
 
     /// Every type of the checked documents that implements or extends another of
@@ -715,9 +855,10 @@ impl<'a> Indexed<'a> {
             for document in documents {
                 for defined in &document.types {
                     let symbol = defined.symbol.as_str();
-                    if definitions.defined.get(symbol) != Some(&document.path.as_str())
-                        || types.contains_key(symbol)
-                    {
+                    // A local type is its document's alone.
+                    let defined_here = is_local(symbol)
+                        || definitions.defined.get(symbol) == Some(&document.path.as_str());
+                    if !defined_here || types.contains_key(symbol) {
                         continue;
                     }
                     types.insert(
@@ -3099,6 +3240,16 @@ mod tests {
         occurrences: &[At],
         symbols: Vec<scip::types::SymbolInformation>,
     ) -> Document {
+        parsed_in(Path::new("/nonexistent"), path, occurrences, symbols)
+    }
+
+    /// A document at `path` under `root` of `occurrences` and `symbols`, parsed.
+    fn parsed_in(
+        root: &Path,
+        path: &str,
+        occurrences: &[At],
+        symbols: Vec<scip::types::SymbolInformation>,
+    ) -> Document {
         let mut index = Index::new();
         let mut document = scip::types::Document::new();
         document.relative_path = path.to_string();
@@ -3113,9 +3264,7 @@ mod tests {
         document.symbols = symbols;
         index.documents.push(document);
         let bytes = index.write_to_bytes().unwrap();
-        parse(&bytes, Path::new("/nonexistent"), Path::new(""))
-            .unwrap()
-            .remove(0)
+        parse(&bytes, root, Path::new("")).unwrap().remove(0)
     }
 
     fn information(
@@ -3372,6 +3521,78 @@ mod tests {
         assert_eq!(
             implementations_beside(&checked, &excluded),
             ["fx/sql.py:3 SqlRepo -> fx/ports.py:3 Port [fx/base.py:3]"]
+        );
+    }
+
+    #[test]
+    fn a_type_the_index_names_locally_implements_too() {
+        let ts = "scip-typescript npm . . ";
+        let port = format!("{ts}src/`port.ts`/Port#");
+        let source = "import { Port } from \"./port\";\n\nexport function make(): Port {\n  class Inner implements Port {\n    run() {}\n  }\n  return new Inner();\n}\n";
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/local.ts"), source).unwrap();
+        let mut method = scip::types::SymbolInformation::new();
+        method.symbol = "local 1".to_string();
+        let mut overrides = scip::types::Relationship::new();
+        overrides.symbol = format!("{ts}src/`port.ts`/Port#run().");
+        overrides.is_implementation = true;
+        overrides.is_reference = true;
+        method.relationships.push(overrides);
+        let documents = [
+            type_at("src/port.ts", &port, &[]),
+            parsed_in(
+                root.path(),
+                "src/local.ts",
+                &[
+                    // `class Inner implements Port` inside `make`.
+                    ([3, 8, 13], Some([3, 2, 5]), "local 0", true),
+                    ([4, 4, 7], None, "local 1", true),
+                ],
+                vec![supertype_of("local 0", &[(&port, false)]), method],
+            ),
+        ];
+        assert_eq!(
+            implementations_of(&documents),
+            ["src/local.ts:4 Inner -> src/port.ts:3 Port []"]
+        );
+    }
+
+    #[test]
+    fn a_class_the_index_gives_no_type_is_told_by_its_methods() {
+        let java = "scip-java maven maven/fx/fx 0 fx/";
+        let (port, find, other) = (
+            format!("{java}Port#"),
+            format!("{java}Port#find()."),
+            format!("{java}Port#other()."),
+        );
+        // `new Port() { find() {…} other() {…} }`: the class is `local 0`, which the
+        // index never defines, and each method relates to the method it implements.
+        let method = |symbol: &str, implements: &str| {
+            let mut information = scip::types::SymbolInformation::new();
+            information.symbol = symbol.to_string();
+            information.enclosing_symbol = "local 0".to_string();
+            let mut relationship = scip::types::Relationship::new();
+            relationship.symbol = implements.to_string();
+            relationship.is_implementation = true;
+            relationship.is_reference = true;
+            information.relationships.push(relationship);
+            information
+        };
+        let document = parsed_at(
+            "cache/Anonymous.java",
+            &[
+                ([7, 26, 30], Some([7, 12, 50]), "local 1", true),
+                ([8, 26, 31], Some([8, 12, 50]), "local 2", true),
+            ],
+            vec![method("local 1", &find), method("local 2", &other)],
+        );
+        assert_eq!(
+            document.anonymous,
+            [Anonymous {
+                line: 8,
+                implements: vec![port],
+            }]
         );
     }
 

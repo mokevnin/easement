@@ -467,16 +467,32 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         if checked
             && policy.implementations
             && let Some(lang::registry::Relations::Declared {
-                unrelated: Some(unrelated),
+                unrelated,
+                anonymous,
             }) = lang::registry::of(&document.path).map(|language| &language.relations)
         {
-            for declaration in (unrelated.find)(&document.path, &source) {
-                unrelated_declarations.push(lang::UnrelatedDeclaration {
-                    file: document.path.clone(),
-                    line: *declaration.start(),
-                    because: unrelated.because,
-                    writes: index.files_referred(document, &declaration),
-                });
+            if let Some(unrelated) = unrelated {
+                for span in (unrelated.find)(&document.path, &source) {
+                    let writes = index.files_written(document, &span.lines, span.through_alias);
+                    if !writes.is_empty() {
+                        unrelated_declarations.push(lang::UnrelatedDeclaration {
+                            file: document.path.clone(),
+                            line: *span.lines.start(),
+                            because: unrelated.because,
+                            writes,
+                        });
+                    }
+                }
+            }
+            if let Some(because) = anonymous {
+                for class in &document.anonymous {
+                    unrelated_declarations.push(lang::UnrelatedDeclaration {
+                        file: document.path.clone(),
+                        line: class.line,
+                        because,
+                        writes: index.files_defining(class.implements.iter().map(String::as_str)),
+                    });
+                }
             }
         }
         let Some(written) = lang::registry::of(&document.path)

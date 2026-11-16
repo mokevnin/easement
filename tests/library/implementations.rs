@@ -69,6 +69,14 @@ fn java_implementations_outside_the_listed_components_fail_at_their_definition()
         said.contains("because: ports are implemented only by adapters and test doubles"),
         "{said}"
     );
+    // An anonymous class has no type in the index: a gap, at its method.
+    assert_eq!(
+        implementation_gaps(&checked),
+        [(
+            "`implementation` cannot judge 1 java declarations that write a name of ports outside the components that may implement it: scip-java gives an anonymous class no type, only its methods relations to the methods they implement, so whether they implement or extend a type of ports was not checked".to_string(),
+            vec![format!("{java}/cache/Anonymous.java")],
+        )]
+    );
     pinned(|| insta::assert_snapshot!("check_implementations_text", said));
 }
 
@@ -126,6 +134,8 @@ fn typescript_classes_outside_the_listed_components_fail_at_their_definition() {
                 "src/cache/cached-repo.ts:3 {}",
                 outside("cache", "CachedRepo", port)
             ),
+            // A class inside a function, which the index names locally.
+            format!("src/cache/factory.ts:4 {}", outside("cache", "Inner", port)),
             format!("src/sql/sql-repo.ts:3 {}", outside("sql", "SqlRepo", port)),
         ]
     );
@@ -194,7 +204,7 @@ fn implementation_gaps(checked: &Checked) -> Vec<(String, Vec<String>)> {
 }
 
 /// The policy of the gap projects: `ports` may be implemented by `adapters`.
-const GAP_POLICY: &str = "version: 1\ncomponents:\n  ports: { in: ports }\n  adapters: { in: adapters }\n  cache: { in: cache }\n  other: { in: other, optional: true }\nrules:\n  ports: { allow_implementers: [adapters] }\n  adapters: { may_depend_on: [ports] }\n  cache: { may_depend_on: [ports] }\n";
+const GAP_POLICY: &str = "version: 1\ncomponents:\n  ports: { in: ports }\n  adapters: { in: adapters }\n  cache: { in: cache }\n  other: { in: other, optional: true }\nrules:\n  ports: { allow_implementers: [adapters] }\n  adapters: { may_depend_on: [ports] }\n  cache: { may_depend_on: [ports, adapters] }\n";
 
 /// What the index cannot tell is no clean verdict: a Go type implements an
 /// interface by its methods, which declares nothing, so every Go file outside
@@ -300,15 +310,16 @@ fn a_rust_test_part_of_an_allowed_file_is_an_evidence_gap() {
     );
 }
 
-/// scip-typescript gives an interface declaration no relations: one that writes
-/// a name of `ports` outside the allowed components is a gap at its line.
+/// scip-typescript gives an interface declaration, and a class that implements a
+/// type alias, no relations: one that writes a name of `ports`, directly or
+/// through an alias, outside the allowed components is a gap at its line.
 #[test]
 fn a_typescript_interface_that_writes_the_component_is_an_evidence_gap() {
     let (_tmp, root) = project(&[
         ("easement.yml", GAP_POLICY),
         (
             "ports/port.ts",
-            "export interface Port {\n  run(): void;\n}\n",
+            "export interface Port {\n  run(): void;\n}\n\nexport type PortAlias = Port;\n",
         ),
         (
             "cache/read-only.ts",
@@ -316,7 +327,13 @@ fn a_typescript_interface_that_writes_the_component_is_an_evidence_gap() {
         ),
         (
             "adapters/pg.ts",
-            "import { Port } from \"../ports/port\";\n\nexport interface PgPort extends Port {}\n",
+            "import { Port } from \"../ports/port\";\n\nexport interface PgPort extends Port {}\n\nexport type Wrapped = Port;\n",
+        ),
+        // `implements` of a type alias, of `ports` or of another component that
+        // stands for a type of `ports`.
+        (
+            "cache/alias.ts",
+            "import { PortAlias } from \"../ports/port\";\nimport { Wrapped } from \"../adapters/pg\";\n\nexport class ViaAlias implements PortAlias {\n  run() {}\n}\n\nexport class ViaWrapped implements Wrapped {\n  run() {}\n}\n",
         ),
     ]);
     let checked = check_with(&root, |o| o.require_evidence = true);
@@ -334,16 +351,21 @@ fn a_typescript_interface_that_writes_the_component_is_an_evidence_gap() {
         .expect("an implementation gap");
     assert_eq!(
         gap.message,
-        "`implementation` cannot judge 1 typescript declarations that write a name of ports outside the components that may implement it: scip-typescript gives an interface declaration or a class expression no relations, so whether they implement or extend a type of ports was not checked"
+        "`implementation` cannot judge 3 typescript declarations that write a name of ports outside the components that may implement it: scip-typescript gives an interface declaration, a class expression or a class that implements a type alias no relations, so whether they implement or extend a type of ports was not checked",
+        "{gap:?}"
     );
     pinned(|| insta::assert_json_snapshot!("implementation_gap", gap));
-    assert_eq!(gap.files, ["cache/read-only.ts"]);
+    assert_eq!(gap.files, ["cache/alias.ts", "cache/read-only.ts"]);
     assert_eq!(
         gap.places
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        ["cache/read-only.ts:7"]
+        [
+            "cache/alias.ts:4",
+            "cache/alias.ts:8",
+            "cache/read-only.ts:7"
+        ]
     );
 }
 

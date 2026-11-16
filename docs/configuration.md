@@ -180,7 +180,10 @@ An implementation is not a dependency: it holds whether or not the code writes t
 
 - a Go type implements an interface by having its methods, which declares nothing, so once the component defines Go types every Go file outside the components that may implement it is a gap;
 - the indexes of Rust, PHP and Ruby, and the adapters of Kotlin and Swift, declare no implementations; implementing a type writes its name there, so a file of these languages that depends on the component, outside the components that may implement it, is a gap;
-- scip-typescript gives an interface declaration or a class expression no relations, so one that writes a name of the component, outside the components that may implement it, is a gap at its line.
+- scip-typescript gives an interface declaration, a class expression or a class that implements a type alias no relations, so one that writes a name of the component (directly, or through an alias that stands for it), outside the components that may implement it, is a gap at its line;
+- scip-java gives an anonymous class no type, only its methods relations to the methods they implement, so one whose method implements a method of a type of the component, outside the components that may implement it, is a gap at that method. An anonymous class that implements no method of it is not seen.
+
+A class declared inside a function or a method is judged as any other.
 
 A supertype outside the project (a framework base class) is not judged. The violation can be suppressed inline at the definition and is recorded by the baseline; `--diff` keeps it when the definition of the type, of the supertype or of any type between them changed, so a base class that comes to implement the port fails its subclasses. `review` lists a component added to or removed from `allow_implementers`, or the key set or unset, as a constraint loosened or tightened, and `explain` shows the component's `allow_implementers`.
 
