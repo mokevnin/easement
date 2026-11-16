@@ -33,7 +33,7 @@ pub fn violations(
         let Some(home) = map.component_of(&sub.file) else {
             continue;
         };
-        if limit.admits(map, &sub.file, &supertype.file) {
+        if limit.admits(map, Some(home), &sub.file, &supertype.file) {
             continue;
         }
         let owner = limit.owner;
@@ -79,12 +79,12 @@ impl<'a> Limit<'a> {
         Some(Self { owner, listed })
     }
 
-    /// Whether a type in `file` may implement a type of the owner in `owned`: a file
-    /// of no component is not judged, one of the owner only as the same-component
-    /// grant takes it (the same instance, the same slice), and any file of a listed
-    /// component may.
-    fn admits(&self, map: &ComponentMap, file: &str, owned: &str) -> bool {
-        match map.component_of(file) {
+    /// Whether a type in `file`, or in the part of it that belongs to `home`, may
+    /// implement a type of the owner in `owned`: code of no component is not
+    /// judged, the owner's only as the same-component grant takes it (the same
+    /// instance, the same slice), and any code of a listed component may.
+    fn admits(&self, map: &ComponentMap, home: Option<&str>, file: &str, owned: &str) -> bool {
+        match home {
             None => true,
             Some(home) if home == self.owner => decision::same_component(map, file, owned),
             Some(home) => self.listed.iter().any(|c| c == home),
@@ -132,8 +132,11 @@ pub fn gaps(config: &Config, map: &ComponentMap, scanned: &Scanned) -> Vec<Unjud
             let Target::Internal(unit) = &dep.target else {
                 continue;
             };
+            // A part of a file (a Rust test module) is judged as the component it is in.
             let owned = unit.key();
-            if map.component_of(&owned) == Some(owner) && !limit.admits(map, &file, &owned) {
+            let home = map.component_of_unit(&dep.from);
+            if map.component_of_unit(unit) == Some(owner) && !limit.admits(map, home, &file, &owned)
+            {
                 depending
                     .entry(language)
                     .or_insert((because, BTreeSet::new()))
@@ -172,7 +175,12 @@ pub fn gaps(config: &Config, map: &ComponentMap, scanned: &Scanned) -> Vec<Unjud
                 .files
                 .iter()
                 .filter(|file| registry::of(file).is_some_and(|l| l.name == language))
-                .filter(|file| owned.iter().any(|owned| !limit.admits(map, file, owned)))
+                .filter(|file| {
+                    let home = map.component_of(file);
+                    owned
+                        .iter()
+                        .any(|owned| !limit.admits(map, home, file, owned))
+                })
                 .collect();
             if !files.is_empty() {
                 found.push(
@@ -193,7 +201,12 @@ pub fn gaps(config: &Config, map: &ComponentMap, scanned: &Scanned) -> Vec<Unjud
         for declaration in scanned.unrelated {
             let outside = declaration.writes.iter().any(|owned| {
                 map.component_of(owned) == Some(owner)
-                    && !limit.admits(map, &declaration.file, owned)
+                    && !limit.admits(
+                        map,
+                        map.component_of(&declaration.file),
+                        &declaration.file,
+                        owned,
+                    )
             });
             if outside && let Some(language) = registry::of(&declaration.file) {
                 declarations

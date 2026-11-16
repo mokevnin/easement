@@ -268,6 +268,38 @@ fn rust_files_that_depend_on_the_component_are_an_evidence_gap() {
     );
 }
 
+/// A part of a file is judged as the component it belongs to: a Rust test module
+/// in `adapters` is `tests`, which may not implement `ports`.
+#[test]
+fn a_rust_test_part_of_an_allowed_file_is_an_evidence_gap() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  ports: { in: ports }\n  adapters: { in: adapters }\nrules:\n  ports: { allow_implementers: [adapters] }\n  adapters: { may_depend_on: [ports] }\n  tests: { may_depend_on: [ports, adapters] }\ntests: auto\n",
+        ),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"lib.rs\"\n",
+        ),
+        ("lib.rs", "pub mod adapters;\npub mod ports;\n"),
+        ("ports/mod.rs", "pub trait Port {\n    fn run(&self);\n}\n"),
+        (
+            "adapters/mod.rs",
+            "pub struct Pg;\n\nimpl crate::ports::Port for Pg {\n    fn run(&self) {}\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::ports::Port;\n\n    struct Fake;\n\n    impl Port for Fake {\n        fn run(&self) {}\n    }\n}\n",
+        ),
+    ]);
+    let checked = check(&root);
+    assert_eq!(
+        implementation_gaps(&checked),
+        [(
+            "`implementation` cannot judge 1 rust files that depend on ports outside the components that may implement it: the rust index declares no implementations, so whether a type in them implements a type of ports was not checked".to_string(),
+            vec!["adapters/mod.rs".to_string()],
+        )],
+        "{}",
+        text(&checked)
+    );
+}
+
 /// scip-typescript gives an interface declaration no relations: one that writes
 /// a name of `ports` outside the allowed components is a gap at its line.
 #[test]
@@ -351,6 +383,10 @@ fn diff_baseline_and_suppression_hold_implementations() {
     );
     let violation = &report["violations"][0];
     assert_eq!(violation["target"], "SqlRepo implements Port", "{report}");
+    assert_eq!(
+        violation["provenance"],
+        serde_json::json!({ "field": "rules.ports.allow_implementers", "input": "easement.yml" })
+    );
     assert_eq!(
         violation["evidence"],
         serde_json::json!([

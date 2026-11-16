@@ -185,6 +185,9 @@ pub fn attribute(policy: &Policy, map: &ComponentMap, deps: &[Dep], violations: 
                 decision::refusal_site(config, &v.from, &v.to, &Refusal::Prohibited { reach: true })
             }
             RuleId::Cycle => Some(crate::policy::Site::of_key("no_cycles")),
+            RuleId::Implementation if config.rules.contains_key(&v.to) => Some(
+                crate::policy::Site::of_rule(config, &v.to, ".allow_implementers"),
+            ),
             _ => at
                 .get(&(v.file.clone(), v.line))
                 .into_iter()
