@@ -159,6 +159,41 @@ fn symbols_are_checked_through_imports() {
     assert!(report.contains("3 violation(s)"), "{report}");
 }
 
+#[test]
+fn explain_lists_the_own_forbidden_names_and_the_public_symbols_open_to_a_file() {
+    let (_tmp, root) = fixture("symbols");
+    let explained = |path: &str| commands::explain(&config(&root), &root.join(path)).unwrap();
+    let handler = explained("internal/handlers/books.go");
+    assert_eq!(
+        serde_json::to_value(&handler).unwrap()["symbols"],
+        serde_json::json!({
+            "forbidden": [{
+                "name": "db.Client",
+                "because": "use db.Scoped so every query is tenant-bound",
+                "provenance": { "field": "rules.handler.forbid_symbol[0]", "input": "easement.yml" },
+            }],
+            "allowed": [],
+            "public": [{
+                "component": "db",
+                "names": ["Scoped", "Tx"],
+                "because": "handlers get a scoped client, never the raw one",
+                "provenance": { "field": "components.db.public_symbols", "input": "easement.yml" },
+            }],
+        })
+    );
+    let said = handler.text().unwrap();
+    for line in [
+        "  may not use: db.Client (use db.Scoped so every query is tenant-bound)\n",
+        "  public symbols of db: Scoped, Tx (handlers get a scoped client, never the raw one)\n",
+    ] {
+        assert!(said.contains(line), "{line}: {said}");
+    }
+    // `db` may depend on nothing and forbids no name: no symbol rule binds it.
+    let db = explained("internal/db/db.go");
+    assert!(serde_json::to_value(&db).unwrap().get("symbols").is_none());
+    pinned(|| insta::assert_snapshot!("explain_symbols_own_text", said));
+}
+
 /// A member of a type (a method here) is named after the type it is used through,
 /// in every language whose uses of names easement reads: the ban fires on that
 /// member and on no other of the type.
@@ -360,6 +395,80 @@ fn a_top_level_forbidden_name_may_be_used_only_by_the_components_it_allows() {
 }
 
 #[test]
+fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
+    let (_tmp, root) = fixture("symbols_allow");
+    let explained = |path: &str| commands::explain(&config(&root), &root.join(path)).unwrap();
+    let banned = "example.com/app/internal/domain/tags.DeleteIn";
+    let because =
+        "deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first";
+    // The component `allow` lets in.
+    let usecase = explained("internal/usecase/tagdeletion/delete.go");
+    assert_eq!(
+        serde_json::to_value(&usecase).unwrap()["symbols"],
+        serde_json::json!({
+            "forbidden": [],
+            "allowed": [{
+                "name": banned,
+                "allow": "usecase",
+                "because": because,
+                "provenance": { "field": "forbid_symbol[0].allow[0]", "input": "easement.yml" },
+            }],
+        })
+    );
+    let said = usecase.text().unwrap();
+    assert!(
+        said.contains(&format!(
+            "  may use, although forbid_symbol forbids it: {banned} (allow `usecase`: {because})\n"
+        )),
+        "{said}"
+    );
+    // Another component, and the one that defines the name.
+    for path in ["internal/web/handler.go", "internal/domain/tags/sweep.go"] {
+        let other = explained(path);
+        assert_eq!(
+            serde_json::to_value(&other).unwrap()["symbols"],
+            serde_json::json!({
+                "forbidden": [{
+                    "name": banned,
+                    "only": ["usecase"],
+                    "because": because,
+                    "provenance": { "field": "forbid_symbol[0]", "input": "easement.yml" },
+                }],
+                "allowed": [],
+            }),
+            "{path}"
+        );
+        let said = other.text().unwrap();
+        assert!(
+            said.contains(&format!(
+                "  may not use: {banned} (only usecase may: {because})\n"
+            )),
+            "{path}: {said}"
+        );
+    }
+    // A file of no component is bound by the top-level list alone.
+    let unowned = explained("internal/lib/lib.go");
+    assert_eq!(
+        serde_json::to_value(&unowned).unwrap()["symbols"]["forbidden"][0]["name"],
+        banned
+    );
+    let lib = unowned.text().unwrap();
+    assert!(
+        lib.contains("component: none, so only the top-level lists judge it\n"),
+        "{lib}"
+    );
+    assert!(
+        lib.contains(&format!("  may not use: {banned} (only usecase may")),
+        "{lib}"
+    );
+    pinned(|| {
+        insta::assert_snapshot!("explain_symbols_allow_text", said);
+        insta::assert_json_snapshot!("explain_symbols_allow_json", usecase);
+        insta::assert_snapshot!("explain_symbols_unowned_text", lib);
+    });
+}
+
+#[test]
 fn a_top_level_forbidden_name_may_be_used_in_the_paths_it_allows() {
     let (_tmp, root) = fixture("symbols_allow_in");
     let own = TempDir::new().unwrap();
@@ -389,48 +498,66 @@ fn a_top_level_forbidden_name_may_be_used_in_the_paths_it_allows() {
 fn explain_names_the_forbidden_names_a_path_is_allowed() {
     let (_tmp, root) = fixture("symbols_allow_in");
     let explained = |path: &str| commands::explain(&config(&root), &root.join(path)).unwrap();
+    let client = "example.com/app/internal/store.Client";
+    let because = "a module takes the scoped client it is given";
     let mailing = explained("internal/modules/mailing/send.go");
     assert_eq!(
-        serde_json::to_value(&mailing).unwrap()["symbol_grants"],
-        serde_json::json!([{
-            "name": "example.com/app/internal/store.Client",
-            "allow_in": "internal/modules/mailing/*.go",
-            "because": "a module takes the scoped client it is given",
-            "provenance": { "field": "forbid_symbol[0].allow_in[1]", "input": "easement.yml" },
-        }])
+        serde_json::to_value(&mailing).unwrap()["symbols"],
+        serde_json::json!({
+            "forbidden": [],
+            "allowed": [{
+                "name": client,
+                "allow_in": "internal/modules/mailing/*.go",
+                "because": because,
+                "provenance": { "field": "forbid_symbol[0].allow_in[1]", "input": "easement.yml" },
+            }],
+        })
     );
     let said = mailing.text().unwrap();
     assert!(
-        said.contains(
-            "  may use, although forbid_symbol forbids it: example.com/app/internal/store.Client (allow_in `internal/modules/mailing/*.go`: a module takes the scoped client it is given)\n"
-        ),
+        said.contains(&format!(
+            "  may use, although forbid_symbol forbids it: {client} (allow_in `internal/modules/mailing/*.go`: {because})\n"
+        )),
         "{said}"
     );
-    // Another package of the component: no grant to show.
+    // Another package of the component: forbidden, with who may.
     let reports = explained("internal/modules/reports/report.go");
-    assert!(
-        serde_json::to_value(&reports)
-            .unwrap()
-            .get("symbol_grants")
-            .is_none()
+    assert_eq!(
+        serde_json::to_value(&reports).unwrap()["symbols"]["forbidden"][0]["only"],
+        serde_json::json!([
+            "wiring",
+            "internal/modules/billing",
+            "internal/modules/mailing/*.go"
+        ])
     );
-    assert!(!reports.text().unwrap().contains("forbid_symbol"));
+    assert!(
+        !reports
+            .text()
+            .unwrap()
+            .contains("although forbid_symbol forbids it")
+    );
     pinned(|| {
         insta::assert_snapshot!("explain_symbol_grants_text", said);
         insta::assert_json_snapshot!("explain_symbol_grants_json", mailing);
     });
-    // A component whose own rule forbids the name keeps it forbidden: no grant to show.
+    // A component whose own rule forbids the name keeps it forbidden, as its own
+    // rule writes it, with the reason of the rule: no grant to show.
     let policy = fs::read_to_string(config(&root)).unwrap().replace(
         "may_depend_on: [store]",
-        "may_depend_on: [store]\n    forbid_symbol: [store.Client]",
+        "may_depend_on: [store]\n    forbid_symbol: [store.Client]\n    because: modules get a scoped client",
     );
     fs::write(config(&root), policy).unwrap();
     let banned = explained("internal/modules/mailing/send.go");
-    assert!(
-        serde_json::to_value(&banned)
-            .unwrap()
-            .get("symbol_grants")
-            .is_none()
+    assert_eq!(
+        serde_json::to_value(&banned).unwrap()["symbols"],
+        serde_json::json!({
+            "forbidden": [{
+                "name": "store.Client",
+                "because": "modules get a scoped client",
+                "provenance": { "field": "rules.modules.forbid_symbol[0]", "input": "easement.yml" },
+            }],
+            "allowed": [],
+        })
     );
 }
 

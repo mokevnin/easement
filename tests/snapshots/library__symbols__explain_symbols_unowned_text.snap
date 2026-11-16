@@ -1,0 +1,7 @@
+---
+source: tests/library/symbols.rs
+expression: lib
+---
+internal/lib/lib.go
+  component: none, so only the top-level lists judge it
+  may not use: example.com/app/internal/domain/tags.DeleteIn (only usecase may: deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first)

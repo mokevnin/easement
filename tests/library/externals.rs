@@ -190,7 +190,7 @@ fn explain_names_the_top_level_forbidden_modules_of_a_path_and_what_lets_it_use_
     let unowned = explained("scripts/Seed.kt").text().unwrap();
     assert!(
         unowned.starts_with(
-            "scripts/Seed.kt\n  component: none, so only the top-level lists judge it; of the external modules:\n"
+            "scripts/Seed.kt\n  component: none, so only the top-level lists judge it\n"
         ),
         "{unowned}"
     );

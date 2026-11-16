@@ -12,6 +12,7 @@ use crate::config::{
 };
 use crate::decision::{self, ClauseId, Grant, Refusal};
 use crate::policy::{InputKind, Policy, Provenance, Site};
+use crate::symbols::own_ban;
 
 /// The decision on every dependency of one component on another, before
 /// the paths of a dependency are known.
@@ -378,6 +379,19 @@ fn reason(because: Option<&str>) -> String {
     because.map(|b| format!(": {b}")).unwrap_or_default()
 }
 
+/// ` (only web and src/cli may: why)`: who may use what an item of a top-level
+/// list forbids, then its reason; nothing without either.
+pub fn who_may_and_why(who: &[String], because: Option<&str>) -> String {
+    let who: Vec<&str> = who.iter().map(String::as_str).collect();
+    let only = (!who.is_empty()).then(|| format!("only {} may", crate::check::in_words(&who)));
+    let said: Vec<&str> = only.as_deref().into_iter().chain(because).collect();
+    if said.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", said.join(": "))
+    }
+}
+
 /// The line of a named surface: its paths and who it is open to.
 pub fn surface_line(surface: &SurfaceView) -> String {
     format!(
@@ -435,6 +449,215 @@ pub fn listed_or_nothing(items: &[String]) -> String {
 
 fn strings(items: Vec<&str>) -> Vec<String> {
     items.into_iter().map(str::to_string).collect()
+}
+
+/// The symbol rules as they bind one file: what `explain` gives for it.
+#[derive(Debug, Default, Serialize)]
+pub struct FileSymbols {
+    /// The names the file may not use: the items of the top-level `forbid_symbol`
+    /// that let neither its component nor its path in, then those of the own
+    /// `forbid_symbol` of its component. A name in both lists is given once.
+    pub forbidden: Vec<ForbiddenSymbol>,
+    /// The names of the top-level `forbid_symbol` it may use all the same.
+    pub allowed: Vec<AllowedSymbol>,
+    /// The names each component the file's component may depend on opens to it,
+    /// for those that have `public_symbols`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub public: Vec<PublicSymbols>,
+}
+
+/// A name a file may not use.
+#[derive(Debug, Serialize)]
+pub struct ForbiddenSymbol {
+    /// The name, as the item writes it.
+    pub name: String,
+    /// Who may use it, the components and then the paths, as the top-level item writes them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
+    /// The reason a violation gives: the item's, else that of the rule that lists it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub because: Option<String>,
+    /// Where the policy writes the item.
+    pub provenance: Provenance,
+}
+
+/// A name of the top-level `forbid_symbol` that a file may use all the same.
+#[derive(Debug, Serialize)]
+pub struct AllowedSymbol {
+    /// The name, as the item writes it.
+    pub name: String,
+    /// The component of the file that `allow` lets in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow: Option<String>,
+    /// The `allow_in` pattern that matches the file, the first one the item writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_in: Option<String>,
+    /// The reason the item gives.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub because: Option<String>,
+    /// Where the policy writes what lets the file in: the item of `allow` (with the
+    /// glob or set it comes through) or the `allow_in` pattern.
+    pub provenance: Provenance,
+}
+
+/// The names a component opens to the others through `public_symbols`.
+#[derive(Debug, Serialize)]
+pub struct PublicSymbols {
+    /// The component that defines the names.
+    pub component: String,
+    /// The only names of it other components may use.
+    pub names: Vec<String>,
+    /// The reason of the component, which a violation gives.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub because: Option<String>,
+    /// Where the policy writes its `public_symbols`.
+    pub provenance: Provenance,
+}
+
+impl FileSymbols {
+    /// Whether no symbol rule binds the file.
+    pub fn is_empty(&self) -> bool {
+        self.forbidden.is_empty() && self.allowed.is_empty() && self.public.is_empty()
+    }
+
+    /// How the symbol rules bind `rel`, whose component may depend on those of
+    /// `grants`, decided as the scan judges a use (`symbols::judge`): the top-level
+    /// list before the component's own, `allow` before `allow_in`, and the
+    /// component's own `forbid_symbol` over an `allow_in` pattern. Nothing binds a
+    /// file whose uses the scan does not read.
+    pub fn of(policy: &Policy, map: &ComponentMap, rel: &str, grants: &[Toward]) -> Self {
+        let mut found = Self::default();
+        if decision::unread(map, rel).is_some() {
+            return found;
+        }
+        let config = &policy.config;
+        let key = Ban::Symbol.key();
+        let owner = map.component_of(rel);
+        let mut seen = std::collections::BTreeSet::new();
+        for (item, listed) in config.forbid_symbol.iter().enumerate() {
+            let name = listed.name();
+            let because = listed.because().map(str::to_string);
+            if let Some(component) = owner.filter(|component| listed.allows(component)) {
+                let site = Site::of_top_allow(config, key, item, component)
+                    .unwrap_or_else(|| Site::in_key(key, format!("{key}[{item}].allow")));
+                found.allowed.push(AllowedSymbol {
+                    name: name.to_string(),
+                    allow: Some(component.to_string()),
+                    allow_in: None,
+                    because,
+                    provenance: policy.provenance(&site),
+                });
+                continue;
+            }
+            if let Some((at, pattern)) = map.granted_in(Ban::Symbol, item, rel) {
+                // The component's own list still forbids it: it is given below.
+                if owner.is_none_or(|component| own_ban(config, component, name).is_none()) {
+                    found.allowed.push(AllowedSymbol {
+                        name: name.to_string(),
+                        allow: None,
+                        allow_in: Some(pattern.to_string()),
+                        because,
+                        provenance: policy.provenance(&Site::in_key(
+                            key,
+                            format!("{key}[{item}].allow_in[{at}]"),
+                        )),
+                    });
+                }
+                continue;
+            }
+            if seen.insert(name) {
+                found.forbidden.push(ForbiddenSymbol {
+                    name: name.to_string(),
+                    only: listed.who_may(),
+                    because,
+                    provenance: policy.provenance(&Site::in_key(key, format!("{key}[{item}]"))),
+                });
+            }
+        }
+        if let Some((component, rule)) =
+            owner.and_then(|component| Some((component, config.rules.get(component)?)))
+        {
+            for (i, listed) in rule.forbid_symbol.iter().enumerate() {
+                if !seen.insert(listed.name()) {
+                    continue;
+                }
+                found.forbidden.push(ForbiddenSymbol {
+                    name: listed.name().to_string(),
+                    only: Vec::new(),
+                    because: listed
+                        .because()
+                        .or(rule.because.as_deref())
+                        .map(str::to_string),
+                    provenance: policy.provenance(&Site::of_rule(
+                        config,
+                        component,
+                        &format!(".{key}[{i}]"),
+                    )),
+                });
+            }
+        }
+        found.public = grants
+            .iter()
+            .filter_map(|Toward { to, .. }| {
+                let component = &config.components[to];
+                Some(PublicSymbols {
+                    component: to.clone(),
+                    names: component.public_symbols.clone()?,
+                    because: component.because.clone(),
+                    provenance: policy.provenance(&Site::of_entry(
+                        "components",
+                        to,
+                        format!("components.{to}.public_symbols"),
+                    )),
+                })
+            })
+            .collect();
+        found
+    }
+
+    /// Its lines in text.
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        // Names that say the same, who may use them and why, share a line.
+        for alike in self
+            .forbidden
+            .chunk_by(|a, b| (&a.only, &a.because) == (&b.only, &b.because))
+        {
+            let names: Vec<&str> = alike.iter().map(|f| f.name.as_str()).collect();
+            let first = &alike[0];
+            lines.push(format!(
+                "may not use: {}{}",
+                names.join(", "),
+                who_may_and_why(&first.only, first.because.as_deref())
+            ));
+        }
+        for allowed in &self.allowed {
+            let granted = match (&allowed.allow, &allowed.allow_in) {
+                (Some(component), _) => format!("allow `{component}`"),
+                (None, Some(pattern)) => format!("allow_in `{pattern}`"),
+                (None, None) => String::new(),
+            };
+            lines.push(format!(
+                "may use, although forbid_symbol forbids it: {} ({granted}{}{})",
+                allowed.name,
+                through(Some(&allowed.provenance)),
+                reason(allowed.because.as_deref())
+            ));
+        }
+        for public in &self.public {
+            let because = public
+                .because
+                .as_deref()
+                .map(|b| format!(" ({b})"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "public symbols of {}: {}{because}",
+                public.component,
+                listed_or_nothing(&public.names)
+            ));
+        }
+        lines
+    }
 }
 
 /// The policy as loaded.
@@ -755,25 +978,12 @@ impl ResolvedPolicy {
             ("forbid_external", &self.forbid_external),
         ] {
             for ban in bans {
-                let who: Vec<&str> = ban
-                    .allow
-                    .iter()
-                    .chain(&ban.allow_in)
-                    .map(String::as_str)
-                    .collect();
-                let only =
-                    (!who.is_empty()).then(|| format!("only {} may", crate::check::in_words(&who)));
-                let said: Vec<&str> = only
-                    .as_deref()
-                    .into_iter()
-                    .chain(ban.because.as_deref())
-                    .collect();
-                let said = if said.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", said.join(": "))
-                };
-                out.push_str(&format!("{key}: {}{said}\n", ban.name));
+                let who: Vec<String> = ban.allow.iter().chain(&ban.allow_in).cloned().collect();
+                out.push_str(&format!(
+                    "{key}: {}{}\n",
+                    ban.name,
+                    who_may_and_why(&who, ban.because.as_deref())
+                ));
             }
         }
         if !self.examples.is_empty() {

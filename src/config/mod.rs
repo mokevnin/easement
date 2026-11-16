@@ -414,6 +414,16 @@ impl ForbiddenName {
         }
     }
 
+    /// Who may use the name all the same: the components, then the paths, as written.
+    pub fn who_may(&self) -> Vec<String> {
+        self.allow()
+            .into_iter()
+            .chain(self.allow_in())
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     /// Whether `component` may use the name although it is forbidden.
     pub fn allows(&self, component: &str) -> bool {
         self.allow()
