@@ -228,6 +228,9 @@ pub struct ScanPolicy {
     pub uses_symbols: bool,
     /// The names `forbid_symbol` lists, without the qualifier.
     pub watched_symbols: BTreeSet<String>,
+    /// Whether a rule sets `allow_implementers`, which reads the declarations an
+    /// index gives no relations.
+    pub implementations: bool,
 }
 
 impl ScanPolicy {
@@ -244,6 +247,7 @@ impl ScanPolicy {
             tests,
             uses_symbols,
             watched_symbols,
+            implementations,
         } = self;
         let mut keys = Vec::new();
         let mut differ = |key, differs: bool| {
@@ -264,6 +268,10 @@ impl ScanPolicy {
         differ(
             "public_symbols",
             !watched && *uses_symbols != other.uses_symbols,
+        );
+        differ(
+            "allow_implementers",
+            *implementations != other.implementations,
         );
         keys
     }
@@ -780,6 +788,10 @@ impl Config {
             tests: self.tests.is_some(),
             uses_symbols: self.uses_symbols(),
             watched_symbols: self.forbidden_symbol_names(),
+            implementations: self
+                .rules
+                .values()
+                .any(|rule| rule.allow_implementers.is_some()),
         }
     }
 
@@ -980,6 +992,16 @@ mod tests {
             base.differences(&head),
             ["exclude", "tests", "forbid_symbol"]
         );
+        // The declarations an index gives no relations are read only for
+        // `allow_implementers`, whatever it lists.
+        let limited = scan(
+            "version: 1\ncomponents:\n  a: { in: a }\nexclude: [gen]\nrules:\n  a: { allow_implementers: [] }\n",
+        );
+        assert_eq!(base.differences(&limited), ["allow_implementers"]);
+        let listed = scan(
+            "version: 1\ncomponents:\n  a: { in: a }\n  b: { in: b }\nexclude: [gen]\nrules:\n  a: { allow_implementers: [b] }\n",
+        );
+        assert!(limited.differences(&listed).is_empty());
     }
 
     #[test]

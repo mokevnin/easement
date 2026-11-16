@@ -449,18 +449,20 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         let source = String::from_utf8_lossy(&bytes);
         if checked {
             suppressions.extend(suppress::parse(&document.path, &source));
-            if let Some(lang::registry::Relations::Declared {
+        }
+        if checked
+            && policy.implementations
+            && let Some(lang::registry::Relations::Declared {
                 unrelated: Some(unrelated),
             }) = lang::registry::of(&document.path).map(|language| &language.relations)
-            {
-                for declaration in (unrelated.find)(&document.path, &source) {
-                    unrelated_declarations.push(lang::UnrelatedDeclaration {
-                        file: document.path.clone(),
-                        line: *declaration.start(),
-                        because: unrelated.because,
-                        writes: index.files_referred(document, &declaration),
-                    });
-                }
+        {
+            for declaration in (unrelated.find)(&document.path, &source) {
+                unrelated_declarations.push(lang::UnrelatedDeclaration {
+                    file: document.path.clone(),
+                    line: *declaration.start(),
+                    because: unrelated.because,
+                    writes: index.files_referred(document, &declaration),
+                });
             }
         }
         let Some(written) = lang::registry::of(&document.path)
