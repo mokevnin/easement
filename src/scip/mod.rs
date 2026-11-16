@@ -1520,12 +1520,12 @@ type ModulePath<'a> = (&'a Option<String>, &'a [String]);
 
 /// What the symbol rules call `name`, a name defined in `file`: `None` for a module,
 /// and for a name the index gives no call of.
-fn called_in(name: &Name, file: &str) -> Option<crate::lang::Called> {
+fn called_in(name: &Name, file: &str) -> Option<crate::lang::Qualified> {
     let called = name
         .called
         .as_ref()
         .filter(|_| name.shape != Shape::Module)?;
-    Some(crate::lang::Called {
+    Some(crate::lang::Qualified {
         qualifier: called.qualifier_in(Some(file)),
         name: called.name.clone(),
     })

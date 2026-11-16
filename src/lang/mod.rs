@@ -243,7 +243,20 @@ pub struct Aliased {
     /// The symbol of the name the alias stands for; `None` for a module.
     pub symbol: Option<String>,
     /// What the symbol rules call that name, when it is one the index gives a call of.
-    pub called: Option<Called>,
+    pub called: Option<Qualified>,
+}
+
+impl Aliased {
+    /// The use as a line that refers to the target: the name the alias stands for
+    /// there, or, for a module, the module named without a name of it.
+    pub fn mention(&self) -> Mention {
+        Mention {
+            line: self.line,
+            symbol: self.symbol.clone(),
+            called: self.called.clone(),
+            bare: self.symbol.is_none(),
+        }
+    }
 }
 
 /// Where an alias is defined.
@@ -287,7 +300,7 @@ pub struct Mention {
     pub symbol: Option<String>,
     /// For a name: what the symbol rules call it. `None` for a module, and for a
     /// name the index gives no such call of.
-    pub called: Option<Called>,
+    pub called: Option<Qualified>,
     /// For a module: the file writes no name through any module of this file,
     /// neither on a line that names one nor a name defined in one, so the index
     /// gives none of its uses to a name (`import "./polyfill"`). `false` for a name.
@@ -296,13 +309,13 @@ pub struct Mention {
 
 /// A name as the symbol rules call it: the qualifier and the name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Called {
+pub struct Qualified {
     pub qualifier: String,
     pub name: String,
 }
 
 /// `qualifier.name`, as a symbol violation's target writes a name.
-impl std::fmt::Display for Called {
+impl std::fmt::Display for Qualified {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}", self.qualifier, self.name)
     }
