@@ -43,6 +43,11 @@ impl Project {
         &self.policy.config
     }
 
+    /// The config file, relative to the root with `/` separators, as violations name it.
+    pub fn config_file(&self) -> Result<String> {
+        Ok(relpath::slash(self.config_path.strip_prefix(&self.root)?))
+    }
+
     pub fn baseline_path(&self) -> PathBuf {
         self.root.join(self.config().baseline_file())
     }
@@ -96,7 +101,7 @@ impl Project {
             manifests::undeclared(config, &map, &self.root, &scan.deps, &scan.all_files);
         violations.extend(undeclared.violations);
         let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
-        let config_file = crate::relpath::slash(self.config_path.strip_prefix(&self.root)?);
+        let config_file = self.config_file()?;
         violations.extend(matching::unmatched(
             policy,
             &map,

@@ -82,6 +82,12 @@ enum Command {
         /// (`--diff`, `--component`, `--scope`), `uncovered_ok` and the cache never do.
         #[arg(long)]
         require_evidence: bool,
+        /// Fail on each `may_depend_on` entry no import uses, the ones `suggest --patch`
+        /// would drop, as rule `unused-allowance` at its line; entries next to files no
+        /// indexer covered are only listed. Judges the whole project, so not with
+        /// `--diff`, `--component` or `--scope`.
+        #[arg(long, conflicts_with_all = ["diff", "component", "scope"])]
+        suggest: bool,
     },
     /// Record current violations as legalized debt in the baseline file. Once
     /// the file exists, it only shrinks: new violations are listed, not written.
@@ -171,11 +177,6 @@ enum Command {
         /// comments and reasons alone. Apply it with `git apply` or `patch -p1`.
         #[arg(long)]
         patch: bool,
-        /// Exit 1 when `may_depend_on` has entries no import uses (the ones `--patch` would
-        /// drop), so that CI keeps the allowances from piling up. Entries next to files no
-        /// indexer covered are only reported, never fail it.
-        #[arg(long, conflicts_with = "patch")]
-        check: bool,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text, conflicts_with = "patch")]
         format: OutputFormat,
         #[command(flatten)]
@@ -231,6 +232,12 @@ enum Command {
         config: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Say instead, for each index, whether a run would read it from the cache, and
+        /// why not, without reading an index or running an indexer. Exit code 0: every
+        /// index is cached, 3: one is not. For CI, to set up an indexer's toolchain only
+        /// when it has to run.
+        #[arg(long)]
+        cache: bool,
     },
     /// Print the JSON Schema of easement.yml.
     Schema,
@@ -328,6 +335,7 @@ fn run(cli: Cli) -> Result<Outcome> {
             scope,
             cache: flags,
             require_evidence,
+            suggest,
         } => {
             let options = CheckOptions {
                 config,
@@ -336,6 +344,7 @@ fn run(cli: Cli) -> Result<Outcome> {
                 components: component,
                 paths: scope,
                 require_evidence,
+                suggest,
             };
             if watching {
                 watch(&options, format, cache(flags)).map(Outcome::from)
@@ -425,7 +434,6 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Suggest {
             config,
             patch,
-            check,
             cache: flags,
             format,
         } => {
@@ -443,7 +451,7 @@ fn run(cli: Cli) -> Result<Outcome> {
                 || Ok(found.text()),
                 || Ok(serde_json::to_string_pretty(&found)?),
             )?;
-            Ok(found.outcome(check))
+            Ok(Outcome::Passed)
         }
         Command::Review {
             base,
@@ -484,7 +492,32 @@ fn run(cli: Cli) -> Result<Outcome> {
             print_as(format, || Ok(report.text()), || Ok(report.json()))?;
             Ok(Outcome::from(report.passed()))
         }
-        Command::Doctor { config, format } => {
+        Command::Doctor {
+            config,
+            format,
+            cache: true,
+        } => {
+            let indexing = Indexing {
+                cache: CacheUse::On,
+                cache_dir: easement::default_cache_dir(&environment),
+                environment,
+                jobs,
+            };
+            let probed = commands::doctor_cache(&config, &indexing)?;
+            print!(
+                "{}",
+                match format {
+                    OutputFormat::Text => probed.text(),
+                    OutputFormat::Json => probed.json(),
+                }
+            );
+            Ok(probed.outcome())
+        }
+        Command::Doctor {
+            config,
+            format,
+            cache: false,
+        } => {
             let diagnosed = commands::doctor(&config, &environment)?;
             print!(
                 "{}",
@@ -522,6 +555,7 @@ fn main() -> ExitCode {
         Ok(Outcome::Passed) => ExitCode::SUCCESS,
         Ok(Outcome::Failed) => ExitCode::from(1),
         Ok(Outcome::EvidenceRequired) => ExitCode::from(4),
+        Ok(Outcome::NotCached) => ExitCode::from(3),
         Err(err) => {
             let red = anstyle::AnsiColor::Red.on_default().bold();
             anstream::eprintln!("easement: {red}error{red:#}: {err:#}");

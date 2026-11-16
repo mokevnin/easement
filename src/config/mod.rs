@@ -135,8 +135,8 @@ pub struct Config {
     /// `tests: auto` takes. Other manifests are not read yet.
     #[serde(default)]
     pub packages: bool,
-    /// Rules whose violations are reported as warnings and do not fail the check. Rules about
-    /// the config, such as unmatched, cannot be listed.
+    /// Rules whose violations are reported as warnings and do not fail the check. Mistakes in
+    /// the config, unmatched and example, cannot be listed; unused-allowance can.
     #[serde(default)]
     #[schemars(schema_with = "schema::warn_schema")]
     pub warn: Vec<String>,

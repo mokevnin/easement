@@ -56,14 +56,14 @@ impl Config {
         }
         for name in &self.warn {
             match RuleId::ALL.into_iter().find(|r| r.as_str() == name) {
-                Some(rule) if rule.is_config_rule() => bail!(
+                Some(rule) if !rule.warnable() => bail!(
                     "`{name}` is about the config, so it cannot be a warning: fix the config instead"
                 ),
                 Some(_) => {}
                 None => {
                     let known: Vec<&str> = RuleId::ALL
                         .into_iter()
-                        .filter(|r| !r.is_config_rule())
+                        .filter(|r| r.warnable())
                         .map(RuleId::as_str)
                         .collect();
                     bail!(

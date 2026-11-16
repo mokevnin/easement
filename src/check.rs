@@ -58,6 +58,8 @@ pub enum RuleId {
     Undeclared,
     /// A policy example that the policy decides otherwise than it expects.
     Example,
+    /// A `may_depend_on` entry no import uses, under `check --suggest`.
+    UnusedAllowance,
 }
 
 impl RuleId {
@@ -84,6 +86,7 @@ impl RuleId {
             RuleId::Diagram => "diagram",
             RuleId::Undeclared => "undeclared",
             RuleId::Example => "example",
+            RuleId::UnusedAllowance => "unused-allowance",
         }
     }
 
@@ -91,6 +94,18 @@ impl RuleId {
     /// stands behind them, so `--diff` and `--scope` keep them, and the
     /// baseline never accepts them.
     pub fn is_config_rule(self) -> bool {
+        self.is_config_mistake() || self == RuleId::UnusedAllowance
+    }
+
+    /// Rules that `warn` may list: those about the code, and an allowance no import
+    /// uses, which the policy may keep a while on purpose.
+    pub fn warnable(self) -> bool {
+        !self.is_config_mistake()
+    }
+
+    /// A pattern that matches nothing, or an example the policy decides otherwise:
+    /// a mistake in the policy, to fix rather than tolerate.
+    fn is_config_mistake(self) -> bool {
         matches!(self, RuleId::Unmatched | RuleId::Example)
     }
 
@@ -117,6 +132,7 @@ impl RuleId {
         RuleId::Diagram,
         RuleId::Undeclared,
         RuleId::Example,
+        RuleId::UnusedAllowance,
     ];
 
     /// Rules that an inline comment can suppress.

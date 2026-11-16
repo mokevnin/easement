@@ -97,7 +97,6 @@ fn a_dependency_the_diagram_does_not_draw_fails() {
     );
     // `service -> repository` is drawn, but no import stands for it.
     let found = commands::suggest(&config(&root), &mut cache()).unwrap();
-    assert_eq!(found.outcome(false), Outcome::Passed);
     let said = found.text();
     assert!(
         said.contains(

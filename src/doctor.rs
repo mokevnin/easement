@@ -1,8 +1,9 @@
-//! `easement doctor`: which indexers the project needs, and whether they can run.
+//! `easement doctor`: which indexers the project needs, and whether they can run;
+//! under `--cache`, which of their indexes a run would read from the cache.
 
 use serde::Serialize;
 
-use crate::indexer::Diagnosis;
+use crate::indexer::{Diagnosis, Probe};
 
 #[derive(Serialize)]
 struct Report<'a> {
@@ -62,6 +63,53 @@ pub fn text(diagnoses: &[Diagnosis]) -> String {
         "\neasement doctor: ok\n"
     } else {
         "\neasement doctor: something is missing\n"
+    });
+    out
+}
+
+#[derive(Serialize)]
+struct CacheReport<'a> {
+    /// Whether every index is in the cache, so that a run indexes nothing.
+    cached: bool,
+    indexes: &'a [Probe],
+}
+
+/// Whether every index is in the cache, so that a run indexes nothing.
+pub fn all_cached(probes: &[Probe]) -> bool {
+    probes.iter().all(|p| p.cached)
+}
+
+pub fn cache_json(probes: &[Probe]) -> String {
+    let report = CacheReport {
+        cached: all_cached(probes),
+        indexes: probes,
+    };
+    serde_json::to_string_pretty(&report).expect("report serializes") + "\n"
+}
+
+pub fn cache_text(probes: &[Probe]) -> String {
+    if probes.is_empty() {
+        return "No source files of a language that needs an indexer.\n".to_string();
+    }
+    let mut out = String::new();
+    for p in probes {
+        match p.reason {
+            None => out.push_str(&format!("{} ({}): cached\n", p.language, p.dir)),
+            Some(reason) => out.push_str(&format!(
+                "{} ({}): would run: {}\n",
+                p.language,
+                p.dir,
+                reason.text()
+            )),
+        }
+    }
+    let missing = probes.iter().filter(|p| !p.cached).count();
+    out.push_str(&if all_cached(probes) {
+        "\neasement doctor --cache: every index is cached, so a run indexes nothing\n".to_string()
+    } else {
+        format!(
+            "\neasement doctor --cache: {missing} index(es) not cached; a run indexes them, so set up the toolchains of their indexers first\n"
+        )
     });
     out
 }

@@ -1,0 +1,9 @@
+---
+source: tests/library/suggest.rs
+expression: text(&checked)
+---
+easement.yml:11: `app` -> `old`: allowed in may_depend_on but never depended on (remove to tighten the rules) [unused-allowance]
+
+1 index(es) came from the cache, keyed on the project files, the indexer and its environment but not on dependencies outside the project; if those changed without a lock file, run with `--no-cache` to index again
+
+easement failed: 1 violation(s), 0 stale, 0 legalized; 3 files, 1 internal deps

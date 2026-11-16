@@ -22,6 +22,8 @@ pub enum Outcome {
     Failed,
     /// No violations, but `--require-evidence` and an evidence gap.
     EvidenceRequired,
+    /// `doctor --cache`: an index is not in the cache, so a run would index again.
+    NotCached,
 }
 
 impl From<bool> for Outcome {
@@ -48,6 +50,8 @@ pub struct CheckOptions {
     pub paths: Vec<String>,
     /// `--require-evidence`: an evidence gap fails a run without violations.
     pub require_evidence: bool,
+    /// `--suggest`: a `may_depend_on` entry no import uses fails as `unused-allowance`.
+    pub suggest: bool,
 }
 
 impl CheckOptions {
@@ -60,6 +64,7 @@ impl CheckOptions {
             components: Vec::new(),
             paths: Vec::new(),
             require_evidence: false,
+            suggest: false,
         }
     }
 }
@@ -71,6 +76,9 @@ pub struct Checked {
     pub coverage: report::Coverage,
     pub diff: Option<diff::Diff>,
     pub require_evidence: bool,
+    /// Under `--suggest`, the `may_depend_on` entries no import uses that it does not
+    /// fail on, since it cannot tell whether they can go.
+    pub spared: suggest::Spared,
 }
 
 impl Checked {
@@ -82,6 +90,7 @@ impl Checked {
             coverage: &self.coverage,
             diff: self.diff.as_ref(),
             require_evidence: self.require_evidence,
+            spared: &self.spared,
         }
     }
 
@@ -98,6 +107,13 @@ impl Checked {
 
 /// Checks the project as `options` ask, reading the indexes through `cache`.
 pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked> {
+    if options.suggest
+        && (options.diff.is_some() || !options.paths.is_empty() || !options.components.is_empty())
+    {
+        anyhow::bail!(
+            "`--suggest` judges the whole project, since whether an allowance is used depends on every import; drop `--diff`, `--scope` and `--component`, or `--suggest`"
+        );
+    }
     let project = Project::open(&options.config)?;
     let scope = scope::Scope::new(project.config(), &options.components, &options.paths)?;
     let scan = project.scan(cache)?;
@@ -118,7 +134,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         })
         .transpose()?;
     let Analysis {
-        violations,
+        mut violations,
         mut stats,
         map,
         edges,
@@ -126,6 +142,18 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         unindexed,
         ..
     } = project.analysis(scan)?;
+    let mut spared = suggest::Spared::default();
+    if options.suggest {
+        let (unused, left) = suggest::unused_allowances(
+            &project.policy,
+            &map,
+            &edges,
+            &unindexed,
+            &project.config_file()?,
+        );
+        violations.extend(unused);
+        spared = left;
+    }
     let current = violations.iter().map(check::Violation::key).collect();
     // Cycles and limits come from the whole project, so a violation belongs to
     // the scope when any file behind it does.
@@ -176,6 +204,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         coverage,
         diff,
         require_evidence: options.require_evidence,
+        spared,
     })
 }
 
@@ -490,11 +519,49 @@ impl Diagnosed {
 /// Whether the indexers the project needs are installed and can run in `environment`.
 pub fn doctor(config: &Path, environment: &indexer::Environment) -> Result<Diagnosed> {
     let project = Project::open(config)?;
-    let files = scan::project_files(&project.root, &project.config().scan_policy())?;
+    let walked = scan::project_files(&project.root, &project.config().scan_policy())?;
     Ok(Diagnosed(indexer::diagnose(
         &project.root,
-        &files,
+        &walked.files,
         environment,
+    )))
+}
+
+/// The answer of `easement doctor --cache`: for each index a run would read,
+/// whether it is in the cache, and why not.
+pub struct Probed(pub Vec<indexer::Probe>);
+
+impl Probed {
+    pub fn text(&self) -> String {
+        doctor::cache_text(&self.0)
+    }
+
+    pub fn json(&self) -> String {
+        doctor::cache_json(&self.0)
+    }
+
+    /// `NotCached` while a run would index anything again.
+    pub fn outcome(&self) -> Outcome {
+        if doctor::all_cached(&self.0) {
+            Outcome::Passed
+        } else {
+            Outcome::NotCached
+        }
+    }
+}
+
+/// Which indexes a run of the project would read from the cache as `indexing` keeps
+/// it, by the key the run computes; it reads no index and judges nothing.
+pub fn doctor_cache(config: &Path, indexing: &indexer::Indexing) -> Result<Probed> {
+    let project = Project::open(config)?;
+    let policy = project.config().scan_policy();
+    let walked = scan::project_files(&project.root, &policy)?;
+    Ok(Probed(indexer::probe(
+        &project.root,
+        &walked.files,
+        &walked.excluded,
+        indexing,
+        &policy.indexers,
     )))
 }
 

@@ -86,6 +86,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `diagram` | a dependency between components has no arrow in the `diagram` |
 | `undeclared` | with `manifests`, a file imports an external module the nearest manifest does not declare |
 | `example` | a policy example in `examples` gets another decision than it expects, or names a path no component owns |
+| `unused-allowance` | under `check --suggest`, a `may_depend_on` entry no import uses, the ones `suggest --patch` would remove |
 
 In `--format json` each violation carries `rule`, `file`, `line`, `from`, `to`, `target` and `message`, and, where they apply: `evidence`, every dependency behind it as `{file, line}`; `reexported_by`, for a name written through a module of another component that re-exports it, or through an alias another component defines, those components; `chain`, for a `reach` or a `cycle`, the shortest chain of dependencies that shows it as typed `hops` `{file, line, from_component, to_component}` (`null` for a file of no component), labelled `witness: shortest` because it is one chain among those that may exist; and `provenance`, where the policy writes the clause it breaks: the field path in the merged policy, such as `rules.web.must_not_depend_on[1]`, the policy `input` that defines it, relative to the root (a file `extends` names, for one), and, when a glob or a set brings the clause to the component, `through`: those globs and sets as written, the key of the rule first (`["api-*", "@drivers"]`).
 
@@ -542,7 +543,7 @@ An example that gets another decision fails as `example` at its line in the file
 warn: [reach, metric]
 ```
 
-The violations of the rules in `warn` do not fail the check, and the baseline does not record them. They are still reported: in the text under their own heading, in `--format json` as `warnings`, in SARIF with level `warning` and on GitHub as `::warning`; JUnit leaves them out. Use it to try a new rule on a codebase before it gates, or for debt the team tolerates for now. A config that `extends` another inherits its `warn`, and a `warn` of its own replaces it. A rule about the config, such as `unmatched`, cannot be a warning.
+The violations of the rules in `warn` do not fail the check, and the baseline does not record them. They are still reported: in the text under their own heading, in `--format json` as `warnings`, in SARIF with level `warning` and on GitHub as `::warning`; JUnit leaves them out. Use it to try a new rule on a codebase before it gates, or for debt the team tolerates for now. A config that `extends` another inherits its `warn`, and a `warn` of its own replaces it. A mistake in the config, `unmatched` or `example`, cannot be a warning; `unused-allowance`, an allowance kept a while on purpose, can.
 
 ### Suppressions
 

@@ -1,0 +1,8 @@
+---
+source: tests/library/cache.rs
+expression: warm.text()
+---
+go (.): cached
+typescript (.): cached
+
+easement doctor --cache: every index is cached, so a run indexes nothing

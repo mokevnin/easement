@@ -39,10 +39,9 @@ fn explain_json(root: &Path, path: &str) -> serde_json::Value {
     serde_json::to_value(commands::explain(&config(root), &root.join(path)).unwrap()).unwrap()
 }
 
-/// What `suggest` says of the project at `root`, as text, and that it passes.
+/// What `suggest` says of the project at `root`, as text.
 fn suggest_text(root: &Path) -> String {
     let found = commands::suggest(&config(root), &mut cache()).unwrap();
-    assert_eq!(found.outcome(false), Outcome::Passed);
     found.text()
 }
 
@@ -248,7 +247,6 @@ fn every_command_says_when_its_indexes_came_from_the_cache() {
         .text();
     assert!(why.contains("Cached: "), "{why}");
     let found = commands::suggest(&config, &mut own()).unwrap();
-    assert_eq!(found.outcome(false), Outcome::Passed);
     assert!(
         found.text().contains("came from the cache"),
         "{}",

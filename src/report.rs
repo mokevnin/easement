@@ -8,6 +8,7 @@ use crate::baseline::{Severity, Verdict};
 use crate::check::{self, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
+use crate::suggest::Spared;
 
 #[derive(Serialize)]
 struct JsonReport<'a> {
@@ -32,6 +33,9 @@ struct JsonReport<'a> {
     cached: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<DiffInfo<'a>>,
+    /// Under `--suggest`, the unused `may_depend_on` entries it does not fail on.
+    #[serde(flatten)]
+    spared: &'a Spared,
     stats: &'a Stats,
 }
 
@@ -435,6 +439,8 @@ pub struct Report<'a> {
     pub diff: Option<&'a Diff>,
     /// `--require-evidence`: an evidence gap fails a run without violations.
     pub require_evidence: bool,
+    /// Under `--suggest`, the unused `may_depend_on` entries it does not fail on.
+    pub spared: &'a Spared,
 }
 
 /// How many files a text list names before it counts the rest.
@@ -583,6 +589,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            spared,
         } = self;
         let report = JsonReport {
             passed: self.passed(),
@@ -600,6 +607,7 @@ impl Report<'_> {
                 policy_changed: &d.attribution.policy_changed,
                 in_full: &d.attribution.in_full,
             }),
+            spared,
             stats,
         };
         serde_json::to_string_pretty(&report).expect("report serializes")
@@ -623,6 +631,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            spared,
         } = self;
         let mut out = String::new();
         if let Some(d) = diff {
@@ -676,6 +685,10 @@ impl Report<'_> {
         }
         if !stats.frameworks.is_empty() {
             section(&mut out, &framework_lines(&stats.frameworks));
+        }
+        let spared = spared.text();
+        if !spared.is_empty() {
+            section(&mut out, &spared);
         }
         let gaps = gap_lines(
             &coverage.evidence_gaps,
@@ -799,6 +812,12 @@ impl Report<'_> {
             }
             notes.push((level, text, &gap.files));
         }
+        notes.extend(
+            self.spared
+                .notes()
+                .into_iter()
+                .map(|note| (ResultLevel::Note, note, &[][..])),
+        );
         if let Some(note) = cache_note(self.stats) {
             notes.push((ResultLevel::Note, note, &[][..]));
         }
@@ -990,6 +1009,7 @@ impl Report<'_> {
             coverage,
             diff,
             require_evidence: _,
+            spared,
         } = self;
         let mut out = String::new();
         for (severity, v) in verdict.reported() {
@@ -1011,6 +1031,13 @@ impl Report<'_> {
                 "::error title={}::{}\n",
                 escape_property(&format!("easement {STALE}")),
                 escape_command(&stale_message(k))
+            ));
+        }
+        for note in spared.notes() {
+            out.push_str(&format!(
+                "::notice title={}::{}\n",
+                escape_property("easement unused-allowance"),
+                escape_command(&note)
             ));
         }
         if !stats.new_dependencies.is_empty() {
@@ -1125,6 +1152,12 @@ const STALE: &str = "stale-baseline";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A run without `--suggest`, which spares no allowance.
+    static NO_SPARED: Spared = Spared {
+        unreliable: Vec::new(),
+        held: Vec::new(),
+    };
 
     #[test]
     fn an_external_module_of_a_file_of_no_component_is_described_as_unowned_files() {
@@ -1250,6 +1283,7 @@ mod tests {
             coverage: &Coverage::default(),
             diff: None,
             require_evidence: false,
+            spared: &NO_SPARED,
         }
         .github();
         assert!(out.starts_with(
@@ -1295,6 +1329,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                spared: &NO_SPARED,
             }
             .json(),
         )
@@ -1310,6 +1345,7 @@ mod tests {
             coverage: &Coverage::default(),
             diff: None,
             require_evidence: false,
+            spared: &NO_SPARED,
         }
         .text();
         assert!(out.contains(cached), "{out}");
@@ -1321,6 +1357,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                spared: &NO_SPARED,
             }
             .json(),
         )
@@ -1333,6 +1370,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                spared: &NO_SPARED,
             }
             .text()
             .contains("--no-cache")
@@ -1358,6 +1396,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence: false,
+            spared: &NO_SPARED,
         }
         .text();
         assert!(
@@ -1415,6 +1454,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence,
+            spared: &NO_SPARED,
         };
         assert!(report(false).passed());
         let github = report(false).github();
@@ -1468,6 +1508,7 @@ mod tests {
             coverage: &coverage,
             diff: None,
             require_evidence,
+            spared: &NO_SPARED,
         };
         let sarif: serde_json::Value = serde_json::from_str(&report(false).sarif()).unwrap();
         let said: Vec<(String, String)> =
@@ -1518,6 +1559,7 @@ mod tests {
             coverage: &Coverage::of_check(&stats, vec![], vec![]),
             diff: None,
             require_evidence: false,
+            spared: &NO_SPARED,
         }
         .github();
         assert!(
@@ -1539,6 +1581,7 @@ mod tests {
                 coverage: &Coverage::default(),
                 diff: None,
                 require_evidence: false,
+                spared: &NO_SPARED,
             }
             .github()
             .contains("::warning")
@@ -1556,6 +1599,7 @@ mod tests {
             coverage: &narrowed,
             diff: None,
             require_evidence: false,
+            spared: &NO_SPARED,
         }
         .github();
         assert!(

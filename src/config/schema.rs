@@ -70,11 +70,12 @@ pub(super) fn config_schema_extras(schema: &mut Schema) {
     }
 }
 
-/// `warn` takes the rules about the code, not those about the config.
+/// `warn` takes the rules about the code and `unused-allowance`, not the
+/// mistakes in the config.
 pub(super) fn warn_schema(_: &mut SchemaGenerator) -> Schema {
     let rules: Vec<&str> = RuleId::ALL
         .into_iter()
-        .filter(|rule| !rule.is_config_rule())
+        .filter(|rule| rule.warnable())
         .map(RuleId::as_str)
         .collect();
     json_schema!({

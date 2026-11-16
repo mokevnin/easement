@@ -64,6 +64,17 @@ Inputs: `version`, `config`, `working-directory`, `diff`, `format` (`github` by 
     restore-keys: easement-${{ runner.os }}-
 ```
 
+A gate that sets up the indexers' toolchains (`pnpm install`, the Go module cache) only when an index is not cached asks `easement doctor --cache` first, which exits 3 on a miss without reading an index, then judges the code and the unused allowances in one pass:
+
+```yaml
+- id: cache
+  run: easement doctor --cache
+  continue-on-error: true
+- if: steps.cache.outcome == 'failure'
+  run: pnpm install --frozen-lockfile
+- run: easement check --suggest
+```
+
 With SARIF:
 
 ```yaml

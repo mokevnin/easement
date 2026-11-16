@@ -2,14 +2,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use crate::check::Edge;
-use crate::commands::Outcome;
+use crate::check::{Edge, RuleId, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
-use crate::decision::{self, Refusal};
+use crate::decision::{self, Grant, Refusal};
 use crate::lang::Dep;
-use crate::relpath;
+use crate::policy::Policy;
 use crate::report::{self, EvidenceGap};
+use crate::{patch, relpath};
+
+/// What `suggest` says of a `may_depend_on` entry no import uses, and what
+/// `check --suggest` says of each.
+const REMOVABLE: &str =
+    "allowed in may_depend_on but never depended on (remove to tighten the rules)";
 
 /// What the current dependency graph says about the config: allowances nothing
 /// uses, dependencies nothing allows, stale diagram arrows, and components that
@@ -46,12 +51,6 @@ pub struct Report {
 }
 
 impl Report {
-    /// How `easement suggest` ends: under `check`, an allowance no import uses
-    /// fails it.
-    pub fn outcome(&self, check: bool) -> Outcome {
-        Outcome::from(!check || self.suggestions.removable.is_empty())
-    }
-
     /// The suggestions, then the gaps and the cache note.
     pub fn text(&self) -> String {
         let mut out = self.suggestions.text();
@@ -76,6 +75,144 @@ pub struct Pair {
     pub to: String,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub unread: BTreeMap<String, usize>,
+}
+
+/// The heading of the `may_depend_on` entries that no import among the files read
+/// uses, next to files no indexer read.
+const UNRELIABLE: &str = "Not depended on among the indexed files, but some files were not indexed, so the dependency may be there (do not remove without checking):";
+
+impl Pair {
+    /// `from -> to (not indexed: n file(s) of c)`, for an entry next to unread files.
+    pub fn unreliable_line(&self) -> String {
+        let unread = self
+            .unread
+            .iter()
+            .map(|(c, n)| format!("{n} file(s) of {c}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{} -> {} (not indexed: {unread})", self.from, self.to)
+    }
+}
+
+/// The heading of the `may_depend_on` entries no import uses that come through a
+/// glob or a set, which `suggest --patch` leaves alone.
+const HELD: &str = "Not depended on by these components, but allowed through a glob or a set that covers others too, so `check --suggest` does not fail on them (remove one by hand if no component it covers needs it):";
+
+/// The `may_depend_on` entries no import uses that `check --suggest` does not fail
+/// on, since it cannot tell whether they can go: what a reader must not take as judged.
+#[derive(Debug, Default, Serialize)]
+pub struct Spared {
+    /// Next to files no indexer read: the dependency may be in one of them.
+    #[serde(
+        rename = "unreliable_allowances",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub unreliable: Vec<Pair>,
+    /// Allowed through a glob rule key or a set, which may let in another component
+    /// that uses it.
+    #[serde(rename = "held_allowances", skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<Pair>,
+}
+
+impl Spared {
+    /// Each entry under its heading, as the text report gives them.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        section(
+            &mut out,
+            UNRELIABLE,
+            self.unreliable.iter().map(Pair::unreliable_line).collect(),
+        );
+        section(
+            &mut out,
+            HELD,
+            self.held
+                .iter()
+                .map(|p| format!("{} -> {}", p.from, p.to))
+                .collect(),
+        );
+        out
+    }
+
+    /// One line per entry, for the formats that give notes one by one.
+    pub fn notes(&self) -> Vec<String> {
+        self.unreliable
+            .iter()
+            .map(|p| {
+                format!(
+                    "unused allowance not judged, next to files no indexer read: {}",
+                    p.unreliable_line()
+                )
+            })
+            .chain(self.held.iter().map(|p| {
+                format!(
+                    "unused allowance not judged, allowed through a glob or a set that covers other components too: {} -> {}",
+                    p.from, p.to
+                )
+            }))
+            .collect()
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// What `check --suggest` judges of `may_depend_on`: a violation of
+/// `unused-allowance` for each entry no import uses that `suggest --patch` would
+/// remove, at the line of `config_file` that writes it, and the entries it spares:
+/// those next to files no indexer read (`unindexed`), and those that come through
+/// a glob or a set.
+pub fn unused_allowances(
+    policy: &Policy,
+    map: &ComponentMap,
+    edges: &[Edge],
+    unindexed: &[String],
+    config_file: &str,
+) -> (Vec<Violation>, Spared) {
+    let config = &policy.config;
+    let counts = counts(map, edges, unindexed);
+    let found = unused(config, &counts.used, &counts.unindexed);
+    let removable: Vec<(String, String)> = found
+        .removable
+        .into_iter()
+        .map(|p| (p.from, p.to))
+        .collect();
+    // What comes through a glob or a set may be used by another component it
+    // covers: the patch leaves it, and so does the check.
+    let (plain, _notes) = patch::by_name(config, removable.clone());
+    let held = removable
+        .into_iter()
+        .filter(|pair| !plain.contains(pair))
+        .map(|(from, to)| Pair {
+            from,
+            to,
+            unread: BTreeMap::new(),
+        })
+        .collect();
+    let violations = plain
+        .into_iter()
+        .map(|(from, to)| Violation {
+            file: config_file.to_string(),
+            line: policy.config_line(&["rules", &from, "may_depend_on"], &to),
+            message: format!("`{from}` -> `{to}`: {REMOVABLE}"),
+            provenance: decision::grant_site(config, &from, &to, Grant::MayDependOn)
+                .map(|site| policy.provenance(&site)),
+            target: to.clone(),
+            from,
+            to,
+            ..Violation::of(RuleId::UnusedAllowance)
+        })
+        .collect();
+    let spared = Spared {
+        unreliable: found.unreliable,
+        held,
+    };
+    (violations, spared)
 }
 
 /// A dependency between two components, and how many there are.
@@ -107,29 +244,16 @@ pub fn suggest(
     stale_arrows: &[(String, String)],
 ) -> Suggestions {
     let Counts { unindexed, used } = counts(map, edges, uncovered);
-    let unread_of = |pair: [&str; 2]| -> BTreeMap<String, usize> {
-        pair.into_iter()
-            .filter_map(|c| Some((c.to_string(), *unindexed.get(c)?)))
-            .collect()
+    let unread_of = |pair: [&str; 2]| unread_of(&unindexed, pair);
+    let Unused {
+        removable,
+        unreliable,
+    } = unused(config, &used, &unindexed);
+    let mut found = Suggestions {
+        removable,
+        unreliable,
+        ..Suggestions::default()
     };
-    let mut found = Suggestions::default();
-    for (from, rule) in &config.rules {
-        for to in rule.may_depend_on.iter().map(|l| l.name()) {
-            if used.contains_key(&(from.as_str(), to)) {
-                continue;
-            }
-            let pair = Pair {
-                from: from.clone(),
-                to: to.to_string(),
-                unread: unread_of([from, to]),
-            };
-            if pair.unread.is_empty() {
-                found.removable.push(pair);
-            } else {
-                found.unreliable.push(pair);
-            }
-        }
-    }
     // A forbidden dependency cannot be allowed: the config would contradict itself,
     // or route around a closed or sibling layer.
     for ((from, to), count) in &used {
@@ -161,16 +285,9 @@ impl Suggestions {
     /// The suggestions as a reader takes them in, section by section.
     pub fn text(&self) -> String {
         let mut out = String::new();
-        let unread = |pair: &Pair| -> String {
-            pair.unread
-                .iter()
-                .map(|(c, n)| format!("{n} file(s) of {c}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
         section(
             &mut out,
-            "Allowed in may_depend_on but never depended on (remove to tighten the rules):",
+            &capitalized(&format!("{REMOVABLE}:")),
             self.removable
                 .iter()
                 .map(|p| format!("{} -> {}", p.from, p.to))
@@ -178,11 +295,8 @@ impl Suggestions {
         );
         section(
             &mut out,
-            "Not depended on among the indexed files, but some files were not indexed, so the dependency may be there (do not remove without checking):",
-            self.unreliable
-                .iter()
-                .map(|p| format!("{} -> {} (not indexed: {})", p.from, p.to, unread(p)))
-                .collect(),
+            UNRELIABLE,
+            self.unreliable.iter().map(Pair::unreliable_line).collect(),
         );
         let by_source = |list: &[Used]| -> Vec<String> {
             let mut grouped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -259,10 +373,56 @@ pub fn removable(
     edges: &[Edge],
     uncovered: &[String],
 ) -> Vec<(String, String)> {
-    suggest(config, map, edges, &[], &[], uncovered, &[])
+    let Counts { unindexed, used } = counts(map, edges, uncovered);
+    unused(config, &used, &unindexed)
         .removable
         .into_iter()
         .map(|pair| (pair.from, pair.to))
+        .collect()
+}
+
+/// The `may_depend_on` entries no import uses, apart by whether the graph can vouch for it.
+struct Unused {
+    /// Between components read in full: safe to remove.
+    removable: Vec<Pair>,
+    /// Next to files no indexer read: the dependency may be there.
+    unreliable: Vec<Pair>,
+}
+
+/// The `may_depend_on` entries of `config` that no dependency in `used` takes.
+fn unused(
+    config: &Config,
+    used: &BTreeMap<(&str, &str), usize>,
+    unindexed: &BTreeMap<&str, usize>,
+) -> Unused {
+    let mut found = Unused {
+        removable: Vec::new(),
+        unreliable: Vec::new(),
+    };
+    for (from, rule) in &config.rules {
+        for to in rule.may_depend_on.iter().map(|l| l.name()) {
+            if used.contains_key(&(from.as_str(), to)) {
+                continue;
+            }
+            let pair = Pair {
+                from: from.clone(),
+                to: to.to_string(),
+                unread: unread_of(unindexed, [from, to]),
+            };
+            if pair.unread.is_empty() {
+                found.removable.push(pair);
+            } else {
+                found.unreliable.push(pair);
+            }
+        }
+    }
+    found
+}
+
+/// How many files of each of `pair` no indexer read, for those with any.
+fn unread_of(unindexed: &BTreeMap<&str, usize>, pair: [&str; 2]) -> BTreeMap<String, usize> {
+    pair.into_iter()
+        .filter_map(|c| Some((c.to_string(), *unindexed.get(c)?)))
         .collect()
 }
 
