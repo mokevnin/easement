@@ -3,8 +3,11 @@
 //! dev-dependency is test code, so `tests: auto` takes it.
 
 mod cargo;
+mod entries;
 mod go;
 mod npm;
+
+pub use entries::{Framework, Setting, entries};
 
 pub(crate) use npm::npm_name;
 
@@ -184,10 +187,20 @@ impl Manifest {
     }
 
     /// The files of the project a manifest in `dir` names as what its package runs
-    /// or exports, which `unused` counts as entries.
-    pub fn entries(self, text: &str, dir: &str, files: &BTreeSet<&str>) -> Vec<String> {
+    /// or exports, which `unused` counts as entries; `None` for one that cannot
+    /// be parsed, whose package may export any of its files.
+    pub fn entries(self, text: &str, dir: &str, files: &BTreeSet<&str>) -> Option<Vec<String>> {
         match self {
             Manifest::Npm => npm::entries(text, dir, files),
+            Manifest::Go | Manifest::Cargo => Some(Vec::new()),
+        }
+    }
+
+    /// The frameworks a manifest with `text` depends on, which load files of its
+    /// package by convention.
+    pub fn frameworks(self, text: &str) -> Vec<&'static Framework> {
+        match self {
+            Manifest::Npm => npm::frameworks(text),
             Manifest::Go | Manifest::Cargo => Vec::new(),
         }
     }

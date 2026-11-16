@@ -148,6 +148,7 @@ impl Project {
         chains::attribute(policy, &map, &scan.deps, &mut violations);
         stats.suppressed = suppressed;
         stats.unused_partial = unused.reasons;
+        stats.frameworks = unused.frameworks;
         stats.manifests_partial = undeclared.reasons;
         Ok(Judgment {
             violations,

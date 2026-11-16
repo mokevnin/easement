@@ -449,3 +449,90 @@ fn unused_follows_csharp_and_php_namespaces() {
     );
     assert!(!out.contains("src/Infra/Helper.php:1"), "{out}");
 }
+
+/// The files of the project `unused` reports, by path.
+fn unused_files(root: &Path) -> Vec<String> {
+    unused_of(root)
+        .0
+        .iter()
+        .map(|v| v["file"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// A package that depends on `@sveltejs/kit` loads its routes, hooks and param
+/// matchers by convention: none is unused, though nothing imports them.
+#[test]
+fn sveltekit_routes_hooks_and_params_are_entries() {
+    let (_tmp, root) = fixture("sveltekit");
+    assert_eq!(unused_files(&root), ["src/lib/x.ts"]);
+    // The report names the framework it recognised, and where.
+    let checked = check(&root);
+    pinned(|| insta::assert_json_snapshot!("unused_frameworks", json(&checked)["frameworks"]));
+    let said = text(&checked);
+    let section = said
+        .split("\n\n")
+        .find(|part| part.starts_with("Frameworks"))
+        .unwrap_or_else(|| panic!("{said}"));
+    pinned(|| insta::assert_snapshot!("unused_frameworks_text", section));
+}
+
+/// A package that depends on `next` loads its `app/` and `pages/` routes, at its
+/// root or under `src/`, its middleware, instrumentation and config.
+#[test]
+fn nextjs_routes_are_entries_at_the_root_and_under_src() {
+    let (_tmp, root) = fixture("nextjs");
+    assert_eq!(unused_files(&root), ["apps/admin/src/lib/x.ts", "lib/x.ts"]);
+}
+
+/// A framework's conventions hold in the package that depends on it alone: a
+/// sibling with the same layout is judged.
+#[test]
+fn a_framework_holds_in_its_own_package_of_a_monorepo() {
+    let (_tmp, root) = fixture("monorepo_frameworks");
+    assert_eq!(
+        unused_files(&root),
+        [
+            "apps/api/src/hooks.server.ts",
+            "apps/api/src/routes/+page.ts"
+        ]
+    );
+}
+
+/// A config file that may move a framework's conventions (SvelteKit's
+/// `kit.files`, Next.js's `pageExtensions`), and a `package.json` that is no
+/// JSON, leave the files of the package unjudged: none is reported, and the gap
+/// says why.
+#[test]
+fn a_moved_convention_or_a_broken_manifest_leaves_the_package_unjudged() {
+    let (_tmp, root) = fixture("sveltekit");
+    fs::write(
+        root.join("svelte.config.js"),
+        "const config = {\n  kit: {\n    files: { routes: \"src/pages\" },\n  },\n};\n\nexport default config;\n",
+    )
+    .unwrap();
+    let (violations, gaps) = unused_of(&root);
+    assert_eq!(violations, [] as [Value; 0]);
+    pinned(|| insta::assert_json_snapshot!("unused_moved_convention_gap", gaps));
+
+    let (_tmp, root) = fixture("nextjs");
+    fs::write(
+        root.join("apps/admin/next.config.ts"),
+        "export default { pageExtensions: [\"page.tsx\"] };\n",
+    )
+    .unwrap();
+    // The site's own conventions still hold.
+    assert_eq!(unused_files(&root), ["lib/x.ts"]);
+    let messages = gap_messages(&json(&check(&root)), "unused");
+    assert_eq!(
+        messages,
+        [
+            "`unused` did not judge the files of apps/admin/package.json, which uses Next.js: apps/admin/next.config.ts may set `pageExtensions`, which moves the files it loads, so it took every file of the package as used"
+        ]
+    );
+
+    let (_tmp, root) = fixture("monorepo_frameworks");
+    fs::write(root.join("apps/api/package.json"), "{ \"name\": \"api\",\n").unwrap();
+    let (violations, gaps) = unused_of(&root);
+    assert_eq!(violations, [] as [Value; 0]);
+    pinned(|| insta::assert_json_snapshot!("unused_broken_manifest_gap", gaps));
+}

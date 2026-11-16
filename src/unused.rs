@@ -8,11 +8,12 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::chains::{file_graph, reach};
-use crate::check::{self, Place, RuleId, Unjudged, Violation};
+use crate::check::{self, Framework, Place, RuleId, Unjudged, Violation};
 use crate::components::ComponentMap;
 use crate::config::{Config, TESTS};
 use crate::lang::Dep;
 use crate::lang::registry::{self, LANGUAGES, Language, UnindexedUse};
+use crate::packages;
 use crate::relpath::{self, extension, glob_set, parent};
 use crate::scan::Unresolved;
 
@@ -42,10 +43,14 @@ pub struct Input<'a> {
 /// How many lost imports the reason of the files they may reach names.
 const LOST_SHOWN: usize = 3;
 
+#[derive(Default)]
 pub struct Unused {
     pub violations: Vec<Violation>,
     /// Why some files were taken as used without being judged.
     pub reasons: Vec<Unjudged>,
+    /// The frameworks found in packages, whose conventional files were taken as
+    /// entries.
+    pub frameworks: Vec<Framework>,
 }
 
 /// The language of a file the rule judges: each is checked against its indexer
@@ -63,10 +68,7 @@ fn judged_language(file: &str) -> Option<&'static Language> {
 pub fn unused(input: &Input) -> Result<Unused> {
     let config = input.config;
     if config.entry.is_empty() {
-        return Ok(Unused {
-            violations: Vec::new(),
-            reasons: Vec::new(),
-        });
+        return Ok(Unused::default());
     }
     let owned = |patterns: &[&str]| patterns.iter().map(|p| p.to_string()).collect::<Vec<_>>();
     let entry = glob_set(&config.entry, "entry")?;
@@ -79,7 +81,9 @@ pub fn unused(input: &Input) -> Result<Unused> {
     // Files that could not be read: each is taken as used, or as what makes
     // others used, and the report says so.
     let mut unreadable: BTreeSet<String> = BTreeSet::new();
-    let packaged = package_entries(input.root, input.all_files, &mut unreadable);
+    let packaged = packages::entries(input.all_files, input.unread, &|file| {
+        std::fs::read_to_string(input.root.join(file)).ok()
+    });
 
     // A family is judged only where the graph sees all of it: not when an
     // indexer left some of its files out, and not beside a language whose files
@@ -106,6 +110,8 @@ pub fn unused(input: &Input) -> Result<Unused> {
     let mut unjudged: BTreeSet<&str> = BTreeSet::new();
     let mut roots: Vec<&str> = input.unread.iter().map(String::as_str).collect();
     let mut candidates = Vec::new();
+    // Files a manifest alone made entries of, which it would judge otherwise.
+    let mut by_manifest: BTreeSet<&str> = BTreeSet::new();
     for file in input.paths {
         let judged = family(file).filter(|f| !skipped.contains_key(f));
         if judged.is_none() && family(file).is_none() {
@@ -115,11 +121,13 @@ pub fn unused(input: &Input) -> Result<Unused> {
             || tests.is_match(file)
             || conventional.is_match(file)
             || registry::is_declaration(file)
-            || packaged.contains(file.as_str())
             || program(input.root, file, &mut unreadable)
             || input.map.component_of(file).is_none_or(|c| c == TESTS)
             || judged.is_none();
-        if root {
+        if !root && packaged.files.contains(file.as_str()) {
+            by_manifest.insert(file);
+        }
+        if root || packaged.files.contains(file.as_str()) {
             roots.push(file);
         } else {
             candidates.push(file);
@@ -196,6 +204,12 @@ pub fn unused(input: &Input) -> Result<Unused> {
                 .in_files(input.paths.iter().filter(|p| family(p) == Some(f)).cloned())
         })
         .collect();
+    // A package whose files were all taken as used names the ones the rule would
+    // judge otherwise.
+    reasons.extend(packaged.untrusted.into_iter().filter_map(|mut gap| {
+        gap.files.retain(|f| by_manifest.contains(f.as_str()));
+        (!gap.files.is_empty()).then_some(gap)
+    }));
     if !held.is_empty() {
         // Whether a lost import is one an unread file writes, which no gap names.
         let unread: BTreeSet<&str> = input.unread.iter().map(String::as_str).collect();
@@ -223,7 +237,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
     if !unreadable.is_empty() {
         reasons.push(
             Unjudged::new(format!(
-                "`unused` could not read {}: it took each as used, a manifest with every file under it, and a file one of them uses may be reported unused",
+                "`unused` could not read {}: it took each as used, and a file one of them uses may be reported unused",
                 unreadable.iter().cloned().collect::<Vec<_>>().join(", ")
             ))
             .in_files(unreadable),
@@ -242,6 +256,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
     Ok(Unused {
         violations,
         reasons,
+        frameworks: packaged.frameworks,
     })
 }
 
@@ -339,36 +354,6 @@ fn unindexed_uses(
     found
 }
 
-/// The files the manifests of the project name as what their packages run or
-/// export.
-fn package_entries(
-    root: &Path,
-    all_files: &[String],
-    unreadable: &mut BTreeSet<String>,
-) -> BTreeSet<String> {
-    let files: BTreeSet<&str> = all_files.iter().map(String::as_str).collect();
-    let mut entries = BTreeSet::new();
-    for manifest in all_files {
-        let Some(kind) = registry::manifest_of(manifest) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(root.join(manifest)) else {
-            // What it exports is not known: every file under it may be.
-            unreadable.insert(manifest.clone());
-            let dir = parent(manifest);
-            entries.extend(
-                all_files
-                    .iter()
-                    .filter(|f| relpath::is_under(f, dir))
-                    .cloned(),
-            );
-            continue;
-        };
-        entries.extend(kind.entries(&text, parent(manifest), &files));
-    }
-    entries
-}
-
 /// For the tests: a `Target` that names a project file.
 #[cfg(test)]
 fn internal(path: &str) -> crate::lang::Target {
@@ -445,7 +430,9 @@ mod tests {
                 used(2, "./legacy", "src/legacy.js"),
             ]
         );
-        let entries = package_entries(dir.path(), &files, &mut BTreeSet::new());
-        assert!(entries.contains("bin/tool.js") && entries.contains("src/main.ts"));
+        let entries = packages::entries(&files, &[], &|file| {
+            std::fs::read_to_string(dir.path().join(file)).ok()
+        });
+        assert!(entries.files.contains("bin/tool.js") && entries.files.contains("src/main.ts"));
     }
 }

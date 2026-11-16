@@ -1,0 +1,25 @@
+---
+source: tests/library/unused.rs
+expression: gaps
+---
+[
+  {
+    "close": "`unused` does not follow a convention a config file moves: review those files by hand; it judges them again once the config file no longer names the setting",
+    "count": 11,
+    "files": [
+      "src/hooks.client.ts",
+      "src/hooks.server.ts",
+      "src/lib/x.ts",
+      "src/params/integer.ts",
+      "src/routes/+layout.server.ts",
+      "src/routes/+layout.ts",
+      "src/routes/+page.ts",
+      "src/routes/api/+server.ts",
+      "src/routes/blog/[slug]/+page.server.ts",
+      "svelte.config.js",
+      "vite.config.ts"
+    ],
+    "kind": "unused",
+    "message": "`unused` did not judge the files of package.json, which uses SvelteKit: svelte.config.js may set `kit.files`, which moves the files it loads, so it took every file of the package as used"
+  }
+]

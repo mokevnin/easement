@@ -1,0 +1,6 @@
+---
+source: tests/library/unused.rs
+expression: section
+---
+Frameworks (`unused` took the files they load by convention as entries):
+  package.json: SvelteKit (`@sveltejs/kit`)

@@ -403,6 +403,17 @@ impl Unjudged {
     }
 }
 
+/// A framework a package depends on, which loads files of the package by
+/// convention: `unused` takes those files as entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Framework {
+    pub name: String,
+    /// The manifest of the package, which names the framework.
+    pub package: String,
+    /// The dependency that names it.
+    pub dependency: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Stats {
     pub files: usize,
@@ -446,6 +457,10 @@ pub struct Stats {
     /// Why `unused` took some files as used without judging them.
     #[serde(skip)]
     pub unused_partial: Vec<Unjudged>,
+    /// The frameworks `unused` found in packages, whose conventional files it
+    /// took as entries.
+    #[serde(skip)]
+    pub frameworks: Vec<Framework>,
     /// Source files of an indexed language that its indexer did not cover.
     #[serde(skip)]
     pub uncovered: Vec<String>,

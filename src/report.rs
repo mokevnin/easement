@@ -5,7 +5,7 @@ use serde_sarif::sarif::{self, ResultLevel};
 use std::collections::BTreeMap;
 
 use crate::baseline::{Severity, Verdict};
-use crate::check::{self, Key, Place, RuleId, Stats, Unjudged, Violation};
+use crate::check::{self, Framework, Key, Place, RuleId, Stats, Unjudged, Violation};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
 
@@ -22,6 +22,10 @@ struct JsonReport<'a> {
     legalized: usize,
     #[serde(flatten)]
     coverage: &'a Coverage,
+    /// The frameworks `unused` found in packages: it took the files each loads by
+    /// convention as entries.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    frameworks: &'a [Framework],
     /// Set when indexes came from the cache: what their key leaves out and how
     /// to index again.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -507,6 +511,23 @@ pub fn gap_lines(
     out
 }
 
+/// The frameworks `unused` found, one line per package.
+fn framework_lines(frameworks: &[Framework]) -> String {
+    let mut by_package: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for framework in frameworks {
+        by_package
+            .entry(&framework.package)
+            .or_default()
+            .push(format!("{} (`{}`)", framework.name, framework.dependency));
+    }
+    let mut out =
+        String::from("Frameworks (`unused` took the files they load by convention as entries):\n");
+    for (package, names) in by_package {
+        out.push_str(&format!("  {package}: {}\n", names.join(", ")));
+    }
+    out
+}
+
 /// `file:line: message [rule]`, and the reason under it when there is one.
 pub(crate) fn violation_lines(
     v: &Violation,
@@ -561,6 +582,7 @@ impl Report<'_> {
             stale: &verdict.stale,
             legalized: verdict.legalized,
             coverage,
+            frameworks: &stats.frameworks,
             cached: cache_note(stats),
             diff: diff.map(|d| DiffInfo {
                 base: &d.changes.base,
@@ -641,6 +663,9 @@ impl Report<'_> {
                 body.push_str(&format!("  {d}\n"));
             }
             section(&mut out, &body);
+        }
+        if !stats.frameworks.is_empty() {
+            section(&mut out, &framework_lines(&stats.frameworks));
         }
         let gaps = gap_lines(
             &coverage.evidence_gaps,

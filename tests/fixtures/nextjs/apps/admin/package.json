@@ -1,0 +1,7 @@
+{
+  "name": "admin",
+  "private": true,
+  "devDependencies": {
+    "next": "^15.0.0"
+  }
+}

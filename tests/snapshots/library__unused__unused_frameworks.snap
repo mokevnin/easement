@@ -1,0 +1,11 @@
+---
+source: tests/library/unused.rs
+expression: "json(&checked)[\"frameworks\"]"
+---
+[
+  {
+    "dependency": "@sveltejs/kit",
+    "name": "SvelteKit",
+    "package": "package.json"
+  }
+]

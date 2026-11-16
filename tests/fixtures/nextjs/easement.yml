@@ -1,0 +1,9 @@
+version: 1
+
+# The site keeps `app/` and `pages/` at its root; `apps/admin`, a package of its
+# own, keeps them under `src/`.
+components:
+  site: { in: [app, pages, lib, middleware.ts, next.config.mjs] }
+  admin: { in: apps/admin }
+
+entry: [lib/main.ts]

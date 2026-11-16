@@ -1,0 +1,8 @@
+version: 1
+
+# Both packages keep a `src/routes`; only `web` depends on SvelteKit.
+components:
+  web: { in: apps/web }
+  api: { in: apps/api }
+
+entry: [apps/web/src/main.ts, apps/api/src/main.ts]

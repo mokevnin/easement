@@ -1,0 +1,6 @@
+version: 1
+
+components:
+  app: { in: [src, svelte.config.js, vite.config.ts] }
+
+entry: [src/main.ts]

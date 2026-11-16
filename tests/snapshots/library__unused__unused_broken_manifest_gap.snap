@@ -1,0 +1,16 @@
+---
+source: tests/library/unused.rs
+expression: gaps
+---
+[
+  {
+    "close": "fix the manifest, then check again",
+    "count": 2,
+    "files": [
+      "apps/api/src/hooks.server.ts",
+      "apps/api/src/routes/+page.ts"
+    ],
+    "kind": "unused",
+    "message": "`unused` could not parse apps/api/package.json, so it took every file under it as used: what the package exports and the frameworks it uses are not known"
+  }
+]

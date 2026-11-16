@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 
-use super::{Declared, Declares, Source, line_at};
+use super::{Declared, Declares, Framework, Setting, Source, line_at};
 use crate::lang::parts::{Kind, Part};
 use crate::lang::{Form, typescript};
 
@@ -109,10 +109,8 @@ pub(super) fn name(text: &str) -> Option<String> {
 
 /// The files of the project a `package.json` in `dir` names as what its package
 /// runs or exports: `main`, `module`, `types`, `bin`, `exports` and `browser`.
-pub(super) fn entries(text: &str, dir: &str, files: &BTreeSet<&str>) -> Vec<String> {
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
-    };
+pub(super) fn entries(text: &str, dir: &str, files: &BTreeSet<&str>) -> Option<Vec<String>> {
+    let json = serde_json::from_str::<serde_json::Value>(text).ok()?;
     let mut named = Vec::new();
     for key in [
         "main", "module", "types", "typings", "bin", "exports", "browser",
@@ -128,6 +126,69 @@ pub(super) fn entries(text: &str, dir: &str, files: &BTreeSet<&str>) -> Vec<Stri
                 format!("./{path}")
             };
             typescript::resolve(dir, &spec, files)
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// The frameworks a package can depend on, and the files each loads by
+/// convention. A later framework is one more row.
+const FRAMEWORKS: &[Framework] = &[
+    Framework {
+        name: "SvelteKit",
+        dependency: "@sveltejs/kit",
+        entries: &[
+            "src/routes/**/{+page,+page.server,+layout,+layout.server,+server,+error}.*",
+            "src/hooks.*",
+            "src/hooks/index.*",
+            "src/hooks.*/index.*",
+            "src/instrumentation.server.*",
+            "src/params/*",
+            "src/service-worker.*",
+            "src/service-worker/index.*",
+            "src/app.d.ts",
+            "svelte.config.*",
+            "vite.config.*",
+        ],
+        configs: &["svelte.config.*"],
+        moves: &[Setting {
+            name: "kit.files",
+            key: "files",
+        }],
+    },
+    Framework {
+        name: "Next.js",
+        dependency: "next",
+        entries: &[
+            "app/**/{page,layout,template,loading,error,global-error,not-found,forbidden,unauthorized,route,default}.*",
+            "src/app/**/{page,layout,template,loading,error,global-error,not-found,forbidden,unauthorized,route,default}.*",
+            "app/**/{opengraph-image,twitter-image,icon,apple-icon,sitemap,robots,manifest}.*",
+            "src/app/**/{opengraph-image,twitter-image,icon,apple-icon,sitemap,robots,manifest}.*",
+            "pages/**",
+            "src/pages/**",
+            "{middleware,proxy,instrumentation,instrumentation-client}.*",
+            "src/{middleware,proxy,instrumentation,instrumentation-client}.*",
+            "next.config.*",
+        ],
+        configs: &["next.config.*"],
+        moves: &[Setting {
+            name: "pageExtensions",
+            key: "pageExtensions",
+        }],
+    },
+];
+
+/// The frameworks a `package.json` lists in `dependencies` or `devDependencies`.
+pub(super) fn frameworks(text: &str) -> Vec<&'static Framework> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    FRAMEWORKS
+        .iter()
+        .filter(|framework| {
+            ["dependencies", "devDependencies"]
+                .iter()
+                .any(|section| !json[section][framework.dependency].is_null())
         })
         .collect()
 }
