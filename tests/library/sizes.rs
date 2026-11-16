@@ -1,4 +1,4 @@
-//! The size of an edge: the names of one component that another writes, which
+//! The size of a dependency of one component on another: the names of one component that another writes, which
 //! `why` reports with every place that writes each and whether the policy lets it
 //! in through the public surface of the component that defines it.
 
@@ -52,7 +52,7 @@ const TWO_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
-/// `a` writes two names of `b` from two files, `Order` in both: the edge has two
+/// `a` writes two names of `b` from two files, `Order` in both: the dependency has two
 /// names, `Order` with every place of both files.
 #[test]
 fn why_counts_the_names_of_the_target_that_the_source_writes() {
@@ -158,6 +158,10 @@ fn why_says_whether_each_name_gets_in_through_the_public_surface() {
         text.contains("a writes 3 names of b:\n  src/b/model.Hidden (2 places) [not public]\n  src/b/model.Order (2 places)\n  src/b/secret.Secret (2 places) [not public]\n"),
         "{text}"
     );
+    pinned(|| {
+        insta::assert_snapshot!("why_names_public_text", text);
+        insta::assert_json_snapshot!("why_names_public_json", json["names"]);
+    });
     // With no public surface, nothing is said of it.
     let (_tmp, root) = project(TWO_NAMES);
     let (_, json) = why(&root, "a", "b");
@@ -172,7 +176,7 @@ fn why_says_whether_each_name_gets_in_through_the_public_surface() {
 }
 
 /// A module `a` names without writing any name of it (an import for its effect,
-/// a namespace it never reads) is listed apart, with its places, so the edge never
+/// a namespace it never reads) is listed apart, with its places, so the size never
 /// looks smaller than the imports behind it. A namespace whose names `a` reads is
 /// no such module: its names are.
 #[test]
@@ -210,6 +214,7 @@ fn why_lists_a_module_named_without_a_name_apart() {
         text.contains("a names 2 modules of b without writing a name of it:\n  src/b/polyfill.ts (1 place)\n  src/b/unread.ts (1 place)\n"),
         "{text}"
     );
+    pinned(|| insta::assert_snapshot!("why_names_modules_text", text));
 }
 
 /// The names of a `why` answer by their last segment, each with its places, and
@@ -225,11 +230,11 @@ fn shape(why: &serde_json::Value) -> (Vec<(String, Vec<String>)>, serde_json::Va
     (names, why["modules"].clone())
 }
 
-/// The same edge in Go and in Python: `a` writes `Order` from two files and `Item`
+/// The same dependency in Go and in Python: `a` writes `Order` from two files and `Item`
 /// from one. Go's package, named on a line of its own and defined in a file of `b`
 /// other than the names', is no module named bare.
 #[test]
-fn the_size_of_an_edge_has_the_same_shape_in_go_and_python() {
+fn the_size_of_a_dependency_has_the_same_shape_in_go_and_python() {
     let policy = |a: &str, b: &str| {
         format!(
             "version: 1\ncomponents:\n  a: {{ in: {a} }}\n  b: {{ in: {b} }}\nrules:\n  a: {{ may_depend_on: [b] }}\n"
@@ -341,7 +346,7 @@ fn the_names_a_file_writes_in_a_language_without_verified_uses_are_a_gap() {
         "{json}"
     );
     pinned(|| insta::assert_snapshot!("why_names_unverified_text", text));
-    // With no direct dependency, only a chain, the direct edge has no size.
+    // With no direct dependency, only a chain, there is no size.
     let (_, json) = why(&root, "domain", "http");
     assert!(json["chain"].is_object(), "{json}");
     assert_eq!(json["names"], serde_json::json!([]), "{json}");

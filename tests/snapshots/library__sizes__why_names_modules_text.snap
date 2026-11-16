@@ -1,0 +1,18 @@
+---
+source: tests/library/sizes.rs
+expression: text
+---
+a -> b is allowed (may_depend_on)
+5 dependency(ies):
+  src/a/one.ts:1 depends on src/b/model.ts
+  src/a/three.ts:1 depends on src/b/polyfill.ts
+  src/a/three.ts:2 depends on src/b/unread.ts
+  src/a/three.ts:3 depends on src/b/read.ts
+  src/a/two.ts:1 depends on src/b/model.ts
+a writes 3 names of b:
+  src/b/model.Item (2 places)
+  src/b/model.Order (4 places)
+  src/b/read.Read (1 place)
+a names 2 modules of b without writing a name of it:
+  src/b/polyfill.ts (1 place)
+  src/b/unread.ts (1 place)

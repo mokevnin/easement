@@ -1,0 +1,51 @@
+---
+source: tests/library/sizes.rs
+expression: "json[\"names\"]"
+---
+[
+  {
+    "file": "src/b/model.ts",
+    "name": "src/b/model.Hidden",
+    "places": [
+      {
+        "file": "src/a/one.ts",
+        "line": 1
+      },
+      {
+        "file": "src/a/one.ts",
+        "line": 3
+      }
+    ],
+    "public": false
+  },
+  {
+    "file": "src/b/model.ts",
+    "name": "src/b/model.Order",
+    "places": [
+      {
+        "file": "src/a/one.ts",
+        "line": 1
+      },
+      {
+        "file": "src/a/one.ts",
+        "line": 3
+      }
+    ],
+    "public": true
+  },
+  {
+    "file": "src/b/secret.ts",
+    "name": "src/b/secret.Secret",
+    "places": [
+      {
+        "file": "src/a/two.ts",
+        "line": 1
+      },
+      {
+        "file": "src/a/two.ts",
+        "line": 3
+      }
+    ],
+    "public": false
+  }
+]

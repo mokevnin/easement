@@ -1,0 +1,13 @@
+---
+source: tests/library/sizes.rs
+expression: text
+---
+a -> b is allowed (may_depend_on)
+  but only through the public surface of b: src/b/index.ts
+2 dependency(ies):
+  src/a/one.ts:1 depends on src/b/index.ts, src/b/model.ts [violates: symbol]
+  src/a/two.ts:1 depends on src/b/secret.ts [violates: privacy]
+a writes 3 names of b:
+  src/b/model.Hidden (2 places) [not public]
+  src/b/model.Order (2 places)
+  src/b/secret.Secret (2 places) [not public]

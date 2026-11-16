@@ -212,7 +212,7 @@ pub struct WhyChain {
 }
 
 /// A name of the target component that the source component writes: one unit of
-/// the size of the edge.
+/// the size of the dependency of one component on another.
 #[derive(Serialize)]
 pub struct WrittenName {
     /// The name as the symbol rules write it.
@@ -250,7 +250,7 @@ pub struct Why {
     pub depends: bool,
     pub dependencies: Vec<DirectDependency>,
     /// The names of `to` that the direct dependencies write, by name: their number
-    /// is the size of the edge.
+    /// is the size of the dependency.
     pub names: Vec<WrittenName>,
     /// The modules of `to` that the direct dependencies name without writing a name.
     pub modules: Vec<BareModule>,
@@ -587,7 +587,7 @@ impl Why {
     }
 }
 
-/// The size of the direct edge in text: the names `from` writes of `to`, each with
+/// The size of the direct dependencies in text: the names `from` writes of `to`, each with
 /// how many places write it, then the modules it names bare.
 fn size_lines(why: &Why) -> String {
     let Why { from, to, .. } = why;
