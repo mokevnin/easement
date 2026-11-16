@@ -110,7 +110,7 @@ impl RuleId {
     }
 
     /// Every rule, in the order of the declaration.
-    pub const ALL: [RuleId; 21] = [
+    pub const ALL: [RuleId; 22] = [
         RuleId::Dependency,
         RuleId::Privacy,
         RuleId::Cycle,
