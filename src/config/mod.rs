@@ -699,6 +699,14 @@ pub struct Rule {
     /// carry its own reason.
     #[serde(default)]
     pub requires_directive: Vec<Listed>,
+    /// When set, only these components (and the component itself) may hold a type
+    /// that implements or extends a type of this component, directly or through its
+    /// ancestors; `[]` leaves only the component itself. Read from the relations an
+    /// index declares, which is no dependency: a language without them is an
+    /// evidence gap. An item may be a glob over component names (`'api-*'`) or a
+    /// set (`'@drivers'`).
+    #[serde(default)]
+    pub allow_implementers: Option<Vec<String>>,
     /// Most components this one may depend on.
     #[serde(default)]
     pub max_fan_out: Option<usize>,

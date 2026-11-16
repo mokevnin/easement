@@ -49,6 +49,9 @@ pub enum RuleId {
     Unused,
     /// A type whose name a component's `defines` claims, defined elsewhere.
     Naming,
+    /// A type that implements or extends a type of a component whose
+    /// `allow_implementers` does not list the type's component.
+    Implementation,
     /// A dependency between components that the `diagram` has no arrow for.
     Diagram,
     /// An external module the nearest manifest does not declare.
@@ -77,6 +80,7 @@ impl RuleId {
             RuleId::Reach => "reach",
             RuleId::Unused => "unused",
             RuleId::Naming => "naming",
+            RuleId::Implementation => "implementation",
             RuleId::Diagram => "diagram",
             RuleId::Undeclared => "undeclared",
             RuleId::Example => "example",
@@ -91,7 +95,7 @@ impl RuleId {
     }
 
     /// Every rule, in the order of the declaration.
-    pub const ALL: [RuleId; 20] = [
+    pub const ALL: [RuleId; 21] = [
         RuleId::Dependency,
         RuleId::Privacy,
         RuleId::Cycle,
@@ -109,13 +113,14 @@ impl RuleId {
         RuleId::Reach,
         RuleId::Unused,
         RuleId::Naming,
+        RuleId::Implementation,
         RuleId::Diagram,
         RuleId::Undeclared,
         RuleId::Example,
     ];
 
     /// Rules that an inline comment can suppress.
-    pub const SUPPRESSIBLE: [RuleId; 8] = [
+    pub const SUPPRESSIBLE: [RuleId; 9] = [
         RuleId::Dependency,
         RuleId::Privacy,
         RuleId::External,
@@ -123,6 +128,7 @@ impl RuleId {
         RuleId::Symbol,
         RuleId::Excluded,
         RuleId::Naming,
+        RuleId::Implementation,
         RuleId::Undeclared,
     ];
 
@@ -454,6 +460,9 @@ pub struct Stats {
     /// Why `forbid_symbol` left some uses of names unchecked.
     #[serde(skip)]
     pub symbols_partial: Vec<Unjudged>,
+    /// Why `implementation` left some types unchecked.
+    #[serde(skip)]
+    pub implementations_partial: Vec<Unjudged>,
     /// Why `unused` took some files as used without judging them.
     #[serde(skip)]
     pub unused_partial: Vec<Unjudged>,

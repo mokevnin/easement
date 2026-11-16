@@ -1,0 +1,19 @@
+---
+source: tests/library/implementations.rs
+expression: gap
+---
+{
+  "kind": "implementation",
+  "files": [
+    "cache/read-only.ts"
+  ],
+  "count": 1,
+  "places": [
+    {
+      "file": "cache/read-only.ts",
+      "line": 7
+    }
+  ],
+  "message": "`implementation` cannot judge 1 typescript declarations that write a name of ports outside the components that may implement it: scip-typescript gives an interface declaration or a class expression no relations, so whether they implement or extend a type of ports was not checked",
+  "close": "review those types by hand, or move them into a component `allow_implementers` lists"
+}

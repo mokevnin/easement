@@ -28,7 +28,7 @@ Where `easement` differs:
 
 Where the others are stronger:
 
-- **Depth.** `easement` judges imports, the symbols used through them (Go, TypeScript, Python, Rust and Ruby), which component a type name belongs to ([`defines`](configuration.md#names-of-types)) and indirect reach through the methods a call references ([`reach: symbols`](configuration.md#reaching-through-others)). It has no rules about inheritance, signatures, annotations or other class and member properties (ArchUnit), nor about package contents or function limits (arch-go).
+- **Depth.** `easement` judges imports, the symbols used through them (Go, TypeScript, Python, Rust and Ruby), which component a type name belongs to ([`defines`](configuration.md#names-of-types)), which components may implement or extend the types of a component ([`allow_implementers`](configuration.md#who-may-implement-a-component), from the relations the Java, C#, Python and TypeScript indexes declare) and indirect reach through the methods a call references ([`reach: symbols`](configuration.md#reaching-through-others)). It has no rules about other inheritance, signatures, annotations or other class and member properties (ArchUnit), nor about package contents or function limits (arch-go).
 - **Kotlin and Swift.** They are read with tree-sitter, not a compiler, so what a build system would resolve there is approximated.
 
 Using both is reasonable: keep a language-specific tool for the deep rules of one codebase and let `easement` hold the boundaries between components and languages.

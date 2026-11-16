@@ -1,0 +1,17 @@
+version: 1
+
+components:
+  ports:    { in: src/ports }
+  adapters: { in: src/adapters }
+  cache:    { in: src/cache }
+  sql:      { in: src/sql }
+  tests:    { in: src/tests }
+
+rules:
+  ports:
+    allow_implementers: [adapters, tests]
+    because: ports are implemented only by adapters and test doubles
+  adapters: { may_depend_on: [ports] }
+  cache:    { may_depend_on: [ports] }
+  sql:      { may_depend_on: [adapters] }
+  tests:    { may_depend_on: [ports] }

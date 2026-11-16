@@ -82,6 +82,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `reach` | a component reaches one its `must_not_reach` names through a chain of imports |
 | `unused` | with `entry`, a file of a component that no chain of imports from an entry reaches |
 | `naming` | a component defines a type whose name another component's `defines` claims |
+| `implementation` | a component holds a type that implements or extends a type of a component whose `allow_implementers` does not list it |
 | `diagram` | a dependency between components has no arrow in the `diagram` |
 | `undeclared` | with `manifests`, a file imports an external module the nearest manifest does not declare |
 | `example` | a policy example in `examples` gets another decision than it expects, or names a path no component owns |
@@ -163,6 +164,25 @@ components:
 
 Only the listed components (and `ee` itself) may import `ee`, even when `common` or `layers` would let everyone in. This is the other side of `may_depend_on`: write it where the rule is about the one being imported. The violation reads `pages -> ee: ee may be imported only from wiring`.
 
+### Who may implement a component
+
+```yaml
+rules:
+  ports:
+    allow_implementers: [adapters, tests]
+    because: ports are implemented only by adapters and test doubles
+```
+
+Only the listed components (and `ports` itself) may hold a type that implements or extends a type of `ports`, directly or through any chain of ancestors: `class SqlRepo extends Base`, where `Base implements OrderRepository`, is an implementation of `OrderRepository`, and so is an interface that extends it. Any other fails as `implementation` at the definition of the type, with the rule's `because`: `cache -> ports: CachedRepo implements ports' OrderRepository; ports may be implemented only in adapters, tests`. Unset means no limit; `[]` leaves only `ports` itself, as the same-component grant means it, so another instance of an `isolated` component is not itself. Test code is not exempt: list `tests` to let test doubles in. The items name components, and may be globs and sets; anything else fails to load. A list that never fires is no error.
+
+An implementation is not a dependency: it holds whether or not the code writes the supertype's name, and it never enters `may_depend_on`, reach, cycles or the coupling metrics. It is read from the relations the index declares between types, closed over every chain of ancestors whatever the indexer gives (scip-python gives the direct bases alone): Java, C#, Python and TypeScript classes. The rest leave it unjudged, and the report says so as an `implementation` evidence gap that names the rule, the language, the cause and the files, and `--require-evidence` fails:
+
+- a Go type implements an interface by having its methods, which declares nothing, so once the component defines Go types every Go file outside the components that may implement it is a gap;
+- the indexes of Rust, PHP and Ruby, and the adapters of Kotlin and Swift, declare no implementations; implementing a type writes its name there, so a file of these languages that depends on the component, outside the components that may implement it, is a gap;
+- scip-typescript gives an interface declaration or a class expression no relations, so one that writes a name of the component, outside the components that may implement it, is a gap at its line.
+
+A supertype outside the project (a framework base class) is not judged. The violation can be suppressed inline at the definition and is recorded by the baseline; `--diff` keeps it when the definition of the type, of the supertype or of any type between them changed, so a base class that comes to implement the port fails its subclasses. `review` lists a component added to or removed from `allow_implementers`, or the key set or unset, as a constraint loosened or tightened, and `explain` shows the component's `allow_implementers`.
+
 ### Globs and sets of components
 
 Where the policy lists components, it may write a glob over component names, or a named set from `sets`:
@@ -182,7 +202,7 @@ rules:
     may_depend_on: [usecase]
 ```
 
-A glob (`*`, `?`, `[ab]`, `{a,b}`) covers the components whose names match it; `'@drivers'` covers the components the set lists. A set lists component names and globs, never another set. They work in every list of components: `common`, the rows of `layers`, `no_cycles`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on`, `must_not_reach` and `must_depend_on`, `allow_importers`, the `importers` of a named surface, and the `allow` of a top-level `forbid_symbol` or `forbid_external` item. Quote them: YAML reads a bare `*` or `@` as something else. A component's own name wins: a list that writes `'@acme/core'` or `'web*'` names that component when one is so called. A leading `@` is otherwise always a set, so a glob over such names escapes it (`'[@]acme/*'`), and a set whose `@name` is also a component's name fails to load.
+A glob (`*`, `?`, `[ab]`, `{a,b}`) covers the components whose names match it; `'@drivers'` covers the components the set lists. A set lists component names and globs, never another set. They work in every list of components: `common`, the rows of `layers`, `no_cycles`, the keys of `rules` and their `may_depend_on`, `must_not_depend_on`, `must_not_reach` and `must_depend_on`, `allow_importers`, the `importers` of a named surface, `allow_implementers`, and the `allow` of a top-level `forbid_symbol` or `forbid_external` item. Quote them: YAML reads a bare `*` or `@` as something else. A component's own name wins: a list that writes `'@acme/core'` or `'web*'` names that component when one is so called. A leading `@` is otherwise always a set, so a glob over such names escapes it (`'[@]acme/*'`), and a set whose `@name` is also a component's name fails to load.
 
 They expand when the policy loads, so every rule judges the names as if they were written out: a new `ee-sso` component is let into `ee-licensekey` with no edit. An item keeps its `because` for every component it covers. A rule key that is a glob or a set gives its rule to each component it covers; a component that two keys cover (its own name and a glob, two globs, a set and its member) fails to load, naming both. In `layers`, a glob or a set in place of a name holds the siblings it covers; a closed layer must cover one component.
 
@@ -463,7 +483,7 @@ components:
     because: storage goes through repositories
 ```
 
-`defines` claims type names for a component: a class, struct, interface or trait whose name matches a glob, defined in another component, fails as `naming` at its definition, with the `because` of the claiming component. A type can be claimed by several components; it has to live in one of them. Types come from the index, so Go, TypeScript, Python, Rust, Java, C#, PHP and Ruby are checked; Kotlin and Swift files are read without one, and the report says their names were not checked. In Ruby a module is a type too, and a class reopened in another component counts as defined there. The rule can be suppressed inline.
+`defines` claims type names for a component: a class, struct, interface or trait whose name matches a glob, defined in another component, fails as `naming` at its definition, with the `because` of the claiming component. A type can be claimed by several components; it has to live in one of them. Types come from the index, so Go, TypeScript, Python, Rust, Java, C#, PHP and Ruby are checked; Kotlin and Swift files are read without one, and the report says their names were not checked. In Ruby a module is a type too, and a class reopened in another component counts as defined there. The rule can be suppressed inline. Which components may implement or extend the types a component holds is [`allow_implementers`](#who-may-implement-a-component).
 
 ### Unused files
 

@@ -55,6 +55,12 @@ pub struct Scan {
     pub unverified_symbols: Vec<SymbolRef>,
     /// The types checked files define, from the index.
     pub types: Vec<TypeDef>,
+    /// The types of checked files that implement or extend another type of them,
+    /// as the indexes declare it, closed over every chain of ancestors.
+    pub implementations: Vec<lang::Implementation>,
+    /// Declarations of checked files whose index gives no relations although they
+    /// may implement or extend a type.
+    pub unrelated: Vec<lang::UnrelatedDeclaration>,
     pub suppressions: Vec<Suppression>,
     /// Source files of an indexed language that the indexer did not cover,
     /// for example files outside every `tsconfig.json`, and the source files an
@@ -410,6 +416,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     let names = scip::Names::of(&documents, &hidden);
     let index = scip::Indexed::of(&names);
     let mut types: Vec<TypeDef> = Vec::new();
+    let mut unrelated_declarations: Vec<lang::UnrelatedDeclaration> = Vec::new();
     // What the comparison of written imports found, in checked files and in unread ones.
     let mut checked_imports = Written::default();
     let mut unread_imports = Written::default();
@@ -426,10 +433,10 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
     for (document, checked) in read {
         if checked {
             paths.push(document.path.clone());
-            types.extend(document.types.iter().map(|(name, line)| TypeDef {
+            types.extend(document.types.iter().map(|defined| TypeDef {
                 file: document.path.clone(),
-                line: *line,
-                name: name.clone(),
+                line: defined.line,
+                name: defined.name.clone(),
             }));
         }
         let Ok(bytes) = std::fs::read(root.join(&document.path)) else {
@@ -442,6 +449,19 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         let source = String::from_utf8_lossy(&bytes);
         if checked {
             suppressions.extend(suppress::parse(&document.path, &source));
+            if let Some(lang::registry::Relations::Declared {
+                unrelated: Some(unrelated),
+            }) = lang::registry::of(&document.path).map(|language| &language.relations)
+            {
+                for declaration in (unrelated.find)(&document.path, &source) {
+                    unrelated_declarations.push(lang::UnrelatedDeclaration {
+                        file: document.path.clone(),
+                        line: *declaration.start(),
+                        because: unrelated.because,
+                        writes: index.files_referred(document, &declaration),
+                    });
+                }
+            }
         }
         let Some(written) = lang::registry::of(&document.path)
             .and_then(|language| language.written_imports.as_ref())
@@ -465,6 +485,11 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
             }
         }
     }
+    let implementations = index
+        .implementations()
+        .into_iter()
+        .filter(|i| !target_only.is_match(&i.sub.file) && !target_only.is_match(&i.supertype.file))
+        .collect();
     let flow = (policy.reach == crate::config::Reach::Symbols).then(|| index.flow());
     let facts = index.facts(policy.uses_symbols, &policy.watched_symbols);
     let is_source = |file: &Path| {
@@ -528,6 +553,8 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         unread_deps,
         unread,
         types,
+        implementations,
+        unrelated: unrelated_declarations,
         symbols,
         unverified_symbols,
         suppressions,

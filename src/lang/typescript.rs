@@ -96,11 +96,7 @@ pub const EXPLAINED: &[Explained] = &[
 /// with `@types/node`, so there it is [`Form::Require`].
 pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
     let extension = relpath::extension(file);
-    let grammar = match extension {
-        "ts" | "mts" | "cts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-        _ => tree_sitter_typescript::LANGUAGE_TSX,
-    };
-    let tree = super::tree(&grammar.into(), text);
+    let tree = super::tree(&grammar(file), text);
     let require = match extension {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
         _ => Form::Require,
@@ -121,6 +117,32 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
     }
     imports.sort_by_key(|import| import.line);
     imports
+}
+
+/// The declarations of a TypeScript or JavaScript file that scip-typescript
+/// gives no relations, though they may extend or implement a type: interface
+/// declarations and class expressions.
+pub fn unrelated(file: &str, text: &str) -> Vec<std::ops::RangeInclusive<usize>> {
+    let tree = super::tree(&grammar(file), text);
+    let mut found = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        if matches!(node.kind(), "interface_declaration" | "class") {
+            found.push(node.start_position().row + 1..=node.end_position().row + 1);
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    found.sort_by_key(|lines| *lines.start());
+    found
+}
+
+/// The grammar of a file by its extension: TSX reads JavaScript and JSX too.
+fn grammar(file: &str) -> tree_sitter::Language {
+    match relpath::extension(file) {
+        "ts" | "mts" | "cts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        _ => tree_sitter_typescript::LANGUAGE_TSX.into(),
+    }
 }
 
 /// The import `node` writes, when it is one.
@@ -225,6 +247,13 @@ mod tests {
             .into_iter()
             .map(|import| (import.line, import.specifier, import.form))
             .collect()
+    }
+
+    #[test]
+    fn interfaces_and_class_expressions_are_the_declarations_without_relations() {
+        let text = "export interface Port {\n  run(): void;\n}\n\nexport class Named implements Port {\n  run() {}\n}\n\nexport const Anonymous = class implements Port {\n  run() {}\n};\n";
+        // The interface, and the class expression; the named class has relations.
+        assert_eq!(unrelated("a.ts", text), [1..=3, 9..=11]);
     }
 
     #[test]

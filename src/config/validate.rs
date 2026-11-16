@@ -129,6 +129,9 @@ impl Config {
             for to in rule.must_depend_on.iter().map(Listed::name) {
                 check(to, &format!("{at}.must_depend_on"))?;
             }
+            for implementer in rule.allow_implementers.iter().flatten() {
+                check(implementer, &format!("{at}.allow_implementers"))?;
+            }
             if let Some(name) = rule
                 .may_use_external
                 .iter()
@@ -646,6 +649,30 @@ components:
         )
         .unwrap_err();
         assert!(err.to_string().contains("ghost"));
+    }
+
+    #[test]
+    fn allow_implementers_names_components_and_expands_globs() {
+        let policy = |list: &str| {
+            format!(
+                "version: 1\ncomponents:\n  ports: {{ in: ports }}\n  adapter-pg: {{ in: pg }}\n  adapter-mem: {{ in: mem }}\nrules:\n  ports: {{ allow_implementers: {list} }}\n"
+            )
+        };
+        let err = format!("{:#}", parse(&policy("[adaptres]")).unwrap_err());
+        assert!(
+            err.contains("unknown component `adaptres` in rules.ports.allow_implementers"),
+            "{err}"
+        );
+        let config = parse(&policy("['adapter-*']")).unwrap();
+        assert_eq!(
+            config.rules["ports"].allow_implementers.as_deref().unwrap(),
+            ["adapter-mem", "adapter-pg"]
+        );
+        let config = parse(&policy("[]")).unwrap();
+        assert_eq!(
+            config.rules["ports"].allow_implementers.as_deref(),
+            Some(&[][..])
+        );
     }
 
     #[test]

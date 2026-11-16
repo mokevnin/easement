@@ -11,8 +11,8 @@ use crate::components::{self, ComponentMap};
 use crate::config::Config;
 use crate::policy::Policy;
 use crate::{
-    chains, check, diagram, examples, indexer, lang, manifests, matching, relpath, scan, scip,
-    suppress, symbols, unused,
+    chains, check, diagram, examples, implementations, indexer, lang, manifests, matching, relpath,
+    scan, scip, suppress, symbols, unused,
 };
 
 pub struct Project {
@@ -87,6 +87,11 @@ impl Project {
         let (mut violations, edges, mut stats) = check::evaluate(config, &map, &scan.deps);
         violations.extend(symbols::symbols(config, &map, &scan.symbols));
         violations.extend(check::naming(config, &map, &scan.types)?);
+        violations.extend(implementations::violations(
+            config,
+            &map,
+            &scan.implementations,
+        ));
         let undeclared =
             manifests::undeclared(config, &map, &self.root, &scan.deps, &scan.all_files);
         violations.extend(undeclared.violations);
@@ -215,6 +220,16 @@ impl Project {
             &scan.deps,
             &scan.unverified_symbols,
         ));
+        stats.implementations_partial = implementations::gaps(
+            self.config(),
+            &map,
+            &implementations::Scanned {
+                files: &scan.paths,
+                deps: &scan.deps,
+                types: &scan.types,
+                unrelated: &scan.unrelated,
+            },
+        );
         stats.files = scan.paths.len();
         (stats.indexed, stats.from_cache) = (scan.indexed, scan.from_cache);
         let accepted = graph_unread(self.config(), &map, &scan, &mut stats);
