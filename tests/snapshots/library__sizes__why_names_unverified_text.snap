@@ -1,0 +1,12 @@
+---
+source: tests/library/sizes.rs
+expression: text
+---
+util -> http is allowed (may_depend_on)
+1 dependency(ies):
+  src/util/Retry.kt:2 depends on src/http/Client.kt
+util writes 0 names of http in the files easement reads names from (see the evidence gaps)
+Evidence gaps (a dependency, a chain or a name written in this code is missing):
+  the names of http that 1 kotlin file(s) of util write are not counted: easement does not read uses of names from kotlin, so only their dependencies are known
+    to close: read the names in those files by hand: their dependencies are listed with the others
+    src/util/Retry.kt

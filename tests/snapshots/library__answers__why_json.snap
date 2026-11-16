@@ -45,6 +45,8 @@ expression: "why_json(&root, \"domain\", \"http\")"
   "depends": true,
   "evidence_gaps": [],
   "from": "domain",
+  "modules": [],
+  "names": [],
   "narrowed": [],
   "to": "http"
 }

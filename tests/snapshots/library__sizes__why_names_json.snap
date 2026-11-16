@@ -1,0 +1,101 @@
+---
+source: tests/library/sizes.rs
+expression: json
+---
+{
+  "accepted_gaps": [],
+  "decision": {
+    "allowed": true,
+    "grant": "may_depend_on",
+    "provenance": {
+      "field": "rules.a.may_depend_on[0]",
+      "input": "easement.yml"
+    }
+  },
+  "dependencies": [
+    {
+      "decisions": [
+        {
+          "allowed": true,
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.a.may_depend_on[0]",
+            "input": "easement.yml"
+          },
+          "target": "src/b/model.ts",
+          "to": "b"
+        }
+      ],
+      "file": "src/a/one.ts",
+      "line": 1,
+      "targets": [
+        "src/b/model.ts"
+      ],
+      "violates": []
+    },
+    {
+      "decisions": [
+        {
+          "allowed": true,
+          "grant": "may_depend_on",
+          "provenance": {
+            "field": "rules.a.may_depend_on[0]",
+            "input": "easement.yml"
+          },
+          "target": "src/b/model.ts",
+          "to": "b"
+        }
+      ],
+      "file": "src/a/two.ts",
+      "line": 1,
+      "targets": [
+        "src/b/model.ts"
+      ],
+      "violates": []
+    }
+  ],
+  "depends": true,
+  "evidence_gaps": [],
+  "from": "a",
+  "modules": [],
+  "names": [
+    {
+      "file": "src/b/model.ts",
+      "name": "src/b/model.Item",
+      "places": [
+        {
+          "file": "src/a/two.ts",
+          "line": 1
+        },
+        {
+          "file": "src/a/two.ts",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "file": "src/b/model.ts",
+      "name": "src/b/model.Order",
+      "places": [
+        {
+          "file": "src/a/one.ts",
+          "line": 1
+        },
+        {
+          "file": "src/a/one.ts",
+          "line": 3
+        },
+        {
+          "file": "src/a/two.ts",
+          "line": 1
+        },
+        {
+          "file": "src/a/two.ts",
+          "line": 3
+        }
+      ]
+    }
+  ],
+  "narrowed": [],
+  "to": "b"
+}

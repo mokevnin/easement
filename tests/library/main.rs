@@ -33,6 +33,7 @@ mod resolved;
 mod review;
 mod rules;
 mod sets;
+mod sizes;
 mod suggest;
 mod surfaces;
 mod symbols;

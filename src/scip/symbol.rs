@@ -244,6 +244,16 @@ pub(super) enum Through {
 }
 
 impl Called {
+    /// The qualifier of the name as the symbol rules write it: as the index spells it,
+    /// else the module path of `file`, the file that defines it, when one does.
+    pub(super) fn qualifier_in(&self, file: Option<&str>) -> String {
+        match (&self.qualifier, file) {
+            (Qualifier::Spelled(qualifier), _) => qualifier.clone(),
+            (Qualifier::File(_), Some(file)) => registry::module_path(file).to_string(),
+            (Qualifier::File(otherwise), None) => otherwise.clone(),
+        }
+    }
+
     /// The member used, as `forbid_symbol` names it: what it is called through, and
     /// its name. `specifier` is the qualifier of the name as the use spells it.
     pub(super) fn method(&self, specifier: &str) -> Option<(String, String)> {

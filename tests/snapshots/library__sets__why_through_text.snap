@@ -5,3 +5,5 @@ expression: why.text()
 usecase -> runner is forbidden (must_not_depend_on through `@drivers`): use cases know no driver
 1 dependency(ies):
   src/usecase/case.ts:1 depends on src/runner/run.ts [violates: dependency]
+usecase writes 1 name of runner:
+  src/runner/run.job (2 places)

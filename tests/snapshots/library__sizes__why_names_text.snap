@@ -1,0 +1,11 @@
+---
+source: tests/library/sizes.rs
+expression: text
+---
+a -> b is allowed (may_depend_on)
+2 dependency(ies):
+  src/a/one.ts:1 depends on src/b/model.ts
+  src/a/two.ts:1 depends on src/b/model.ts
+a writes 2 names of b:
+  src/b/model.Item (2 places)
+  src/b/model.Order (4 places)

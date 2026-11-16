@@ -27,13 +27,15 @@ use crate::check::SymbolRef;
 use crate::flow::{Edge, Flow, Node};
 use crate::lang::parts::Part;
 use crate::lang::registry::{self, Manifest};
-use crate::lang::{AliasDefinition, Aliased, Dep, Hop, Import, Mention, Scope, Through, Written};
+use crate::lang::{
+    AliasDefinition, Aliased, Dep, Elsewhere, Hop, Import, Mention, Scope, Through, Written,
+};
 use crate::lang::{Target, Unit};
 use crate::relpath;
 
 mod symbol;
 
-use symbol::{Kind, Name, Qualifier, Shape, read, split};
+use symbol::{Kind, Name, Shape, read, split};
 
 /// `SymbolRole::Definition` in the bitset of an occurrence.
 const DEFINITION: i32 = 1;
@@ -1105,11 +1107,7 @@ impl<'a> Indexed<'a> {
                     }
                     None => Some(Target::External(name.external.clone())),
                 };
-                let specifier = match (&called.qualifier, found) {
-                    (Qualifier::Spelled(qualifier), _) => qualifier.clone(),
-                    (Qualifier::File(_), Some(file)) => registry::module_path(file).to_string(),
-                    (Qualifier::File(otherwise), None) => otherwise.clone(),
-                };
+                let specifier = called.qualifier_in(found);
                 uses.push(SymbolRef {
                     file: PathBuf::from(&document.path),
                     from: unit_at(document, line),
@@ -1180,18 +1178,55 @@ impl<'a> Indexed<'a> {
             let mut mentions: HashMap<&str, Vec<Mention>> = HashMap::new();
             // The other files whose modules each line names.
             let mut modules_at: HashMap<usize, BTreeSet<&str>> = HashMap::new();
+            // The lines that write a name of another file, and the modules those names
+            // are in: what tells a module the file writes a name through from a bare one.
+            let mut name_lines: HashSet<usize> = HashSet::new();
+            let mut name_modules: HashSet<ModulePath> = HashSet::new();
+            // Each module named, by its file, line, package and path.
+            let mut named_modules: Vec<(&str, usize, ModulePath)> = Vec::new();
+            // The module of the names each other file defines, and the file of each
+            // module: where they differ, the module is of several files (a Go package).
+            let mut module_of: HashMap<&str, ModulePath> = HashMap::new();
+            let mut file_of_module: HashMap<ModulePath, &str> = HashMap::new();
             for (((reference, name), file), merged) in read.iter().zip(&files).zip(&merged) {
                 let Some(file) = file.filter(|file| *file != document.path && !merged) else {
                     continue;
                 };
                 let module = name.shape == Shape::Module;
-                if module {
-                    modules_at.entry(reference.line).or_default().insert(file);
+                let path = (&name.package, name.path.as_slice());
+                match name.shape {
+                    Shape::TopLevel => {
+                        name_lines.insert(reference.line);
+                        name_modules.insert(path);
+                        module_of.insert(file, path);
+                    }
+                    Shape::Module => {
+                        modules_at.entry(reference.line).or_default().insert(file);
+                        named_modules.push((file, reference.line, path));
+                        file_of_module.insert(path, file);
+                    }
+                    _ => {}
                 }
                 mentions.entry(file).or_default().push(Mention {
                     line: reference.line,
                     symbol: (!module).then(|| name.symbol.clone()),
+                    called: called_in(name, file),
+                    bare: module,
                 });
+            }
+            // A module is bare unless a line that names it writes a name, or the file
+            // writes a name of it.
+            let through_names: HashSet<&str> = named_modules
+                .iter()
+                .filter(|(_, line, path)| name_lines.contains(line) || name_modules.contains(path))
+                .map(|(file, _, _)| *file)
+                .collect();
+            for (file, found) in mentions.iter_mut() {
+                if through_names.contains(file) {
+                    for mention in found.iter_mut() {
+                        mention.bare = false;
+                    }
+                }
             }
             for found in mentions.values_mut() {
                 found.sort();
@@ -1340,9 +1375,12 @@ impl<'a> Indexed<'a> {
                         part: part_at(document, reference.line),
                         written: Written::Name,
                     };
+                    let module = name.shape == Shape::Module;
                     by_alias.entry(key).or_default().insert(Aliased {
                         line: reference.line,
                         chain: chain.clone(),
+                        symbol: (!module).then(|| name.symbol.clone()),
+                        called: called_in(name, file),
                     });
                 }
             }
@@ -1365,6 +1403,30 @@ impl<'a> Indexed<'a> {
                 .into_iter()
                 .filter(|(key, line)| !covered(key, *line))
                 .collect();
+            // The names of the other files of a module the file names, which no
+            // dependency of their own stands for, by the file the module is.
+            let targeted: HashSet<&str> = kept.iter().filter_map(|(key, _)| key.internal).collect();
+            let mut elsewhere: HashMap<&str, Vec<Elsewhere>> = HashMap::new();
+            for (file, module) in &module_of {
+                let Some(module_file) = file_of_module.get(module) else {
+                    continue;
+                };
+                if module_file == file || targeted.contains(file) || !checked.contains(file) {
+                    continue;
+                }
+                let names = mentions.get(file).into_iter().flatten();
+                elsewhere.entry(module_file).or_default().extend(
+                    names
+                        .filter(|mention| mention.symbol.is_some())
+                        .map(|mention| Elsewhere {
+                            file: file.to_string(),
+                            mention: mention.clone(),
+                        }),
+                );
+            }
+            for found in elsewhere.values_mut() {
+                found.sort();
+            }
             for (key, line) in kept {
                 // Only a line that writes the name itself says what it came through.
                 let written_here = first.get(&key) == Some(&line);
@@ -1411,6 +1473,12 @@ impl<'a> Indexed<'a> {
                         .unwrap_or_default(),
                     through,
                     aliased,
+                    elsewhere: match (key.written, key.internal) {
+                        (Written::Module, Some(path)) => {
+                            elsewhere.get(path).cloned().unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    },
                     ..dep
                 });
             }
@@ -1445,6 +1513,22 @@ impl<'a> Indexed<'a> {
             known_whole,
         }
     }
+}
+
+/// A module by its package and path, as a name of it gives them.
+type ModulePath<'a> = (&'a Option<String>, &'a [String]);
+
+/// What the symbol rules call `name`, a name defined in `file`: `None` for a module,
+/// and for a name the index gives no call of.
+fn called_in(name: &Name, file: &str) -> Option<crate::lang::Called> {
+    let called = name
+        .called
+        .as_ref()
+        .filter(|_| name.shape != Shape::Module)?;
+    Some(crate::lang::Called {
+        qualifier: called.qualifier_in(Some(file)),
+        name: called.name.clone(),
+    })
 }
 
 /// Follows each name a file writes through the modules its line names, or the file
@@ -2079,15 +2163,18 @@ mod tests {
                 .find(|d| d.file == Path::new(file) && d.specifier == target)
                 .unwrap()
         };
-        let mention = |line, symbol: Option<&str>| Mention {
-            line,
-            symbol: symbol.map(str::to_string),
+        let mention = |line, symbol: Option<&str>| (line, symbol.map(str::to_string));
+        let lines = |dep: &Dep| -> Vec<(usize, Option<String>)> {
+            dep.mentions
+                .iter()
+                .map(|mention| (mention.line, mention.symbol.clone()))
+                .collect()
         };
         // One dependency, at the first line, that still knows the re-export below it.
         let chunk = of("chunk/src/lib.rs", "blob/src/lib.rs");
         assert_eq!(chunk.line, 1);
         assert_eq!(
-            chunk.mentions,
+            lines(chunk),
             [
                 mention(1, None),
                 mention(1, Some(&block)),
@@ -2097,7 +2184,7 @@ mod tests {
         );
         assert_eq!(chunk.through, Through::Nothing);
         let gw = of("gw/src/lib.rs", "blob/src/lib.rs");
-        assert_eq!(gw.mentions, [mention(2, Some(&block))]);
+        assert_eq!(lines(gw), [mention(2, Some(&block))]);
         assert_eq!(gw.through, Through::Line(vec!["chunk/src/lib.rs".into()]));
         // A module the code names is reached through nothing.
         assert_eq!(
@@ -3220,17 +3307,20 @@ mod tests {
             file: "chunk/chunk.go".to_string(),
             line,
         };
+        let aliased: Vec<(usize, &[AliasDefinition], String)> = blob
+            .aliased
+            .iter()
+            .map(|aliased| {
+                let called = aliased.called.as_ref().unwrap().to_string();
+                (aliased.line, aliased.chain.as_slice(), called)
+            })
+            .collect();
+        let block = "example.com/app/blob.Block".to_string();
         assert_eq!(
-            blob.aliased,
+            aliased,
             [
-                Aliased {
-                    line: 3,
-                    chain: vec![at(9)],
-                },
-                Aliased {
-                    line: 4,
-                    chain: vec![at(11), at(9)],
-                },
+                (3, &[at(9)][..], block.clone()),
+                (4, &[at(11), at(9)][..], block),
             ]
         );
         // Each use is a use of `blob.Block` too, and still one of the alias.
