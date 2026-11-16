@@ -1,0 +1,32 @@
+---
+source: tests/library/plan.rs
+expression: "report[\"plan\"]"
+---
+{
+  "unplanned": [
+    {
+      "component": "web",
+      "from": "src/web/a.ts",
+      "line": 1,
+      "target_component": "core",
+      "to": "src/core/c.ts"
+    },
+    {
+      "component": "web",
+      "external": "lodash/fp",
+      "from": "src/web/a.ts",
+      "line": 2,
+      "target_component": null
+    }
+  ],
+  "unrealized": [
+    {
+      "from": "src/web/a.ts",
+      "to": "src/core/b.ts"
+    },
+    {
+      "external": "zod",
+      "from": "src/web/a.ts"
+    }
+  ]
+}

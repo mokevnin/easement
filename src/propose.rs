@@ -23,20 +23,34 @@ use crate::relpath;
 use crate::report::{self, Coverage};
 use crate::stdlib;
 
-/// What a proposed dependency would import.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a proposed dependency would import, written as a plan writes it: `to`
+/// or `external`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum To {
     /// A path of the project, relative to the root.
+    #[serde(rename = "to")]
     Path(String),
     /// An external module.
+    #[serde(rename = "external")]
     External(String),
+}
+
+impl To {
+    /// What it imports, as reports name it: the path, or `external <module>`.
+    pub fn label(&self) -> String {
+        match self {
+            To::Path(path) => path.clone(),
+            To::External(module) => format!("external {module}"),
+        }
+    }
 }
 
 /// A proposed dependency: the file that would hold the import, relative to the
 /// root, and what it would import. Neither needs to exist.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Proposal {
     pub from: String,
+    #[serde(flatten)]
     pub to: To,
 }
 
@@ -52,15 +66,26 @@ fn proposal_at(line: usize) -> Option<usize> {
 impl Proposal {
     /// `from -> to`, as reports name the proposal.
     pub fn label(&self) -> String {
-        match &self.to {
-            To::Path(path) => format!("{} -> {path}", self.from),
-            To::External(module) => format!("{} -> external {module}", self.from),
-        }
+        format!("{} -> {}", self.from, self.to.label())
     }
 
     /// Whether the proposal is the import of `to` from `from`.
     fn is(&self, from: &str, to: &str) -> bool {
         self.from == from && self.to == To::Path(to.to_string())
+    }
+
+    /// Whether the proposal names the import of `target` by the file `from`: a
+    /// path that is the target's or a directory holding it, or the external
+    /// module, which covers its submodules as the policy's external lists do.
+    pub fn covers(&self, from: &str, target: &Target) -> bool {
+        self.from == from
+            && match (&self.to, target) {
+                (To::Path(path), Target::Internal(unit)) => relpath::is_under(&unit.key(), path),
+                (To::External(planned), Target::External(module)) => {
+                    ComponentMap::external_matches(planned, [(from, module.as_str())])
+                }
+                _ => false,
+            }
     }
 
     /// The dependency the code would have, as the `index`th proposal.

@@ -8,6 +8,7 @@ use crate::baseline::{Severity, Verdict};
 use crate::check::{self, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
+use crate::drift::Drift;
 use crate::suggest::Spared;
 
 #[derive(Serialize)]
@@ -33,6 +34,9 @@ struct JsonReport<'a> {
     cached: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<DiffInfo<'a>>,
+    /// Under `--plan`, how the change departs from the plan.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "plan")]
+    drift: Option<&'a Drift>,
     /// Under `--suggest`, the unused `may_depend_on` entries it does not fail on.
     #[serde(flatten)]
     spared: &'a Spared,
@@ -445,6 +449,8 @@ pub struct Report<'a> {
     pub require_evidence: bool,
     /// Under `--suggest`, the unused `may_depend_on` entries it does not fail on.
     pub spared: &'a Spared,
+    /// Under `--plan`, how the change departs from the plan.
+    pub drift: Option<&'a Drift>,
 }
 
 /// How many files a text list names before it counts the rest.
@@ -594,6 +600,7 @@ impl Report<'_> {
             diff,
             require_evidence: _,
             spared,
+            drift,
         } = self;
         let report = JsonReport {
             passed: self.passed(),
@@ -611,6 +618,7 @@ impl Report<'_> {
                 policy_changed: &d.attribution.policy_changed,
                 in_full: &d.attribution.in_full,
             }),
+            drift,
             spared,
             stats,
         };
@@ -636,6 +644,7 @@ impl Report<'_> {
             diff,
             require_evidence: _,
             spared,
+            drift,
         } = self;
         let mut out = String::new();
         if let Some(d) = diff {
@@ -686,6 +695,9 @@ impl Report<'_> {
                 body.push_str(&format!("  {d}\n"));
             }
             section(&mut out, &body);
+        }
+        if let Some(drift) = drift {
+            section(&mut out, &drift.text());
         }
         if !stats.frameworks.is_empty() {
             section(&mut out, &framework_lines(&stats.frameworks));
@@ -1014,6 +1026,7 @@ impl Report<'_> {
             diff,
             require_evidence: _,
             spared,
+            drift,
         } = self;
         let mut out = String::new();
         for (severity, v) in verdict.reported() {
@@ -1052,6 +1065,16 @@ impl Report<'_> {
                     "New component dependencies in this change: {}",
                     stats.new_dependencies.join(", ")
                 ))
+            ));
+        }
+        for (place, note) in drift.iter().flat_map(|d| d.notes()) {
+            let place = place.map_or(String::new(), |(file, line)| {
+                format!("file={},line={line},", escape_property(file))
+            });
+            out.push_str(&format!(
+                "::notice {place}title={}::{}\n",
+                escape_property("easement plan"),
+                escape_command(&note)
             ));
         }
         let narrowed = coverage
@@ -1286,6 +1309,7 @@ mod tests {
             stats: &Stats::default(),
             coverage: &Coverage::default(),
             diff: None,
+            drift: None,
             require_evidence: false,
             spared: &NO_SPARED,
         }
@@ -1332,6 +1356,7 @@ mod tests {
                 stats: &stats,
                 coverage: &Coverage::default(),
                 diff: None,
+                drift: None,
                 require_evidence: false,
                 spared: &NO_SPARED,
             }
@@ -1348,6 +1373,7 @@ mod tests {
             stats: &stats,
             coverage: &Coverage::default(),
             diff: None,
+            drift: None,
             require_evidence: false,
             spared: &NO_SPARED,
         }
@@ -1360,6 +1386,7 @@ mod tests {
                 stats: &Stats::default(),
                 coverage: &Coverage::default(),
                 diff: None,
+                drift: None,
                 require_evidence: false,
                 spared: &NO_SPARED,
             }
@@ -1373,6 +1400,7 @@ mod tests {
                 stats: &Stats::default(),
                 coverage: &Coverage::default(),
                 diff: None,
+                drift: None,
                 require_evidence: false,
                 spared: &NO_SPARED,
             }
@@ -1399,6 +1427,7 @@ mod tests {
             stats: &Stats::default(),
             coverage: &coverage,
             diff: None,
+            drift: None,
             require_evidence: false,
             spared: &NO_SPARED,
         }
@@ -1457,6 +1486,7 @@ mod tests {
             stats: &stats,
             coverage: &coverage,
             diff: None,
+            drift: None,
             require_evidence,
             spared: &NO_SPARED,
         };
@@ -1511,6 +1541,7 @@ mod tests {
             stats: &stats,
             coverage: &coverage,
             diff: None,
+            drift: None,
             require_evidence,
             spared: &NO_SPARED,
         };
@@ -1562,6 +1593,7 @@ mod tests {
             stats: &stats,
             coverage: &Coverage::of_check(&stats, vec![], vec![]),
             diff: None,
+            drift: None,
             require_evidence: false,
             spared: &NO_SPARED,
         }
@@ -1584,6 +1616,7 @@ mod tests {
                 stats: &Stats::default(),
                 coverage: &Coverage::default(),
                 diff: None,
+                drift: None,
                 require_evidence: false,
                 spared: &NO_SPARED,
             }
@@ -1602,6 +1635,7 @@ mod tests {
             stats: &Stats::default(),
             coverage: &narrowed,
             diff: None,
+            drift: None,
             require_evidence: false,
             spared: &NO_SPARED,
         }

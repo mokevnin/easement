@@ -1,0 +1,19 @@
+---
+source: tests/library/plan.rs
+expression: hide(text(&checked))
+---
+Checking lines changed since main (merge-base [merge-base])
+
+
+New dependencies between components in this change:
+  web -> core
+
+Not in the plan:
+  src/web/a.ts:1 -> src/core/c.ts
+  src/web/a.ts:2 -> external lodash/fp
+
+Planned, not in the code:
+  src/web/a.ts -> src/core/b.ts
+  src/web/a.ts -> external zod
+
+easement passed: 0 violation(s), 0 stale, 0 legalized; 4 files, 1 internal deps

@@ -11,6 +11,7 @@ mod decision;
 mod diagram;
 mod diff;
 mod doctor;
+mod drift;
 mod examples;
 mod explain;
 mod flow;
