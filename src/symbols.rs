@@ -267,11 +267,7 @@ pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
     if owner.is_some()
         && let Some(to) = used.defined_by
         && to != from
-        && let Some(public) = &config.components[to].public_symbols
-        && !used
-            .public_as
-            .iter()
-            .any(|name| public.iter().any(|p| p == name))
+        && let Some(public) = outside_public_symbols(config, to, &used.public_as)
     {
         found.push(Found {
             message: format!(
@@ -285,6 +281,21 @@ pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
         });
     }
     Judged { found, granted }
+}
+
+/// The `public_symbols` of `to` when they keep out a name used as one of
+/// `public_as` (the name, or the type it is a member of); `None` when `to` has no
+/// such list or the list lets it in.
+pub fn outside_public_symbols<'a>(
+    config: &'a Config,
+    to: &str,
+    public_as: &[&str],
+) -> Option<&'a [String]> {
+    let public = config.components[to].public_symbols.as_deref()?;
+    let listed = public_as
+        .iter()
+        .any(|name| public.iter().any(|p| p == name));
+    (!listed).then_some(public)
 }
 
 /// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a

@@ -421,30 +421,7 @@ pub fn decide<'a>(
         }
         Target::Internal(unit) => unit.clone(),
     };
-    let unit = if !dep.candidates.is_empty() {
-        let here = map.component_of(slash(&dep.file).as_str());
-        // Which copy an import means is not decided by the policy: take the copy
-        // in the importing file's component, otherwise the first by path. A copy
-        // `exclude` hides is not skipped, so the import fails as `excluded`
-        // rather than being taken for the copy that breaks no rule.
-        let own = dep
-            .candidates
-            .iter()
-            .map(String::as_str)
-            .filter(|c| here.is_some() && map.component_of(c) == here)
-            .min();
-        if let Some(chosen) = own {
-            Unit::from(chosen)
-        } else {
-            dep.candidates
-                .iter()
-                .min()
-                .map(|c| Unit::from(c.as_str()))
-                .unwrap_or(unit)
-        }
-    } else {
-        unit
-    };
+    let unit = meant(map, dep, unit);
     let target = unit.key();
     if map.is_excluded(&target) {
         return Ok(decision(
@@ -502,6 +479,51 @@ pub fn decide<'a>(
         resolution_status,
         dep.candidates.clone(),
     ))
+}
+
+/// The copy of its target that `dep` means, `unit` when the declaration is
+/// unambiguous. Which copy an import means is not decided by the policy: take the
+/// copy in the importing file's component, otherwise the first by path. A copy
+/// `exclude` hides is not skipped, so the import fails as `excluded` rather than
+/// being taken for the copy that breaks no rule.
+fn meant(map: &ComponentMap, dep: &Dep, unit: Unit) -> Unit {
+    if dep.candidates.is_empty() {
+        return unit;
+    }
+    let here = map.component_of(slash(&dep.file).as_str());
+    let own = dep
+        .candidates
+        .iter()
+        .map(String::as_str)
+        .filter(|c| here.is_some() && map.component_of(c) == here)
+        .min();
+    match own {
+        Some(chosen) => Unit::from(chosen),
+        None => dep
+            .candidates
+            .iter()
+            .min()
+            .map(|c| Unit::from(c.as_str()))
+            .unwrap_or(unit),
+    }
+}
+
+/// Whether the surfaces of the component `dep` reaches keep it closed to the
+/// component of its source: the judgement of `privacy` alone, whatever the rest of
+/// the policy says of the pair. False when either end is in no component, or both
+/// in the same one.
+pub fn surface_closed(map: &ComponentMap, dep: &Dep) -> bool {
+    let Target::Internal(unit) = &dep.target else {
+        return false;
+    };
+    let unit = meant(map, dep, unit.clone());
+    let (Some(from), Some(to)) = (
+        map.component_of_unit(&dep.from),
+        map.component_of_unit(&unit),
+    ) else {
+        return false;
+    };
+    from != to && closed_entry(map, from, to, dep, &unit.key()).is_some()
 }
 
 /// Where the policy writes the grant that lets `from` depend on `to`: none

@@ -6,3 +6,5 @@ gw -> blob is not allowed
 1 dependency(ies):
   internal/gw/gw.go:5 depends on internal/blob/blob.go [violates: dependency]
     through an alias: internal/gw/gw.go:5 -> internal/chunk/chunk.go:11 -> internal/chunk/chunk.go:9 -> internal/blob/blob.go
+gw writes 1 name of blob:
+  example.com/app/internal/blob.Block (1 place)

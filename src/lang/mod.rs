@@ -212,6 +212,18 @@ pub struct Dep {
     /// before the file that defines it. Empty when the file writes the name from that
     /// file, or when the index shows no module on the way re-exporting it.
     pub routes: Vec<Vec<Hop>>,
+    /// For a module of several files (a Go package): the names the file writes that
+    /// its other files define. The module stands for them, so no dependency of their
+    /// own does and no `mentions` hold them. Empty for a module of one file.
+    pub elsewhere: Vec<Elsewhere>,
+}
+
+/// A name a file writes through a module that another file of the module defines.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Elsewhere {
+    /// The file that defines it.
+    pub file: String,
+    pub mention: Mention,
 }
 
 /// A line of a module that re-exports a name, on the way to the file that defines it.
@@ -228,6 +240,10 @@ pub struct Hop {
 pub struct Aliased {
     pub line: usize,
     pub chain: Vec<AliasDefinition>,
+    /// The symbol of the name the alias stands for; `None` for a module.
+    pub symbol: Option<String>,
+    /// What the symbol rules call that name, when it is one the index gives a call of.
+    pub called: Option<Called>,
 }
 
 /// Where an alias is defined.
@@ -269,6 +285,27 @@ pub struct Mention {
     pub line: usize,
     /// The symbol of the name written there; `None` for a module.
     pub symbol: Option<String>,
+    /// For a name: what the symbol rules call it. `None` for a module, and for a
+    /// name the index gives no such call of.
+    pub called: Option<Called>,
+    /// For a module: the file writes no name through any module of this file,
+    /// neither on a line that names one nor a name defined in one, so the index
+    /// gives none of its uses to a name (`import "./polyfill"`). `false` for a name.
+    pub bare: bool,
+}
+
+/// A name as the symbol rules call it: the qualifier and the name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Called {
+    pub qualifier: String,
+    pub name: String,
+}
+
+/// `qualifier.name`, as a symbol violation's target writes a name.
+impl std::fmt::Display for Called {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.qualifier, self.name)
+    }
 }
 
 impl Dep {
@@ -292,6 +329,7 @@ impl Dep {
             through: Through::Nothing,
             aliased: Vec::new(),
             routes: Vec::new(),
+            elsewhere: Vec::new(),
         }
     }
 
