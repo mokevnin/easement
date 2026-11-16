@@ -295,8 +295,13 @@ impl Adapter for Kotlin {
                     files.keys().cloned().collect(),
                     // A type one place should hold, declared in several files,
                     // is a real duplicate. Overloads and extensions of one
-                    // function or property are not.
-                    files.len() > 1 && files.values().any(|kind| *kind == DeclKind::Type),
+                    // function or property are not, nor a function of the
+                    // type's name beside it (a factory): the import means both.
+                    files
+                        .values()
+                        .filter(|kind| **kind == DeclKind::Type)
+                        .count()
+                        > 1,
                 ),
                 None => (Vec::new(), false),
             }
