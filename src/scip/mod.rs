@@ -1173,49 +1173,39 @@ impl<'a> Indexed<'a> {
                         && written_at(reference, name).is_some_and(|at| external_at.contains(&at))
                 })
                 .collect();
-            // The lines that write a name of another file, and the modules those names
-            // are in: what tells a module the file writes a name through from a bare one.
-            let mut name_lines: HashSet<usize> = HashSet::new();
-            let mut name_modules: HashSet<(&Option<String>, &[String])> = HashSet::new();
-            // The module of the names each other file defines, and the file of each
-            // module: where they differ, the module is of several files (a Go package).
-            let mut module_of: HashMap<&str, (&Option<String>, &[String])> = HashMap::new();
-            let mut file_of_module: HashMap<(&Option<String>, &[String]), &str> = HashMap::new();
-            for (((reference, name), file), merged) in read.iter().zip(&files).zip(&merged) {
-                let Some(file) = file.filter(|file| *file != document.path && !merged) else {
-                    continue;
-                };
-                match name.shape {
-                    Shape::TopLevel => {
-                        name_lines.insert(reference.line);
-                        name_modules.insert((&name.package, &name.path));
-                        module_of.insert(file, (&name.package, &name.path));
-                    }
-                    Shape::Module => {
-                        file_of_module.insert((&name.package, &name.path), file);
-                    }
-                    _ => {}
-                }
-            }
             // Every line that refers to each other file, before any is left out below: a
             // re-export need not be the first line that refers to what it re-exports.
             let mut mentions: HashMap<&str, Vec<Mention>> = HashMap::new();
             // The other files whose modules each line names.
             let mut modules_at: HashMap<usize, BTreeSet<&str>> = HashMap::new();
-            // The other files a module of which the file writes a name through.
-            let mut through_names: HashSet<&str> = HashSet::new();
+            // The lines that write a name of another file, and the modules those names
+            // are in: what tells a module the file writes a name through from a bare one.
+            let mut name_lines: HashSet<usize> = HashSet::new();
+            let mut name_modules: HashSet<ModulePath> = HashSet::new();
+            // Each module named, by its file, line, package and path.
+            let mut named_modules: Vec<(&str, usize, ModulePath)> = Vec::new();
+            // The module of the names each other file defines, and the file of each
+            // module: where they differ, the module is of several files (a Go package).
+            let mut module_of: HashMap<&str, ModulePath> = HashMap::new();
+            let mut file_of_module: HashMap<ModulePath, &str> = HashMap::new();
             for (((reference, name), file), merged) in read.iter().zip(&files).zip(&merged) {
                 let Some(file) = file.filter(|file| *file != document.path && !merged) else {
                     continue;
                 };
                 let module = name.shape == Shape::Module;
-                if module {
-                    modules_at.entry(reference.line).or_default().insert(file);
-                    if name_lines.contains(&reference.line)
-                        || name_modules.contains(&(&name.package, name.path.as_slice()))
-                    {
-                        through_names.insert(file);
+                let path = (&name.package, name.path.as_slice());
+                match name.shape {
+                    Shape::TopLevel => {
+                        name_lines.insert(reference.line);
+                        name_modules.insert(path);
+                        module_of.insert(file, path);
                     }
+                    Shape::Module => {
+                        modules_at.entry(reference.line).or_default().insert(file);
+                        named_modules.push((file, reference.line, path));
+                        file_of_module.insert(path, file);
+                    }
+                    _ => {}
                 }
                 mentions.entry(file).or_default().push(Mention {
                     line: reference.line,
@@ -1224,6 +1214,13 @@ impl<'a> Indexed<'a> {
                     bare: module,
                 });
             }
+            // A module is bare unless a line that names it writes a name, or the file
+            // writes a name of it.
+            let through_names: HashSet<&str> = named_modules
+                .iter()
+                .filter(|(_, line, path)| name_lines.contains(line) || name_modules.contains(path))
+                .map(|(file, _, _)| *file)
+                .collect();
             for (file, found) in mentions.iter_mut() {
                 if through_names.contains(file) {
                     for mention in found.iter_mut() {
@@ -1517,6 +1514,9 @@ impl<'a> Indexed<'a> {
         }
     }
 }
+
+/// A module by its package and path, as a name of it gives them.
+type ModulePath<'a> = (&'a Option<String>, &'a [String]);
 
 /// What the symbol rules call `name`, a name defined in `file`: `None` for a module,
 /// and for a name the index gives no call of.

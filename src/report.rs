@@ -142,6 +142,9 @@ pub enum GapKind {
     Unused,
     /// Files a change deletes: what imported them is not in the code any more.
     Deleted,
+    /// Files whose names of another component `why` does not count: easement reads
+    /// no uses of names from their language.
+    Names,
 }
 
 impl GapKind {
@@ -160,7 +163,8 @@ impl GapKind {
             | GapKind::Declarations
             | GapKind::Symbols
             | GapKind::Implementation
-            | GapKind::Unused => false,
+            | GapKind::Unused
+            | GapKind::Names => false,
         }
     }
 }

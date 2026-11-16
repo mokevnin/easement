@@ -223,7 +223,8 @@ pub struct WrittenName {
     pub places: Vec<Place>,
     /// Whether the policy lets it in through the public surface of the target at
     /// every place: its public files and the named surfaces open to the source
-    /// (`privacy`), and its `public_symbols`. Absent when the target declares neither.
+    /// (`privacy`), and its `public_symbols`. Absent when the target declares neither,
+    /// and when `public_symbols` would have to judge a name the index gives no call of.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public: Option<bool>,
 }
@@ -439,7 +440,7 @@ fn names_unread<'a>(
         .into_iter()
         .map(|(language, files)| {
             EvidenceGap::of(
-                GapKind::Symbols,
+                GapKind::Names,
                 &Unjudged::new(format!(
                     "the names of {to} that {} {language} file(s) of {from} write are not counted: easement does not read uses of names from {language}, so only their dependencies are known",
                     files.len()
@@ -554,14 +555,20 @@ fn written_names<'a>(
     let names = names
         .into_iter()
         .map(|((name, file), found)| {
-            // A name the index gives no call of is one `public_symbols` does not judge.
             let listed = |called: &Called| {
                 from == to
                     || symbols::outside_public_symbols(config, to, &[called.name.as_str()])
                         .is_none()
             };
-            let public =
-                declared.then(|| !found.closed && found.called.as_ref().is_none_or(listed));
+            // `public_symbols` judges a name by its call: one the index gives none of
+            // is left unsaid unless its way in is closed anyway.
+            let public = match (declared, found.closed, &found.called) {
+                (false, _, _) => None,
+                (true, true, _) => Some(false),
+                (true, false, Some(called)) => Some(listed(called)),
+                (true, false, None) if component.public_symbols.is_none() => Some(true),
+                (true, false, None) => None,
+            };
             WrittenName {
                 name,
                 file,
@@ -599,7 +606,7 @@ fn size_lines(why: &Why) -> String {
         .coverage
         .evidence_gaps
         .iter()
-        .any(|gap| gap.kind == GapKind::Symbols);
+        .any(|gap| gap.kind == GapKind::Names);
     let mut out = format!(
         "{from} writes {} of {to}{}{}\n",
         count(why.names.len(), "name", "names"),

@@ -315,14 +315,14 @@ fn the_size_of_a_dependency_has_the_same_shape_in_go_and_python() {
     assert!(text.contains("a writes 2 names of b:\n"), "{text}");
 }
 
-/// The `symbols` evidence gaps of a `why` answer, each as its files and whether
+/// The `names` evidence gaps of a `why` answer, each as its files and whether
 /// its message names `language`.
 fn name_gaps(why: &serde_json::Value, language: &str) -> Vec<(serde_json::Value, bool)> {
     why["evidence_gaps"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|gap| gap["kind"] == "symbols")
+        .filter(|gap| gap["kind"] == "names")
         .map(|gap| {
             let message = gap["message"].as_str().unwrap();
             (gap["files"].clone(), message.contains(language))
