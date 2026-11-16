@@ -124,10 +124,11 @@ pub fn unused(input: &Input) -> Result<Unused> {
             || program(input.root, file, &mut unreadable)
             || input.map.component_of(file).is_none_or(|c| c == TESTS)
             || judged.is_none();
-        if !root && packaged.files.contains(file.as_str()) {
+        let packaged = packaged.files.contains(file.as_str());
+        if !root && packaged {
             by_manifest.insert(file);
         }
-        if root || packaged.files.contains(file.as_str()) {
+        if root || packaged {
             roots.push(file);
         } else {
             candidates.push(file);
