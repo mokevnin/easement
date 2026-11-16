@@ -141,6 +141,83 @@ pub struct Found {
     pub target: String,
 }
 
+/// Where a `forbid_symbol` item is written: its index in the top-level list, or
+/// in the own list of the component of the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Item {
+    Top(usize),
+    Own(usize),
+}
+
+/// What lets a file use a name a top-level item forbids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Granted<'a> {
+    /// `allow` lists the component of the file.
+    Allow(&'a str),
+    /// The `allow_in` pattern at this index matches the file.
+    AllowIn { at: usize, pattern: &'a str },
+}
+
+/// An item of `forbid_symbol` as it binds one file.
+pub struct Binding<'a> {
+    pub listed: &'a ForbiddenName,
+    pub item: Item,
+    /// The reason a violation gives: the item's, else that of the rule that lists it.
+    pub because: Option<&'a str>,
+    /// What lets the file use the name all the same, if anything.
+    pub granted: Option<Granted<'a>>,
+}
+
+/// The items of `forbid_symbol` whose name `wanted` takes, as they bind `file`
+/// of the component `owner`, in the order a use is judged: the top-level list,
+/// then the component's own; `allow` before `allow_in`. `check` and `explain`
+/// both read the symbol rules through it.
+pub fn bindings<'a>(
+    config: &'a Config,
+    map: &'a ComponentMap,
+    owner: Option<&'a str>,
+    file: &str,
+    wanted: impl Fn(&str) -> bool,
+) -> Vec<Binding<'a>> {
+    let global = config
+        .forbid_symbol
+        .iter()
+        .enumerate()
+        .map(|(i, listed)| (listed, None, Item::Top(i)));
+    let own = owner
+        .and_then(|component| config.rules.get(component))
+        .into_iter()
+        .flat_map(|rule| {
+            rule.forbid_symbol
+                .iter()
+                .enumerate()
+                .map(move |(i, listed)| (listed, rule.because.as_deref(), Item::Own(i)))
+        });
+    global
+        .chain(own)
+        .filter(|(listed, _, _)| wanted(listed.name()))
+        .map(|(listed, fallback, item)| {
+            // A component the item allows may use the name, and so may a file in
+            // a path the item allows, whatever owns it.
+            let granted = owner
+                .filter(|component| listed.allows(component))
+                .map(Granted::Allow)
+                .or_else(|| match item {
+                    Item::Top(i) => map
+                        .granted_in(Ban::Symbol, i, file)
+                        .map(|(at, pattern)| Granted::AllowIn { at, pattern }),
+                    Item::Own(_) => None,
+                });
+            Binding {
+                listed,
+                item,
+                because: listed.because().or(fallback),
+                granted,
+            }
+        })
+        .collect()
+}
+
 /// The decision of `forbid_symbol` (the top-level list and that of the user's
 /// component) and of the `public_symbols` of the component that defines the name.
 pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
@@ -148,35 +225,21 @@ pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
     let mut granted = None;
     let owner = used.owner;
     let from = owner.unwrap_or_default();
-    let own = owner
-        .and_then(|component| config.rules.get(component))
-        .into_iter()
-        .flat_map(|rule| {
-            rule.forbid_symbol
-                .iter()
-                .map(move |listed| (listed, rule.because.as_deref(), None))
-        });
-    let global = config
-        .forbid_symbol
-        .iter()
-        .enumerate()
-        .map(|(item, listed)| (listed, None, Some(item)));
     let mut seen = BTreeSet::new();
-    for (listed, fallback, item) in global.chain(own) {
+    for binding in bindings(config, map, owner, used.file, |pattern| used.is(pattern)) {
+        match binding.granted {
+            Some(Granted::Allow(_)) => {
+                granted.get_or_insert("forbid_symbol allow");
+                continue;
+            }
+            Some(Granted::AllowIn { .. }) => {
+                granted.get_or_insert("forbid_symbol allow_in");
+                continue;
+            }
+            None => {}
+        }
+        let listed = binding.listed;
         let pattern = listed.name();
-        if !used.is(pattern) {
-            continue;
-        }
-        // A component the item allows may use the name.
-        if owner.is_some_and(|component| listed.allows(component)) {
-            granted.get_or_insert("forbid_symbol allow");
-            continue;
-        }
-        // So may a file in a path the item allows, whatever owns it.
-        if item.is_some_and(|item| map.granted_in(Ban::Symbol, item, used.file).is_some()) {
-            granted.get_or_insert("forbid_symbol allow_in");
-            continue;
-        }
         // A name in both lists is one violation.
         if !seen.insert(pattern) {
             continue;
@@ -196,7 +259,7 @@ pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
         };
         found.push(Found {
             message: format!("{who} must not use {pattern}{only}"),
-            because: listed.because().or(fallback).map(str::to_string),
+            because: binding.because.map(str::to_string),
             to: String::new(),
             target: pattern.to_string(),
         });

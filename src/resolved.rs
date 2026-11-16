@@ -12,7 +12,7 @@ use crate::config::{
 };
 use crate::decision::{self, ClauseId, Grant, Refusal};
 use crate::policy::{InputKind, Policy, Provenance, Site};
-use crate::symbols::own_ban;
+use crate::symbols::{Granted, Item, bindings, own_ban};
 
 /// The decision on every dependency of one component on another, before
 /// the paths of a dependency are known.
@@ -534,65 +534,56 @@ impl FileSymbols {
         let key = Ban::Symbol.key();
         let owner = map.component_of(rel);
         let mut seen = std::collections::BTreeSet::new();
-        for (item, listed) in config.forbid_symbol.iter().enumerate() {
-            let name = listed.name();
-            let because = listed.because().map(str::to_string);
-            if let Some(component) = owner.filter(|component| listed.allows(component)) {
-                let site = Site::of_top_allow(config, key, item, component)
-                    .unwrap_or_else(|| Site::in_key(key, format!("{key}[{item}].allow")));
-                found.allowed.push(AllowedSymbol {
-                    name: name.to_string(),
-                    allow: Some(component.to_string()),
-                    allow_in: None,
-                    because,
-                    provenance: policy.provenance(&site),
-                });
-                continue;
-            }
-            if let Some((at, pattern)) = map.granted_in(Ban::Symbol, item, rel) {
-                // The component's own list still forbids it: it is given below.
-                if owner.is_none_or(|component| own_ban(config, component, name).is_none()) {
+        for binding in bindings(config, map, owner, rel, |_| true) {
+            let listed = binding.listed;
+            let name = listed.name().to_string();
+            let because = binding.because.map(str::to_string);
+            let site = match (binding.item, binding.granted) {
+                (Item::Top(item), Some(Granted::Allow(component))) => {
                     found.allowed.push(AllowedSymbol {
-                        name: name.to_string(),
-                        allow: None,
-                        allow_in: Some(pattern.to_string()),
+                        name,
+                        allow: Some(component.to_string()),
+                        allow_in: None,
                         because,
-                        provenance: policy.provenance(&Site::in_key(
-                            key,
-                            format!("{key}[{item}].allow_in[{at}]"),
-                        )),
+                        provenance: policy.provenance(
+                            &Site::of_top_allow(config, key, item, component).unwrap_or_else(
+                                || Site::in_key(key, format!("{key}[{item}].allow")),
+                            ),
+                        ),
                     });
-                }
-                continue;
-            }
-            if seen.insert(name) {
-                found.forbidden.push(ForbiddenSymbol {
-                    name: name.to_string(),
-                    only: listed.who_may(),
-                    because,
-                    provenance: policy.provenance(&Site::in_key(key, format!("{key}[{item}]"))),
-                });
-            }
-        }
-        if let Some((component, rule)) =
-            owner.and_then(|component| Some((component, config.rules.get(component)?)))
-        {
-            for (i, listed) in rule.forbid_symbol.iter().enumerate() {
-                if !seen.insert(listed.name()) {
                     continue;
                 }
+                (Item::Top(item), Some(Granted::AllowIn { at, pattern })) => {
+                    // The component's own list still forbids it: it is given below.
+                    if owner.is_none_or(|component| own_ban(config, component, &name).is_none()) {
+                        found.allowed.push(AllowedSymbol {
+                            name,
+                            allow: None,
+                            allow_in: Some(pattern.to_string()),
+                            because,
+                            provenance: policy.provenance(&Site::in_key(
+                                key,
+                                format!("{key}[{item}].allow_in[{at}]"),
+                            )),
+                        });
+                    }
+                    continue;
+                }
+                // Only a top-level item lets anyone in.
+                (Item::Own(_), Some(_)) => continue,
+                (Item::Top(item), None) => Site::in_key(key, format!("{key}[{item}]")),
+                (Item::Own(i), None) => {
+                    let component = owner.unwrap_or_default();
+                    Site::of_rule(config, component, &format!(".{key}[{i}]"))
+                }
+            };
+            // A name in both lists is given once, as a violation is.
+            if seen.insert(listed.name()) {
                 found.forbidden.push(ForbiddenSymbol {
-                    name: listed.name().to_string(),
-                    only: Vec::new(),
-                    because: listed
-                        .because()
-                        .or(rule.because.as_deref())
-                        .map(str::to_string),
-                    provenance: policy.provenance(&Site::of_rule(
-                        config,
-                        component,
-                        &format!(".{key}[{i}]"),
-                    )),
+                    name,
+                    only: listed.who_may(),
+                    because,
+                    provenance: policy.provenance(&site),
                 });
             }
         }
