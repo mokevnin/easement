@@ -278,3 +278,34 @@ rules:
         ""
     );
 }
+
+/// An unused allowance a file named in `extends` writes fails too, at line 1 of
+/// the config, as every violation of a clause another input writes is reported,
+/// with that input in its `provenance`: `suggest --patch` cannot edit it there.
+#[test]
+fn check_suggest_names_the_input_that_writes_an_unused_allowance() {
+    let (_tmp, root) = project(&[
+        ("easement.yml", "extends: base.yml\n"),
+        (
+            "base.yml",
+            "version: 1
+components:
+  app: { in: src/app }
+  lib: { in: src/lib }
+rules:
+  app: { may_depend_on: [lib] }
+",
+        ),
+        ("src/app/a.ts", "export const a = 1;\n"),
+        ("src/lib/l.ts", "export const l = 1;\n"),
+    ]);
+    let checked = check_with(&root, |o| o.suggest = true);
+    let report = json(&checked);
+    assert_eq!(checked.outcome(), Outcome::Failed, "{report}");
+    let v = &report["violations"][0];
+    assert_eq!(
+        (&v["file"], &v["line"]),
+        (&"easement.yml".into(), &1.into())
+    );
+    assert_eq!(v["provenance"]["input"], "base.yml", "{report}");
+}

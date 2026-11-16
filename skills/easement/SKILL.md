@@ -50,7 +50,7 @@ An `unmatched` violation is about the config, not the code: an `in` pattern of a
 
 An `example` violation is about the config too: a policy example in `examples` no longer gets the decision it pins, so a change to the policy undid what it meant (a new grant, a wider `public`), or it names a path no component owns. Do not edit the example to make it pass: undo the change to the policy that flipped it, or ask a human whether the policy is meant to change.
 
-An `unused-allowance` violation, under `easement check --suggest`, is about the config as well: a `may_depend_on` entry no import uses. If your change removed the last import that used it, drop the entry (`easement suggest --patch | git apply`); otherwise tell a human, who may keep it for code still to come with `warn: [unused-allowance]`.
+An `unused-allowance` violation, under `easement check --suggest`, is about the config as well: a `may_depend_on` entry no import uses. If your change removed the last import that used it, drop the entry (`easement suggest --patch | git apply`, or by hand in the file `provenance.input` names); otherwise tell a human, who may keep it for code still to come with `warn: [unused-allowance]`.
 
 ## Changing easement.yml
 
