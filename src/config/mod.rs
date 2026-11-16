@@ -228,6 +228,9 @@ pub struct ScanPolicy {
     pub uses_symbols: bool,
     /// The names `forbid_symbol` lists, without the qualifier.
     pub watched_symbols: BTreeSet<String>,
+    /// Whether a rule sets `allow_implementers`, which reads the declarations an
+    /// index gives no relations.
+    pub implementations: bool,
 }
 
 impl ScanPolicy {
@@ -244,6 +247,7 @@ impl ScanPolicy {
             tests,
             uses_symbols,
             watched_symbols,
+            implementations,
         } = self;
         let mut keys = Vec::new();
         let mut differ = |key, differs: bool| {
@@ -264,6 +268,10 @@ impl ScanPolicy {
         differ(
             "public_symbols",
             !watched && *uses_symbols != other.uses_symbols,
+        );
+        differ(
+            "allow_implementers",
+            *implementations != other.implementations,
         );
         keys
     }
@@ -699,6 +707,14 @@ pub struct Rule {
     /// carry its own reason.
     #[serde(default)]
     pub requires_directive: Vec<Listed>,
+    /// When set, only these components (and the component itself) may hold a type
+    /// that implements or extends a type of this component, directly or through its
+    /// ancestors; `[]` leaves only the component itself. Read from the relations an
+    /// index declares, which is no dependency: a language without them is an
+    /// evidence gap. An item may be a glob over component names (`'api-*'`) or a
+    /// set (`'@drivers'`).
+    #[serde(default)]
+    pub allow_implementers: Option<Vec<String>>,
     /// Most components this one may depend on.
     #[serde(default)]
     pub max_fan_out: Option<usize>,
@@ -772,6 +788,10 @@ impl Config {
             tests: self.tests.is_some(),
             uses_symbols: self.uses_symbols(),
             watched_symbols: self.forbidden_symbol_names(),
+            implementations: self
+                .rules
+                .values()
+                .any(|rule| rule.allow_implementers.is_some()),
         }
     }
 
@@ -972,6 +992,16 @@ mod tests {
             base.differences(&head),
             ["exclude", "tests", "forbid_symbol"]
         );
+        // The declarations an index gives no relations are read only for
+        // `allow_implementers`, whatever it lists.
+        let limited = scan(
+            "version: 1\ncomponents:\n  a: { in: a }\nexclude: [gen]\nrules:\n  a: { allow_implementers: [] }\n",
+        );
+        assert_eq!(base.differences(&limited), ["allow_implementers"]);
+        let listed = scan(
+            "version: 1\ncomponents:\n  a: { in: a }\n  b: { in: b }\nexclude: [gen]\nrules:\n  a: { allow_implementers: [b] }\n",
+        );
+        assert!(limited.differences(&listed).is_empty());
     }
 
     #[test]

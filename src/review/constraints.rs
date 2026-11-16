@@ -699,6 +699,7 @@ impl Diff<'_> {
             must_use_external,
             requires_file,
             requires_directive,
+            allow_implementers,
             max_fan_out,
             max_instability,
         } = now;
@@ -765,6 +766,16 @@ impl Diff<'_> {
             may_use_external
                 .as_deref()
                 .map(|l| Items::listed(l, reasons.1)),
+        );
+        self.allowed(
+            at,
+            "allow_implementers",
+            then.allow_implementers
+                .as_deref()
+                .map(|l| Items::plain(l, reasons.0)),
+            allow_implementers
+                .as_deref()
+                .map(|l| Items::plain(l, reasons.1)),
         );
         self.limit(at, "max_fan_out", (then.max_fan_out, *max_fan_out), reasons);
         self.limit(

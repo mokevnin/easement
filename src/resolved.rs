@@ -241,6 +241,9 @@ pub struct RuleView {
     pub forbid_file: Vec<Named>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requires_directive: Vec<Named>,
+    /// The components that may implement or extend its types besides itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_implementers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_fan_out: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +251,15 @@ pub struct RuleView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub because: Option<String>,
     pub provenance: Provenance,
+}
+
+/// Who may implement or extend the types of a component besides itself, as a
+/// line of text: `allow_implementers: adapters, tests (and itself)`.
+pub fn implementers_line(implementers: &[String]) -> String {
+    match implementers {
+        [] => "allow_implementers: none (only itself)".to_string(),
+        listed => format!("allow_implementers: {} (and itself)", listed.join(", ")),
+    }
 }
 
 impl RuleView {
@@ -269,6 +281,7 @@ impl RuleView {
             requires_file,
             forbid_file,
             requires_directive,
+            allow_implementers,
             max_fan_out,
             max_instability,
             because,
@@ -281,6 +294,7 @@ impl RuleView {
             requires_file: named(requires_file),
             forbid_file: named(forbid_file),
             requires_directive: named(requires_directive),
+            allow_implementers: allow_implementers.clone(),
             max_fan_out: *max_fan_out,
             max_instability: *max_instability,
             because: because.clone(),
@@ -320,6 +334,9 @@ impl RuleView {
             if !items.is_empty() {
                 lines.push(format!("{label}: {}", names(items)));
             }
+        }
+        if let Some(implementers) = &self.allow_implementers {
+            lines.push(implementers_line(implementers));
         }
         if let Some(max) = self.max_fan_out {
             lines.push(format!("max_fan_out: {max}"));

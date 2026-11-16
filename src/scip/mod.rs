@@ -70,9 +70,12 @@ pub struct Document {
     pub references: Vec<Reference>,
     /// Symbols this file defines.
     pub definitions: Vec<String>,
-    /// The types this file defines (classes, structs, interfaces, traits),
-    /// by name and 1-based line.
-    pub types: Vec<(String, usize)>,
+    /// The types this file defines (classes, structs, interfaces, traits).
+    pub types: Vec<DefinedType>,
+    /// The types each type of this file declares it implements or extends, as the
+    /// index relates them: (type, supertype). Only a language whose relations are
+    /// declared gives them, directly or through ancestors as its indexer does.
+    pub supertypes: Vec<(String, String)>,
     /// The methods and functions this file defines that the index gave a range.
     pub scopes: Vec<Scope>,
     /// The parts of the file that a dependency can belong to instead of the file.
@@ -81,6 +84,43 @@ pub struct Document {
     pub encoding: PositionEncoding,
     /// The names this file defines that the index marks as aliases.
     pub aliases: Vec<Alias>,
+}
+
+/// A type a document defines, by its symbol, its name and its 1-based line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinedType {
+    pub symbol: String,
+    pub name: String,
+    pub line: usize,
+}
+
+/// Whether `symbol` names a type: its last descriptor is one.
+fn is_type(symbol: &str) -> bool {
+    split(symbol).is_some_and(|parsed| matches!(parsed.descriptors.last(), Some((_, Kind::Type))))
+}
+
+/// The supertypes the types of `document` declare, as (type, supertype): the
+/// relations of a type to a type that are implementations and no reference.
+/// scip-java also relates an interface to a record that implements it, as a
+/// reference too; that one is no supertype. A method's relation to the method it
+/// overrides follows from its type's and is not read.
+fn supertypes_of(document: &scip::types::Document) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for information in &document.symbols {
+        if !is_type(&information.symbol) {
+            continue;
+        }
+        for relationship in &information.relationships {
+            if relationship.is_implementation
+                && !relationship.is_reference
+                && relationship.symbol != information.symbol
+                && is_type(&relationship.symbol)
+            {
+                found.push((information.symbol.clone(), relationship.symbol.clone()));
+            }
+        }
+    }
+    found
 }
 
 /// A name whose definition the index marks as standing for other names: a type
@@ -255,10 +295,15 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
         let path = relpath::join(&prefix, relative);
         let encoding = document.position_encoding.enum_value_or_default();
         let mut source: Option<Vec<String>> = None;
+        let declared = registry::of(&path).is_some_and(|language| language.relations.declared());
         let mut parsed = Document {
             path,
             encoding,
             aliases: aliases_of(document),
+            supertypes: match declared {
+                true => supertypes_of(document),
+                false => Vec::new(),
+            },
             ..Document::default()
         };
         for occurrence in &document.occurrences {
@@ -269,7 +314,11 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
                 if let Some(parsed_symbol) = split(&occurrence.symbol)
                     && let Some((name, Kind::Type)) = parsed_symbol.descriptors.last()
                 {
-                    parsed.types.push((name.clone(), line_of(occurrence) + 1));
+                    parsed.types.push(DefinedType {
+                        symbol: occurrence.symbol.clone(),
+                        name: name.clone(),
+                        line: line_of(occurrence) + 1,
+                    });
                 }
                 // A method or function is `name().`; a parameter is `(name)`.
                 if occurrence.symbol.ends_with(").")
@@ -626,6 +675,109 @@ impl<'a> Indexed<'a> {
             own,
             aliases,
         }
+    }
+
+    /// The files that define the names `document` refers to on `lines`: a checked
+    /// file, or an excluded one for a name no checked file defines.
+    pub fn files_referred(
+        &self,
+        document: &Document,
+        lines: &std::ops::RangeInclusive<usize>,
+    ) -> BTreeSet<String> {
+        let lookup = Lookup {
+            mine: &self.checked,
+            others: &self.hidden,
+        };
+        document
+            .references
+            .iter()
+            .filter(|reference| lines.contains(&reference.line))
+            .filter_map(|reference| lookup.defined_at(&reference.symbol))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Every type of the checked documents that implements or extends another of
+    /// them, directly or through any chain of ancestors, whether the index gives the
+    /// relations transitively or only the direct ones. A chain goes through the types
+    /// of excluded documents too. A supertype outside the project is not followed:
+    /// no type it has can be the project's.
+    pub fn implementations(&self) -> Vec<crate::lang::Implementation> {
+        use crate::lang::{Implementation, TypeDef};
+        // Every type of the project at the file that defines it, a checked one first.
+        let mut types: BTreeMap<&str, TypeDef> = BTreeMap::new();
+        let mut checked: BTreeSet<&str> = BTreeSet::new();
+        let sides = [
+            (self.names.documents, &self.checked, true),
+            (self.names.excluded, &self.hidden, false),
+        ];
+        for (documents, definitions, is_checked) in sides {
+            for document in documents {
+                for defined in &document.types {
+                    let symbol = defined.symbol.as_str();
+                    if definitions.defined.get(symbol) != Some(&document.path.as_str())
+                        || types.contains_key(symbol)
+                    {
+                        continue;
+                    }
+                    types.insert(
+                        symbol,
+                        TypeDef {
+                            file: document.path.clone(),
+                            line: defined.line,
+                            name: defined.name.clone(),
+                        },
+                    );
+                    if is_checked {
+                        checked.insert(symbol);
+                    }
+                }
+            }
+        }
+        let mut direct: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for document in self.names.documents.iter().chain(self.names.excluded) {
+            for (sub, supertype) in &document.supertypes {
+                if types.contains_key(sub.as_str()) && types.contains_key(supertype.as_str()) {
+                    direct.entry(sub).or_default().insert(supertype);
+                }
+            }
+        }
+        let ancestors: BTreeMap<&str, BTreeSet<&str>> = direct
+            .keys()
+            .map(|&sub| {
+                let mut seen: BTreeSet<&str> = BTreeSet::new();
+                let mut pending: Vec<&str> = vec![sub];
+                while let Some(at) = pending.pop() {
+                    for &up in direct.get(at).into_iter().flatten() {
+                        if up != sub && seen.insert(up) {
+                            pending.push(up);
+                        }
+                    }
+                }
+                (sub, seen)
+            })
+            .collect();
+        let mut found = Vec::new();
+        for (sub, ups) in ancestors.iter().filter(|(sub, _)| checked.contains(*sub)) {
+            for supertype in ups.iter().filter(|up| checked.contains(*up)) {
+                let between = ups
+                    .iter()
+                    .filter(|middle| {
+                        *middle != supertype
+                            && ancestors
+                                .get(*middle)
+                                .is_some_and(|a| a.contains(supertype))
+                    })
+                    .map(|middle| types[middle].clone())
+                    .collect();
+                found.push(Implementation {
+                    sub: types[sub].clone(),
+                    supertype: types[supertype].clone(),
+                    between,
+                });
+            }
+        }
+        found
     }
 
     /// What `symbol` stands for when it is an alias: each symbol its definition
@@ -2938,9 +3090,18 @@ mod tests {
 
     /// A document of `occurrences` and `symbols`, parsed.
     fn parsed(occurrences: &[At], symbols: Vec<scip::types::SymbolInformation>) -> Document {
+        parsed_at("chunk/chunk.go", occurrences, symbols)
+    }
+
+    /// A document at `path` of `occurrences` and `symbols`, parsed.
+    fn parsed_at(
+        path: &str,
+        occurrences: &[At],
+        symbols: Vec<scip::types::SymbolInformation>,
+    ) -> Document {
         let mut index = Index::new();
         let mut document = scip::types::Document::new();
-        document.relative_path = "chunk/chunk.go".to_string();
+        document.relative_path = path.to_string();
         for (range, enclosing, symbol, definition) in occurrences {
             let mut occurrence = Occurrence::new();
             occurrence.range = range.to_vec();
@@ -3070,5 +3231,161 @@ mod tests {
                 stands_for: vec![block.clone()],
             }]
         );
+    }
+
+    /// A relationship as an indexer writes one for a supertype: an implementation
+    /// that is no reference.
+    fn supertype_of(symbol: &str, flags: &[(&str, bool)]) -> scip::types::SymbolInformation {
+        let mut information = scip::types::SymbolInformation::new();
+        information.symbol = symbol.to_string();
+        for (to, reference) in flags {
+            let mut relationship = scip::types::Relationship::new();
+            relationship.symbol = to.to_string();
+            relationship.is_implementation = true;
+            relationship.is_reference = *reference;
+            information.relationships.push(relationship);
+        }
+        information
+    }
+
+    /// The implementations of `documents` as `sub -> supertype [between]`, by name.
+    fn implementations_of(documents: &[Document]) -> Vec<String> {
+        implementations_beside(documents, &[])
+    }
+
+    /// The implementations of `documents`, with `excluded` beside them.
+    fn implementations_beside(documents: &[Document], excluded: &[Document]) -> Vec<String> {
+        let names = Names::of(documents, excluded);
+        let mut found: Vec<String> = Indexed::of(&names)
+            .implementations()
+            .iter()
+            .map(|i| {
+                let between: Vec<String> = i
+                    .between
+                    .iter()
+                    .map(|t| format!("{}:{}", t.file, t.line))
+                    .collect();
+                format!(
+                    "{}:{} {} -> {}:{} {} [{}]",
+                    i.sub.file,
+                    i.sub.line,
+                    i.sub.name,
+                    i.supertype.file,
+                    i.supertype.line,
+                    i.supertype.name,
+                    between.join(", ")
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// A type defined on line 3 of `path`, with its supertypes.
+    fn type_at(path: &str, symbol: &str, supertypes: &[(&str, bool)]) -> Document {
+        parsed_at(
+            path,
+            &[([2, 13, 16], Some([2, 0, 20]), symbol, true)],
+            vec![supertype_of(symbol, supertypes)],
+        )
+    }
+
+    #[test]
+    fn a_transitive_index_gives_each_implementation_with_the_types_between() {
+        let java = "scip-java maven maven/fx/fx 0 fx/";
+        let (port, base, sql, record) = (
+            format!("{java}Port#"),
+            format!("{java}Base#"),
+            format!("{java}SqlRepo#"),
+            "scip-java maven jdk 21 java/lang/Record#".to_string(),
+        );
+        let (port_get, sql_get) = (
+            format!("{java}Port#get()."),
+            format!("{java}SqlRepo#get()."),
+        );
+        let documents = [
+            // scip-java relates an interface back to a record that implements it,
+            // as a reference: no supertype.
+            type_at("ports/Port.java", &port, &[(&sql, true)]),
+            type_at("base/Base.java", &base, &[(&port, false)]),
+            parsed_at(
+                "sql/SqlRepo.java",
+                &[
+                    ([2, 13, 16], Some([2, 0, 20]), &sql, true),
+                    ([4, 8, 11], Some([4, 4, 20]), &sql_get, true),
+                ],
+                vec![
+                    supertype_of(&sql, &[(&base, false), (&port, false), (&record, false)]),
+                    // A method's relation follows from its type's.
+                    supertype_of(&sql_get, &[(&port_get, true)]),
+                ],
+            ),
+        ];
+        assert_eq!(
+            implementations_of(&documents),
+            [
+                "base/Base.java:3 Base -> ports/Port.java:3 Port []",
+                "sql/SqlRepo.java:3 SqlRepo -> base/Base.java:3 Base []",
+                "sql/SqlRepo.java:3 SqlRepo -> ports/Port.java:3 Port [base/Base.java:3]",
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_relations_are_closed_into_the_transitive_set() {
+        let python = "scip-python python fx 0.1 ";
+        let (port, base, sql) = (
+            format!("{python}`fx.ports`/Port#"),
+            format!("{python}`fx.base`/Base#"),
+            format!("{python}`fx.sql`/SqlRepo#"),
+        );
+        let documents = [
+            type_at("fx/ports.py", &port, &[]),
+            type_at("fx/base.py", &base, &[(&port, false)]),
+            type_at("fx/sql.py", &sql, &[(&base, false)]),
+        ];
+        assert_eq!(
+            implementations_of(&documents),
+            [
+                "fx/base.py:3 Base -> fx/ports.py:3 Port []",
+                "fx/sql.py:3 SqlRepo -> fx/base.py:3 Base []",
+                "fx/sql.py:3 SqlRepo -> fx/ports.py:3 Port [fx/base.py:3]",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_chain_goes_through_a_type_of_an_excluded_file() {
+        let python = "scip-python python fx 0.1 ";
+        let (port, base, sql) = (
+            format!("{python}`fx.ports`/Port#"),
+            format!("{python}`fx.base`/Base#"),
+            format!("{python}`fx.sql`/SqlRepo#"),
+        );
+        let checked = [
+            type_at("fx/ports.py", &port, &[]),
+            type_at("fx/sql.py", &sql, &[(&base, false)]),
+        ];
+        let excluded = [type_at("fx/base.py", &base, &[(&port, false)])];
+        // Only types of checked files are judged, but a change to the excluded one
+        // between them may make the implementation.
+        assert_eq!(
+            implementations_beside(&checked, &excluded),
+            ["fx/sql.py:3 SqlRepo -> fx/ports.py:3 Port [fx/base.py:3]"]
+        );
+    }
+
+    #[test]
+    fn a_structural_relation_is_no_implementation() {
+        let go = "scip-go gomod example.com/app . ";
+        let (closer, file) = (
+            format!("{go}`example.com/app/io`/Closer#"),
+            format!("{go}`example.com/app/other`/File#"),
+        );
+        let documents = [
+            type_at("io/io.go", &closer, &[]),
+            type_at("other/file.go", &file, &[(&closer, false)]),
+        ];
+        assert!(implementations_of(&documents).is_empty());
     }
 }

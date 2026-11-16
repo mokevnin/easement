@@ -127,6 +127,39 @@ pub struct Setting {
     pub env: fn(&[String], Inherited) -> (&'static str, String),
 }
 
+/// What the index of a language gives of the types a type implements or extends.
+#[derive(Debug)]
+pub enum Relations {
+    /// The relations its code declares (`extends`, `implements`, a base class),
+    /// read from the index. `unrelated` finds the declarations the index gives
+    /// none for, which are an evidence gap.
+    Declared { unrelated: Option<Unrelated> },
+    /// Relations by the shape of a type alone, which no code declares (a Go type
+    /// that has the methods of an interface): no implementation is read from them.
+    /// `because` says why, as a clause.
+    Structural { because: &'static str },
+    /// No relations at all; `because` says why, as a clause.
+    None { because: &'static str },
+}
+
+impl Relations {
+    /// Whether implementations are read from the index of the language.
+    pub fn declared(&self) -> bool {
+        matches!(self, Relations::Declared { .. })
+    }
+}
+
+/// Declarations of a language whose index gives no relations although the code
+/// may declare some, and why.
+#[derive(Debug)]
+pub struct Unrelated {
+    /// The lines, 1-based and inclusive, of each such declaration of a file, from
+    /// its path and text.
+    pub find: fn(&str, &str) -> Vec<std::ops::RangeInclusive<usize>>,
+    /// Why the index gives them none, as a clause.
+    pub because: &'static str,
+}
+
 #[derive(Debug)]
 pub struct Language {
     pub name: &'static str,
@@ -158,6 +191,10 @@ pub struct Language {
     /// `forbid_symbol` and `public_symbols` judge. A symbol rule over a language
     /// without them is an evidence gap.
     pub symbols: bool,
+    /// What its index gives of the types a type implements or extends, which the
+    /// `implementation` rule judges. A language without declared relations is an
+    /// evidence gap for that rule.
+    pub relations: Relations,
     /// Finds the parts of a source file that a dependency belongs to instead of the
     /// file, for example the code of a test build. `None` when the file is one unit.
     pub parts: Option<fn(&str, &str) -> Found>,
@@ -217,6 +254,9 @@ pub static GO: Language = Language {
     conventional: &[],
     manifest: Some(Manifest::Go),
     symbols: true,
+    relations: Relations::Structural {
+        because: "a go type implements an interface by having its methods, which declares nothing",
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -257,6 +297,12 @@ pub static TYPESCRIPT: Language = Language {
     conventional: &[],
     manifest: Some(Manifest::Npm),
     symbols: true,
+    relations: Relations::Declared {
+        unrelated: Some(Unrelated {
+            find: super::typescript::unrelated,
+            because: "scip-typescript gives an interface declaration or a class expression no relations",
+        }),
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -288,6 +334,7 @@ pub static PYTHON: Language = Language {
     conventional: &["**/conftest.py", "**/__main__.py", "**/setup.py"],
     manifest: None,
     symbols: true,
+    relations: Relations::Declared { unrelated: None },
     parts: None,
     runs_on_import: Some("__init__.py"),
     uses_unimported: &[],
@@ -315,6 +362,7 @@ pub static JAVA: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    relations: Relations::Declared { unrelated: None },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -342,6 +390,9 @@ pub static KOTLIN: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: false,
+    relations: Relations::None {
+        because: "kotlin files are read without an index, which declares no implementations",
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[(
@@ -372,6 +423,7 @@ pub static CSHARP: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    relations: Relations::Declared { unrelated: None },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -399,6 +451,9 @@ pub static PHP: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    relations: Relations::None {
+        because: "the php index declares no implementations",
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -426,6 +481,9 @@ pub static SWIFT: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: false,
+    relations: Relations::None {
+        because: "swift files are read without an index, which declares no implementations",
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -453,6 +511,9 @@ pub static RUBY: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: true,
+    relations: Relations::None {
+        because: "the ruby index declares no implementations",
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -498,6 +559,9 @@ pub static RUST: Language = Language {
     ],
     manifest: Some(Manifest::Cargo),
     symbols: true,
+    relations: Relations::None {
+        because: "the rust index declares no implementations",
+    },
     parts: Some(parts::rust),
     runs_on_import: None,
     uses_unimported: &[],

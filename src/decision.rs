@@ -657,6 +657,14 @@ fn closed_entry<'a>(
     closed
 }
 
+/// Whether two files of one component are one under the same-component grant:
+/// the same instance of an isolated component, its placeholders filled alike.
+pub fn same_component(map: &ComponentMap, file: &str, target: &str) -> bool {
+    let instances = (map.instance_of(file), map.instance_of(target));
+    let other_instance = matches!(instances, (Some(here), Some(there)) if here != there);
+    !other_instance && slice_mismatch(map, file, target).is_none()
+}
+
 /// The placeholder both ends name in their `in` patterns
 /// (`src/features/<feature>/ui`) and fill differently, if there is one.
 fn slice_mismatch<'a>(map: &ComponentMap, file: &str, target: &str) -> Option<Clause<'a>> {

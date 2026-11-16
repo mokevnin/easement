@@ -131,6 +131,9 @@ pub enum GapKind {
     UnresolvedImports,
     /// Uses of names that `forbid_symbol` could not judge.
     Symbols,
+    /// Types that `implementation` could not judge: their index declares no
+    /// implementations, or none for what they are.
+    Implementation,
     /// Files that `unused` took as used without judging them.
     Unused,
     /// Files a change deletes: what imported them is not in the code any more.
@@ -152,6 +155,7 @@ impl GapKind {
             | GapKind::Manifests
             | GapKind::Declarations
             | GapKind::Symbols
+            | GapKind::Implementation
             | GapKind::Unused => false,
         }
     }
@@ -262,6 +266,11 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
         GapKind::Symbols,
         &stats.symbols_partial,
         "do what the message says, or review those uses by hand",
+    );
+    add(
+        GapKind::Implementation,
+        &stats.implementations_partial,
+        "review those types by hand, or move them into a component `allow_implementers` lists",
     );
     if !stats.naming_unseen.is_empty() {
         add(

@@ -423,6 +423,15 @@ impl Expander {
             *list = items;
             written.insert(field, names);
         }
+        if let Some(implementers) = rule.allow_implementers.take() {
+            let field = "allow_implementers";
+            let path = ["rules", key, field];
+            let place = format!("rules.{}.{field}", field_key(key));
+            let (items, names) =
+                self.list(&path, &place, implementers, String::as_str, |_, m| m)?;
+            rule.allow_implementers = Some(items);
+            written.insert(field, names);
+        }
         Ok(ExpandedRule { rule, written })
     }
 

@@ -299,6 +299,33 @@ pub struct TypeDef {
     pub name: String,
 }
 
+/// A type of the project that implements or extends another type of the
+/// project, directly or through its ancestors: a fact of its own, never a
+/// dependency (ADR 0008).
+#[derive(Debug, Clone)]
+pub struct Implementation {
+    /// The type that implements or extends.
+    pub sub: TypeDef,
+    /// The type it implements or extends.
+    pub supertype: TypeDef,
+    /// The types of the project between the two on some chain of ancestors, by
+    /// file and line.
+    pub between: Vec<TypeDef>,
+}
+
+/// A declaration whose index gives no relations although it may implement or
+/// extend a type, with the files of the project its lines refer to.
+#[derive(Debug, Clone)]
+pub struct UnrelatedDeclaration {
+    pub file: String,
+    /// The 1-based line it starts on.
+    pub line: usize,
+    /// Why its index gives it no relations.
+    pub because: &'static str,
+    /// The files that define the names its lines refer to.
+    pub writes: std::collections::BTreeSet<String>,
+}
+
 /// A method or function with the lines it spans, 1-based and inclusive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scope {
