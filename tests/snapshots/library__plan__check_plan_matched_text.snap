@@ -1,0 +1,14 @@
+---
+source: tests/library/plan.rs
+expression: hide(text(&matched))
+---
+Checking lines changed since main (merge-base [merge-base])
+
+
+New dependencies between components in this change:
+  web -> core
+
+The change matches the plan.
+
+
+easement passed: 0 violation(s), 0 stale, 0 legalized; 4 files, 1 internal deps

@@ -508,6 +508,15 @@ fn meant(map: &ComponentMap, dep: &Dep, unit: Unit) -> Unit {
     }
 }
 
+/// What `dep` imports: the copy of its target it means, as [`decide`] judges it,
+/// or the external module.
+pub fn target_meant(map: &ComponentMap, dep: &Dep) -> Target {
+    match &dep.target {
+        Target::Internal(unit) => Target::Internal(meant(map, dep, unit.clone())),
+        external => external.clone(),
+    }
+}
+
 /// Whether the surfaces of the component `dep` reaches keep it closed to the
 /// component of its source: the judgement of `privacy` alone, whatever the rest of
 /// the policy says of the pair. False when either end is in no component, or both

@@ -546,6 +546,44 @@ fn propose_takes_a_plan_or_a_source_not_both() {
     .stderr(contains("cannot be used with"));
 }
 
+/// `check --plan` reads the plan from a file or stdin, as `propose --plan` does,
+/// reports how the change departs from it without changing the exit code, and
+/// needs `--diff`.
+#[test]
+fn check_plan_compares_the_change_with_a_plan_and_needs_diff() {
+    let (_tmp, root) = web_and_storage(WEB_AND_STORAGE);
+    fs::write(
+        root.join("src/web/new.ts"),
+        "import { save } from \"../storage/db\";\nexport const fresh = save;\n",
+    )
+    .unwrap();
+    let plan = r#"[{"from": "src/web/page.ts", "to": "src/storage/db.ts"},
+                   {"from": "src/web/page.ts", "external": "zod"}]"#;
+    fs::write(root.join("plan.json"), plan).unwrap();
+    let said = "Not in the plan:\n  src/web/new.ts:1 -> src/storage/db.ts\n\nPlanned, not in the code:\n  src/web/page.ts -> external zod\n";
+    easement(&root, &["check", "--diff", "main", "--plan", "plan.json"])
+        .success()
+        .stdout(contains(said));
+    Command::cargo_bin("easement")
+        .unwrap()
+        .current_dir(&root)
+        .env("EASEMENT_CACHE_DIR", test_cache_dir())
+        .args(["check", "--diff", "main", "--plan", "-", "--format", "json"])
+        .write_stdin(plan)
+        .assert()
+        .success()
+        .stdout(contains(r#""unplanned": ["#));
+    easement(&root, &["check", "--plan", "plan.json"])
+        .code(2)
+        .stderr(contains("--diff <BASE>"));
+    easement(
+        &root,
+        &["check", "--diff", "main", "--plan", "missing.json"],
+    )
+    .code(2)
+    .stderr(contains("cannot read the plan missing.json"));
+}
+
 /// `graph` and `suggest --patch` print their output on stdout, so their notes,
 /// the one that the indexes came from the cache among them, go to stderr.
 #[test]

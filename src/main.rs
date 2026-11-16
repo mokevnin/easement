@@ -3,7 +3,7 @@
 //! outcome says. What a command decides is decided in the library.
 
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -88,6 +88,12 @@ enum Command {
         /// `--diff`, `--component` or `--scope`.
         #[arg(long, conflicts_with_all = ["diff", "component", "scope"])]
         suggest: bool,
+        /// Compare the imports the change added across components with a plan, the
+        /// file (or `-` for stdin) `propose --plan` reads: list each import the plan
+        /// does not name and each planned one the code lacks. The verdict does not
+        /// change. Needs `--diff`.
+        #[arg(long, value_name = "FILE|-", requires = "diff")]
+        plan: Option<PathBuf>,
     },
     /// Record current violations as legalized debt in the baseline file. Once
     /// the file exists, it only shrinks: new violations are listed, not written.
@@ -298,6 +304,16 @@ fn watch(options: &CheckOptions, format: Format, mut cache: Cache) -> Result<boo
     }
 }
 
+/// The text of a plan, from the file `plan` or, for `-`, from stdin.
+fn read_plan(plan: &Path) -> Result<String> {
+    if plan.as_os_str() == "-" {
+        std::io::read_to_string(std::io::stdin()).context("cannot read the plan from stdin")
+    } else {
+        std::fs::read_to_string(plan)
+            .with_context(|| format!("cannot read the plan {}", plan.display()))
+    }
+}
+
 /// Prints `text` or `json` as `format` asks.
 fn print_as(
     format: OutputFormat,
@@ -336,6 +352,7 @@ fn run(cli: Cli) -> Result<Outcome> {
             cache: flags,
             require_evidence,
             suggest,
+            plan,
         } => {
             let options = CheckOptions {
                 config,
@@ -345,6 +362,7 @@ fn run(cli: Cli) -> Result<Outcome> {
                 paths: scope,
                 require_evidence,
                 suggest,
+                plan: plan.as_deref().map(read_plan).transpose()?,
             };
             if watching {
                 watch(&options, format, cache(flags)).map(Outcome::from)
@@ -474,13 +492,7 @@ fn run(cli: Cli) -> Result<Outcome> {
             cache: flags,
         } => {
             let proposed = match (plan, source) {
-                (Some(plan), _) => Proposed::Plan(if plan.as_os_str() == "-" {
-                    std::io::read_to_string(std::io::stdin())
-                        .context("cannot read the plan from stdin")?
-                } else {
-                    std::fs::read_to_string(&plan)
-                        .with_context(|| format!("cannot read the plan {}", plan.display()))?
-                }),
+                (Some(plan), _) => Proposed::Plan(read_plan(&plan)?),
                 (None, Some(source)) => Proposed::One {
                     source,
                     target,

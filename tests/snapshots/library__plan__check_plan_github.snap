@@ -1,0 +1,10 @@
+---
+source: tests/library/plan.rs
+expression: checked.report().github()
+---
+::notice title=easement graph::New component dependencies in this change: web -> core
+::notice file=src/web/a.ts,line=1,title=easement plan::Not in the plan: src/web/a.ts -> src/core/c.ts
+::notice file=src/web/a.ts,line=2,title=easement plan::Not in the plan: src/web/a.ts -> external lodash/fp
+::notice title=easement plan::Planned, not in the code: src/web/a.ts -> src/core/b.ts, src/web/a.ts -> external zod
+::notice title=easement partial::only violations on lines changed since main, or caused by the change to the policy, were judged, the rest of the project was not
+easement passed: 0 violation(s), 0 stale, 0 legalized; 4 files, 1 internal deps

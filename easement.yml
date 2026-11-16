@@ -22,6 +22,7 @@ components:
       - src/commands.rs
       - src/diagram.rs
       - src/doctor.rs
+      - src/drift.rs
       - src/examples.rs
       - src/explain.rs
       - src/graph.rs

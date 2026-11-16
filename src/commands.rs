@@ -11,7 +11,7 @@ use crate::components::ComponentMap;
 use crate::policy::Policy;
 use crate::project::{self, Analysis, Project};
 use crate::{
-    check, diagram, diff, doctor, explain, graph, impact, indexer, patch, propose, report,
+    check, diagram, diff, doctor, drift, explain, graph, impact, indexer, patch, propose, report,
     resolved, review, scan, scope, suggest,
 };
 
@@ -52,6 +52,9 @@ pub struct CheckOptions {
     pub require_evidence: bool,
     /// `--suggest`: a `may_depend_on` entry no import uses fails as `unused-allowance`.
     pub suggest: bool,
+    /// `--plan`: the text of the plan `propose --plan` judged, which the imports the
+    /// change added are compared with; it needs `diff`.
+    pub plan: Option<String>,
 }
 
 impl CheckOptions {
@@ -65,6 +68,7 @@ impl CheckOptions {
             paths: Vec::new(),
             require_evidence: false,
             suggest: false,
+            plan: None,
         }
     }
 }
@@ -79,6 +83,8 @@ pub struct Checked {
     /// Under `--suggest`, the `may_depend_on` entries no import uses that it does not
     /// fail on, since it cannot tell whether they can go.
     pub spared: suggest::Spared,
+    /// Under `--plan`, how the change departs from the plan.
+    pub drift: Option<drift::Drift>,
 }
 
 impl Checked {
@@ -91,6 +97,7 @@ impl Checked {
             diff: self.diff.as_ref(),
             require_evidence: self.require_evidence,
             spared: &self.spared,
+            drift: self.drift.as_ref(),
         }
     }
 
@@ -114,8 +121,19 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
             "`--suggest` judges the whole project, since whether an allowance is used depends on every import; drop `--diff`, `--scope` and `--component`, or `--suggest`"
         );
     }
+    if options.plan.is_some() && options.diff.is_none() {
+        anyhow::bail!(
+            "`--plan` compares the imports a change added with the plan, so it needs `--diff <base>`"
+        );
+    }
     let project = Project::open(&options.config)?;
     let scope = scope::Scope::new(project.config(), &options.components, &options.paths)?;
+    let relative = |path: &str| explain::root_relative(&project.root, Path::new(path));
+    let proposals = options
+        .plan
+        .as_deref()
+        .map(|text| propose::plan(text, relative))
+        .transpose()?;
     let scan = project.scan(cache)?;
     let diff = options
         .diff
@@ -138,6 +156,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         mut stats,
         map,
         edges,
+        deps,
         accepted,
         unindexed,
         ..
@@ -163,9 +182,20 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
             v.rule.is_config_rule() || v.evidence.iter().any(|at| scope.contains(&map, &at.file))
         })
         .collect();
+    let mut drift = None;
     if let Some(diff) = &diff {
         stats.new_dependencies =
             check::new_dependencies(&edges, |f, l| diff.changes.contains(f, l));
+        drift = proposals.as_deref().map(|plan| {
+            drift::compare(&drift::Compared {
+                plan,
+                deps: &deps,
+                map: &map,
+                changed: |f: &str, l| diff.changes.contains(f, l),
+                in_scope: |f: &str| scope.contains(&map, f),
+                unindexed: &unindexed,
+            })
+        });
     }
     let judged = match &diff {
         Some(diff) => violations.into_iter().filter(|v| diff.keeps(v)).collect(),
@@ -205,6 +235,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         diff,
         require_evidence: options.require_evidence,
         spared,
+        drift,
     })
 }
 
