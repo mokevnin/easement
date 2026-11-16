@@ -7,6 +7,7 @@ use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 pub mod go;
 pub mod kotlin;
 pub mod parts;
+pub mod python;
 pub mod registry;
 pub mod swift;
 pub mod typescript;
@@ -20,6 +21,16 @@ pub struct Import {
     pub line: usize,
     /// How it is written, which tells what its index records of it.
     pub form: Form,
+    /// The text its index records it on, when that is not the specifier: the
+    /// `y as z` of Python's `from . import y as z`, whose specifier is `.y`.
+    pub recorded_on: Option<String>,
+}
+
+impl Import {
+    /// The text its index records it on: [`Import::recorded_on`], else the specifier.
+    pub fn recorded_text(&self) -> &str {
+        self.recorded_on.as_deref().unwrap_or(&self.specifier)
+    }
 }
 
 /// How an import is written, as far as it decides whether an index records it.
@@ -36,6 +47,11 @@ pub enum Form {
     /// An import whose target is computed at run time (`` import(`./${name}`) ``,
     /// `import.meta.glob`): the text names no one target, and the index records none.
     Computed,
+    /// A call that imports the module its literal argument names
+    /// (`importlib.import_module("a.b")`), which the index does not record. The
+    /// module is read in the call's own terms (a package it is given), so its
+    /// text names no file.
+    ImportCall,
 }
 
 /// Why the dependency of an import a file writes is not in the graph: the index
@@ -52,6 +68,8 @@ pub enum Cause {
     Require,
     /// Its target is computed at run time ([`Form::Computed`]).
     Computed,
+    /// The index holds nothing of a call that imports a module ([`Form::ImportCall`]).
+    ImportCall,
 }
 
 /// A node of the dependency graph: a file or a package directory inside the
@@ -377,6 +395,13 @@ pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>>
         adapters.push(build(root, files)?);
     }
     Ok(adapters)
+}
+
+/// Whether `node` has a named child of `kind`.
+pub(crate) fn has_child(node: Node, kind: &str) -> bool {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| child.kind() == kind)
 }
 
 /// The syntax tree of `source` in `language`. Any text has a tree: a syntax

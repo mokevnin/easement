@@ -1,0 +1,74 @@
+---
+source: tests/library/imports.rs
+expression: "report[\"evidence_gaps\"]"
+---
+[
+  {
+    "close": "fix the module, or install the project's packages in the environment scip-python runs in (activate its virtualenv), then check again",
+    "count": 1,
+    "files": [
+      "src/app/lost.py"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the indexer did not resolve 4 import(s), so the dependencies they write were not checked (for example, a module that does not exist, or a package not installed where scip-python runs): src/app/lost.py:3 (`lib.missing`), src/app/lost.py:4 (`.nowhere`), src/app/lost.py:5 (`.gone`) and 1 more",
+    "places": [
+      {
+        "file": "src/app/lost.py",
+        "line": 3,
+        "specifier": "lib.missing"
+      },
+      {
+        "file": "src/app/lost.py",
+        "line": 4,
+        "specifier": ".nowhere"
+      },
+      {
+        "file": "src/app/lost.py",
+        "line": 5,
+        "specifier": ".gone"
+      },
+      {
+        "file": "src/app/lost.py",
+        "line": 6,
+        "specifier": "not_installed_anywhere"
+      }
+    ]
+  },
+  {
+    "close": "write each module as an `import`, or review those dependencies by hand",
+    "count": 1,
+    "files": [
+      "src/app/lost.py"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the target of 1 import(s) is computed at run time, so the dependencies they write were not checked (`importlib.import_module()` or `__import__()` of a name that is not a literal names no one module): src/app/lost.py:9 (`m.__name__`)",
+    "places": [
+      {
+        "file": "src/app/lost.py",
+        "line": 9,
+        "specifier": "m.__name__"
+      }
+    ]
+  },
+  {
+    "close": "write each module as an `import`, or review those dependencies by hand",
+    "count": 1,
+    "files": [
+      "src/app/lost.py"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the index holds no module of 2 call(s) that import one, so the dependencies they write were not checked (scip-python records no module that `importlib.import_module()` or `__import__()` names): src/app/lost.py:8 (`lib.util`), src/app/lost.py:10 (`.sibling`)",
+    "places": [
+      {
+        "file": "src/app/lost.py",
+        "line": 8,
+        "specifier": "lib.util"
+      },
+      {
+        "file": "src/app/lost.py",
+        "line": 10,
+        "specifier": ".sibling"
+      }
+    ]
+  }
+]

@@ -126,6 +126,7 @@ pub fn written_imports(_file: &str, text: &str) -> Vec<Import> {
                 specifier: specifier.to_string(),
                 line: path.start_position().row + 1,
                 form: super::Form::Static,
+                recorded_on: None,
             })
         }));
     }

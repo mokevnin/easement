@@ -178,7 +178,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
                 .find(|child| child.kind() == "import_require_clause");
             let form = match (clause, node.child_by_field_name("source")) {
                 (Some(_), _) => Form::Static,
-                (None, Some(_)) if has_child(node, "import_clause") => Form::Static,
+                (None, Some(_)) if super::has_child(node, "import_clause") => Form::Static,
                 (None, _) => Form::SideEffect,
             };
             let string = clause
@@ -212,18 +212,11 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
     }
 }
 
-/// Whether `node` has a child of `kind`.
-fn has_child(node: Node, kind: &str) -> bool {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor)
-        .any(|child| child.kind() == kind)
-}
-
 /// What a string, or a template with nothing substituted, holds between its quotes.
 fn literal(node: Node, text: &str) -> Option<String> {
     match node.kind() {
         "string" => {}
-        "template_string" if !has_child(node, "template_substitution") => {}
+        "template_string" if !super::has_child(node, "template_substitution") => {}
         _ => return None,
     }
     let quoted = node.utf8_text(text.as_bytes()).ok()?;
@@ -238,6 +231,7 @@ fn at(node: Node, specifier: String, form: Form) -> Import {
         specifier,
         line: node.start_position().row + 1,
         form,
+        recorded_on: None,
     }
 }
 

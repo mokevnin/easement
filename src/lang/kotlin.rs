@@ -270,6 +270,7 @@ impl Adapter for Kotlin {
                 specifier: specifier(node.utf8_text(source.as_bytes()).unwrap_or_default()),
                 line: node.start_position().row + 1,
                 form: super::Form::Static,
+                recorded_on: None,
             })
             .collect())
     }

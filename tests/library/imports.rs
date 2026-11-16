@@ -5,12 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
-use easement::commands::Checked;
+use easement::commands::{Checked, Outcome};
 use easement::{CacheUse, EvidenceGap, GapKind};
 use tempfile::TempDir;
 
 use crate::common::{fixture, write_all};
-use crate::run::{check, check_in, json, pinned, text};
+use crate::run::{check, check_in, check_with, config, json, pinned, text};
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
 /// client types, which declare `"*.css"`, `"*.svg"` and `"*?raw"` by wildcard,
@@ -171,4 +171,86 @@ fn each_cause_of_an_unresolved_import_is_pinned() {
         insta::assert_json_snapshot!("unresolved_import_causes_json", report["evidence_gaps"]);
         insta::assert_snapshot!("unresolved_import_causes_text", &said[start..]);
     });
+}
+
+/// Every form of a Python import the index resolves is no gap; the module of a
+/// relative import it loses is read from its text when that names exactly one
+/// file (`from .. import a`, in a package without `__init__.py`); every other
+/// import it loses is a gap, one per cause, and `--require-evidence` fails on them.
+#[test]
+fn a_python_import_the_index_loses_is_read_from_its_text_or_is_a_gap() {
+    let (_tmp, root) = fixture("python_imports");
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    assert_eq!(checked.outcome(), Outcome::EvidenceRequired);
+    assert_eq!(
+        places(&checked, "the indexer did not resolve"),
+        at(&[
+            (3, "lib.missing"),
+            (4, ".nowhere"),
+            (5, ".gone"),
+            (6, "not_installed_anywhere"),
+        ])
+    );
+    assert_eq!(
+        places(&checked, "the index holds no module of"),
+        // `.sibling` names `src/app/sibling.py` only relative to the package the
+        // call is given, so it is no text to read a file from.
+        at(&[(8, "lib.util"), (10, ".sibling")])
+    );
+    assert_eq!(places(&checked, "the target of"), at(&[(9, "m.__name__")]));
+    assert_eq!(unresolved(&checked).len(), 3, "{:?}", unresolved(&checked));
+    // Every form `main.py` writes resolves.
+    assert!(
+        unresolved(&checked)
+            .iter()
+            .all(|gap| gap.files == ["src/app/lost.py"]),
+        "{:?}",
+        unresolved(&checked)
+    );
+    // `b.py` depends on `a.py`, which its import names by its text alone.
+    let policy = std::fs::read_to_string(config(&root)).unwrap();
+    std::fs::write(
+        config(&root),
+        policy.replace("may_depend_on: [ns]", "may_depend_on: []"),
+    )
+    .unwrap();
+    let report = json(&check(&root));
+    assert!(
+        report["violations"].as_array().unwrap().iter().any(|v| {
+            v["file"] == "src/ns/inner/b.py" && v["line"] == 1 && v["target"] == "src/ns/a.py"
+        }),
+        "{report:#}"
+    );
+}
+
+/// What each cause of an unresolved Python import says, and how to close it.
+#[test]
+fn each_cause_of_an_unresolved_python_import_is_pinned() {
+    let (_tmp, root) = fixture("python_imports");
+    let own = TempDir::new().unwrap();
+    let checked = check_in(&root, own.path(), CacheUse::Off).unwrap();
+    let report = json(&checked);
+    let said = text(&checked);
+    let start = said.find("Evidence gaps").expect("the text lists the gaps");
+    pinned(|| {
+        insta::assert_json_snapshot!(
+            "unresolved_python_import_causes_json",
+            report["evidence_gaps"]
+        );
+        insta::assert_snapshot!("unresolved_python_import_causes_text", &said[start..]);
+    });
+}
+
+/// The Python projects whose imports all resolve stay without a gap.
+#[test]
+fn a_python_project_whose_imports_resolve_has_no_unresolved_import() {
+    for name in ["python", "implementations_python"] {
+        let (_tmp, root) = fixture(name);
+        let checked = check(&root);
+        assert!(
+            unresolved(&checked).is_empty(),
+            "{name}: {:?}",
+            unresolved(&checked)
+        );
+    }
 }

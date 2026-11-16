@@ -398,6 +398,9 @@ fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
                 lang::Cause::Computed => {
                     format!("the target of {n} import(s) is computed at run time")
                 }
+                lang::Cause::ImportCall => {
+                    format!("the index holds no module of {n} call(s) that import one")
+                }
             };
             let because = explained.map_or(String::new(), |explained| {
                 format!(" ({})", explained.because)

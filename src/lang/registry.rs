@@ -102,6 +102,10 @@ pub enum Spelled {
     /// A path relative to the file that writes it, as it names a file: a query
     /// (`?raw`) left off, no extension or `index` added.
     Path(String),
+    /// Paths relative to the file that writes it, any one of which it may name
+    /// (Python's `.x`: `x.py` or the package `x/__init__.py`): it names the one
+    /// that exists, and none when more than one does.
+    OneOf(Vec<String>),
     /// A package, by its name (`some-pkg` of `some-pkg/style.css`).
     Package(String),
     /// Neither: an alias of the build (`#lib/x`, `$lib/x`), a scheme (`virtual:x`).
@@ -364,7 +368,11 @@ pub static PYTHON: Language = Language {
     uses_unimported: &[],
     program: None,
     unindexed_uses: None,
-    written_imports: None,
+    written_imports: Some(WrittenImports {
+        list: super::python::written_imports,
+        explained: super::python::EXPLAINED,
+        spelled: Some(super::python::spelled),
+    }),
     adapter: None,
     foreign_dirs: &[],
     third_party: &[],

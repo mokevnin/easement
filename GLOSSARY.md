@@ -55,7 +55,7 @@ An import as the text of a file spells it, whether or not the index recorded it.
 _Avoid_: syntactic import, raw import
 
 **Resolved import**:
-A written import that the index takes to a source target: a file of the project or an external package. An import that the index ties to nothing, or only to a wildcard declaration such as `"*.css"`, is unresolved.
+A written import that the index takes to a source target: a file of the project other than the importing one, or an external package, on the text the index records the import on (the module, or for Python's `from . import y` the name `y`). A name a file of the project defines resolves it there too, as `VERSION` does `from . import VERSION`. An import that the index ties to nothing, or only to a wildcard declaration such as `"*.css"`, is unresolved.
 _Avoid_: indexed import, import with a reference
 
 **Entry file**:
@@ -79,7 +79,7 @@ Where the index must take an import a file writes for it to count as resolved: a
 _Avoid_: resolved module (a module reference that leads nowhere resolves nothing)
 
 **Unresolved import**:
-An import a file writes that the index takes to no source target and whose text names none either: its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
+An import a file writes that the index takes to no source target and whose text names none either, or names more than one file it may mean (both `x.py` and `x/__init__.py`): its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
 _Avoid_: missing import, broken import (the code may build)
 
 **Implementation**:

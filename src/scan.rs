@@ -158,7 +158,8 @@ struct Written {
 
 /// `import`, written in `file`, against what the index holds on it (`resolved`).
 /// When the index takes it to no source target, a path its text spells that names
-/// a file that `exists` exactly, or a package it spells, is its dependency; else it
+/// a file that `exists` exactly, or a package it spells, is its dependency (never
+/// for a call that imports a module, which reads it in its own terms); else it
 /// is unresolved, for the cause its resolution and its form tell.
 fn compare(
     file: &str,
@@ -174,13 +175,13 @@ fn compare(
         Form::Computed => Cause::Computed,
         form => {
             let resolution = resolved(&import);
-            let target = match written.spelled.map(|spelled| spelled(&import.specifier)) {
+            // A call reads its module in its own terms (a package it is given), so
+            // its text names no file.
+            let spelled = written.spelled.filter(|_| form != Form::ImportCall);
+            let target = match spelled.map(|spelled| spelled(&import.specifier)) {
                 _ if resolution == scip::Resolution::Target => return Compared::Resolved,
-                Some(Spelled::Path(path)) => {
-                    crate::relpath::resolve(crate::relpath::parent(file), &path)
-                        .filter(|path| exists(path))
-                        .map(|path| Target::Internal(lang::Unit::from(path.as_str())))
-                }
+                Some(Spelled::Path(path)) => only_file(file, &[path], &exists),
+                Some(Spelled::OneOf(paths)) => only_file(file, &paths, &exists),
                 Some(Spelled::Package(package)) => Some(Target::External(package)),
                 Some(Spelled::Neither) | None => None,
             };
@@ -197,6 +198,7 @@ fn compare(
                 (scip::Resolution::Wildcard, _) => Cause::Wildcard,
                 (_, Form::SideEffect) => Cause::SideEffect,
                 (_, Form::Require) => Cause::Require,
+                (_, Form::ImportCall) => Cause::ImportCall,
                 _ => Cause::NoTarget,
             }
         }
@@ -210,6 +212,18 @@ fn compare(
             .iter()
             .find(|explained| explained.cause == unspelled),
     })
+}
+
+/// The file of the project that one of `paths`, relative to `file`, names, when
+/// exactly one of them names one that `exists`.
+fn only_file(file: &str, paths: &[String], exists: impl Fn(&str) -> bool) -> Option<Target> {
+    let mut found = paths.iter().filter_map(|path| {
+        crate::relpath::resolve(crate::relpath::parent(file), path).filter(|path| exists(path))
+    });
+    match (found.next(), found.next()) {
+        (Some(path), None) => Some(Target::Internal(lang::Unit::from(path.as_str()))),
+        _ => None,
+    }
 }
 
 /// Adds to `deps` the dependencies read from the text of imports (`spelled`): one
