@@ -1,0 +1,7 @@
+---
+source: tests/library/indexers.rs
+expression: diagnosed.text()
+---
+python: scip-python cannot run on Windows: scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224); a check reports its files as uncovered, so check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`
+
+easement doctor: ok, but the python files will be uncovered here

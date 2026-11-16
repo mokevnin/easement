@@ -13,8 +13,8 @@ use tempfile::TempDir;
 use crate::common::{fixture, project};
 use crate::languages::{csharp_three, java_three, judged};
 use crate::run::{
-    check, check_in, check_with, composer_install, config, error, json, leaves_out,
-    no_scip_ruby_here, pinned, text, try_check_with,
+    cannot_index_here, check, check_in, check_with, composer_install, config, error, json,
+    leaves_out, pinned, text, try_check_with,
 };
 
 /// The `symbols` evidence gaps of a JSON report.
@@ -29,6 +29,9 @@ fn symbol_gaps(report: &serde_json::Value) -> Vec<&serde_json::Value> {
 
 #[test]
 fn a_banned_java_member_is_an_evidence_gap_not_a_violation() {
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     // scip-java reports member uses, but none is verified, so the rule does not judge them.
     let (_tmp, root) = fixture("java");
     fs::write(
@@ -60,6 +63,9 @@ fn a_banned_java_member_is_an_evidence_gap_not_a_violation() {
 
 #[test]
 fn a_java_file_that_reaches_public_symbols_through_a_constructor_or_a_member_is_a_gap() {
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     let (_tmp, root) = java_three();
     let base = "src/main/java/fx";
     fs::write(
@@ -252,11 +258,22 @@ fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
             &policy("app/db", "app/web", "app.db.client.Client.query"),
         ),
     ]);
-    for ((_tmp, root), (file, line, banned)) in [
-        (go, ("internal/web/web.go", 7, "db.Client.Query")),
-        (ts, ("src/web/web.ts", 5, "src/db/client.Client.query")),
-        (py, ("app/web/web.py", 6, "app.db.client.Client.query")),
+    for ((_tmp, root), language, (file, line, banned)) in [
+        (go, "go", ("internal/web/web.go", 7, "db.Client.Query")),
+        (
+            ts,
+            "typescript",
+            ("src/web/web.ts", 5, "src/db/client.Client.query"),
+        ),
+        (
+            py,
+            "python",
+            ("app/web/web.py", 6, "app.db.client.Client.query"),
+        ),
     ] {
+        if cannot_index_here(&[language]) {
+            continue;
+        }
         let checked = check(&root);
         assert_eq!(checked.outcome(), Outcome::Failed, "{file}");
         let report = json(&checked);
@@ -636,7 +653,7 @@ fn forbid_symbol_catches_every_way_to_use_a_type() {
 
 #[test]
 fn reach_by_symbols_follows_the_method_a_call_names_not_the_whole_file() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     // `Pure` calls `Document.host`, which only parses; `Document.fetch` and `both` reach `Http`.
@@ -657,7 +674,7 @@ fn reach_by_symbols_follows_the_method_a_call_names_not_the_whole_file() {
 
 #[test]
 fn reach_by_symbols_keeps_a_chain_through_the_method_that_reaches_it() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     let (_tmp, root) = fixture("ruby_reach");
@@ -680,7 +697,7 @@ fn reach_by_symbols_keeps_a_chain_through_the_method_that_reaches_it() {
 
 #[test]
 fn reach_by_symbols_keeps_a_chain_when_no_method_is_named() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     // The receiver is opaque to Sorbet, so the index has the class but not the method: any
@@ -702,7 +719,7 @@ fn reach_by_symbols_keeps_a_chain_when_no_method_is_named() {
 
 #[test]
 fn ruby_symbols_are_constants_and_methods() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     let (_tmp, root) = fixture("ruby_symbols");
@@ -732,6 +749,9 @@ fn ruby_symbols_are_constants_and_methods() {
 /// cuts its modules at, PHP's `\` among them, not only `::`, `.` and `/` (#108).
 #[test]
 fn a_forbid_symbol_name_under_a_deeper_php_namespace_fails_as_unmatched() {
+    if cannot_index_here(&["php"]) {
+        return;
+    }
     let (_tmp, root) = fixture("php");
     composer_install(&root);
     let config = config(&root);
@@ -755,7 +775,7 @@ fn a_forbid_symbol_name_under_a_deeper_php_namespace_fails_as_unmatched() {
 /// never seen stays silent: banning what the code does not use yet is the point.
 #[test]
 fn a_forbid_symbol_name_that_only_a_deeper_namespace_defines_fails_as_unmatched() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     let (_tmp, root) = fixture("ruby_symbols");

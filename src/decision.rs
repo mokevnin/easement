@@ -785,10 +785,23 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        // As in `tests/cli.rs`: no scip-ruby is built for Linux on Arm.
+        // As in `tests/library/run.rs`: a fixture with files of a language whose indexer
+        // cannot run here (on Windows; scip-ruby on Linux arm64, which has no build) is left out.
         let no_ruby = cfg!(all(target_os = "linux", target_arch = "aarch64"))
             && which::which("scip-ruby").is_err();
-        names.retain(|name| !(no_ruby && name.starts_with("ruby")));
+        let cannot_index = |name: &str| {
+            crate::relpath::walker(&fixtures.join(name))
+                .build()
+                .flatten()
+                .filter_map(|entry| entry.path().to_str().and_then(crate::lang::registry::of))
+                .any(|language| {
+                    crate::check::Platform::current()
+                        .cannot_index(language.name)
+                        .is_some()
+                        || (no_ruby && language.name == "ruby")
+                })
+        };
+        names.retain(|name| !cannot_index(name));
         std::thread::scope(|s| {
             for name in &names {
                 let (fixtures, each) = (&fixtures, &each);

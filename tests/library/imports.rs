@@ -10,7 +10,7 @@ use easement::{CacheUse, EvidenceGap, GapKind};
 use tempfile::TempDir;
 
 use crate::common::{fixture, write_all};
-use crate::run::{check, check_in, check_with, config, json, pinned, text};
+use crate::run::{cannot_index_here, check, check_in, check_with, config, json, pinned, text};
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
 /// client types, which declare `"*.css"`, `"*.svg"` and `"*?raw"` by wildcard,
@@ -179,6 +179,9 @@ fn each_cause_of_an_unresolved_import_is_pinned() {
 /// import it loses is a gap, one per cause, and `--require-evidence` fails on them.
 #[test]
 fn a_python_import_the_index_loses_is_read_from_its_text_or_is_a_gap() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = fixture("python_imports");
     let checked = check_with(&root, |o| o.require_evidence = true);
     assert_eq!(checked.outcome(), Outcome::EvidenceRequired);
@@ -226,6 +229,9 @@ fn a_python_import_the_index_loses_is_read_from_its_text_or_is_a_gap() {
 /// What each cause of an unresolved Python import says, and how to close it.
 #[test]
 fn each_cause_of_an_unresolved_python_import_is_pinned() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = fixture("python_imports");
     let own = TempDir::new().unwrap();
     let checked = check_in(&root, own.path(), CacheUse::Off).unwrap();
@@ -244,6 +250,9 @@ fn each_cause_of_an_unresolved_python_import_is_pinned() {
 /// The Python projects whose imports all resolve stay without a gap.
 #[test]
 fn a_python_project_whose_imports_resolve_has_no_unresolved_import() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     for name in ["python", "implementations_python"] {
         let (_tmp, root) = fixture(name);
         let checked = check(&root);

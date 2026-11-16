@@ -310,7 +310,7 @@ fn completions_cover_every_shell_and_subcommand() {
 
 #[test]
 fn color_follows_the_flag_and_the_environment() {
-    let (_tmp, root) = fixture("java");
+    let (_tmp, root) = fixture("go");
     let run = |args: &[&str], envs: &[(&str, &str)]| {
         let mut cmd = Command::cargo_bin("easement").unwrap();
         cmd.current_dir(&root).args(args);

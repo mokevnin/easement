@@ -134,7 +134,7 @@ Each component, rule, decision and item carries its `provenance` (the settings c
 
 ## doctor
 
-`easement doctor` looks at the languages the project has and says, for each, whether its indexer is on the `PATH`, which version, and whether what it needs is in place (`node_modules` for TypeScript, `composer install` for PHP). For a missing indexer it prints how to install it and, where mise can, the lines for the `[tools]` of a `mise.toml`.
+`easement doctor` looks at the languages the project has and says, for each, whether its indexer is on the `PATH`, which version, and whether what it needs is in place (`node_modules` for TypeScript, `composer install` for PHP). For a missing indexer it prints how to install it and, where mise can, the lines for the `[tools]` of a `mise.toml`. For an indexer that cannot run on the platform (Python, PHP, Java and Ruby on Windows) it gives no install hint but the reason, in `cannot_run` under `--format json`: nothing is missing, and a check reports the files of that language as uncovered.
 
 It exits 1 when something is missing, so a script or an agent can run it first and read `--format json`.
 

@@ -370,6 +370,52 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+/// The operating system easement runs on, which decides which indexers can run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Windows,
+    /// macOS, Linux and the other Unix systems.
+    Unix,
+}
+
+impl Platform {
+    /// The platform this process runs on.
+    pub fn current() -> Self {
+        if cfg!(windows) {
+            Platform::Windows
+        } else {
+            Platform::Unix
+        }
+    }
+
+    /// Its name in a sentence.
+    pub fn name(self) -> &'static str {
+        match self {
+            Platform::Windows => "Windows",
+            Platform::Unix => "Unix",
+        }
+    }
+}
+
+/// An indexer that cannot run on the platform easement runs on, so easement
+/// did not start it: why, with the upstream cause.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CannotRun {
+    /// The language whose files it reads, as the registry names it.
+    pub language: &'static str,
+    pub indexer: &'static str,
+    pub platform: Platform,
+    pub reason: &'static str,
+}
+
+/// The source files no index holds because their indexer cannot run here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unavailable {
+    pub cannot_run: CannotRun,
+    pub files: Vec<String>,
+}
+
 /// Code a rule could not read or judge: why, in one sentence, and the files or
 /// the extensions of the files it holds for, where they are known, and the
 /// places in them, where those are.
@@ -492,6 +538,10 @@ pub struct Stats {
     /// Source files easement could not read, `uncovered_ok` aside.
     #[serde(skip)]
     pub unreadable: Vec<String>,
+    /// The languages whose indexer cannot run on this platform, with their
+    /// files, which are among `uncovered` unless `uncovered_ok` accepts them.
+    #[serde(skip)]
+    pub unavailable: Vec<Unavailable>,
     /// `--component` and `--scope` of the run, as `component web`, `path src/api`.
     #[serde(skip)]
     pub limited_to: Vec<String>,

@@ -10,7 +10,9 @@ use easement::commands::{self, Checked, Outcome};
 
 use crate::common::{fixture, on_feature, project};
 use crate::diff::diff_main;
-use crate::run::{by_rule, cache, check, check_with, config, json, parse, pinned, text};
+use crate::run::{
+    by_rule, cache, cannot_index_here, check, check_with, config, json, parse, pinned, text,
+};
 
 /// The `implementation` violations of a report as `file:line message`.
 fn implementations(report: &serde_json::Value) -> Vec<String> {
@@ -37,6 +39,9 @@ fn implementations(report: &serde_json::Value) -> Vec<String> {
 /// and an interface that extends it. The port's own component and `tests` pass.
 #[test]
 fn java_implementations_outside_the_listed_components_fail_at_their_definition() {
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     let (_tmp, root) = fixture("implementations_java");
     let checked = check(&root);
     let report = json(&checked);
@@ -146,6 +151,9 @@ fn typescript_classes_outside_the_listed_components_fail_at_their_definition() {
 /// so a class that extends a base of `adapters` fails too.
 #[test]
 fn python_classes_outside_the_listed_components_fail_through_their_bases() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let port = "OrderRepository";
     let (found, others) = implementations_in("implementations_python");
     assert_eq!(

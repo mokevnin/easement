@@ -1,0 +1,22 @@
+---
+source: tests/library/indexers.rs
+expression: "report[\"evidence_gaps\"]"
+---
+[
+  {
+    "cannot_run": {
+      "indexer": "scip-python",
+      "language": "python",
+      "platform": "windows",
+      "reason": "scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224)"
+    },
+    "close": "check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`",
+    "count": 2,
+    "files": [
+      "scripts/seed.py",
+      "scripts/util.py"
+    ],
+    "kind": "uncovered",
+    "message": "2 python source files were not indexed, since scip-python cannot run on Windows: scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224); the dependencies in or on them were not checked"
+  }
+]

@@ -11,7 +11,7 @@ use easement::{Cache, CacheUse, Environment, Indexing, Jobs, NotCached};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project, test_cache_dir};
-use crate::run::{check_in, config, indexing_in, json, parse, pinned, text};
+use crate::run::{cannot_index_here, check_in, config, indexing_in, json, parse, pinned, text};
 
 /// What a run says about the code, without how the indexes were obtained.
 fn verdict(root: &Path, cache: &Path) -> (serde_json::Value, serde_json::Value) {
@@ -35,6 +35,9 @@ fn another_checkout_of_the_same_code_reuses_the_indexes() {
         (tmp, root)
     };
     for name in ["go", "ts", "python", "rust", "java"] {
+        if cannot_index_here(&[name]) {
+            continue;
+        }
         let (_first_tmp, first) = checkout(name);
         let (violations, stats) = verdict(&first, cache.path());
         assert!(

@@ -11,8 +11,8 @@ use tempfile::TempDir;
 
 use crate::common::{fixture, write_all};
 use crate::run::{
-    cache, check, check_with, composer_install, config, gap_messages, json, leaves_out,
-    no_scip_ruby_here, text,
+    cache, cannot_index_here, check, check_with, composer_install, config, gap_messages, json,
+    leaves_out, text,
 };
 
 /// The violations of a check as (file, target), and its counters.
@@ -198,6 +198,9 @@ fn exclude_skips_files() {
 
 #[test]
 fn python_resolves_absolute_relative_and_from_imports() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = fixture("python");
     let (pairs, stats) = violations(&root);
     assert_eq!(
@@ -222,6 +225,9 @@ fn python_resolves_absolute_relative_and_from_imports() {
 
 #[test]
 fn java_resolves_by_package_declaration() {
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     let (_tmp, root) = fixture("java");
     let (pairs, stats) = violations(&root);
     assert_eq!(
@@ -280,6 +286,9 @@ pub(crate) fn java_three() -> (TempDir, PathBuf) {
 
 #[test]
 fn a_java_method_on_a_value_is_no_dependency_and_a_constructor_is() {
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     let (_tmp, root) = java_three();
     let (found, _) = judged(&root);
     let blob = |file: &str, line| {
@@ -461,6 +470,9 @@ fn a_typescript_name_re_exported_by_a_barrel_is_a_dependency_on_its_component() 
 
 #[test]
 fn a_php_function_or_constant_brought_in_by_use_is_a_dependency_on_its_file() {
+    if cannot_index_here(&["php"]) {
+        return;
+    }
     let (_tmp, root) = fixture("php");
     write_all(
         &root,
@@ -499,7 +511,7 @@ fn a_php_function_or_constant_brought_in_by_use_is_a_dependency_on_its_file() {
 /// Every layered fixture has one forbidden import, web -> infra, and allowed ones
 /// that must be seen: the count of internal dependencies proves the adapter resolved them.
 fn layered(name: &str, file: &str, target: &str, internal_deps: u64) {
-    if name == "ruby" && no_scip_ruby_here() {
+    if cannot_index_here(&[name]) {
         return;
     }
     let (_tmp, root) = fixture(name);

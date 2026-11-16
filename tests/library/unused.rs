@@ -8,7 +8,9 @@ use easement::commands::Outcome;
 use serde_json::Value;
 
 use crate::common::{fixture, project};
-use crate::run::{check, composer_install, config, gap_messages, json, pinned, report_of, text};
+use crate::run::{
+    cannot_index_here, check, composer_install, config, gap_messages, json, pinned, report_of, text,
+};
 
 /// The unused-rule verdicts and gaps of the check of `root`, as data.
 fn unused_of(root: &Path) -> (Vec<Value>, Vec<Value>) {
@@ -190,6 +192,9 @@ fn a_file_no_entry_reaches_is_unused() {
 
 #[test]
 fn unused_follows_go_packages_and_python_packages() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = project(&[
         ("go.mod", "module ex.com/m\n\ngo 1.22\n"),
         (
@@ -315,6 +320,9 @@ fn unused_counts_what_tools_and_conventions_load() {
 
 #[test]
 fn unused_knows_go_programs_python_conventions_and_kotlin_beside_java() {
+    if cannot_index_here(&["python", "java"]) {
+        return;
+    }
     let (_tmp, root) = project(&[
         ("go.mod", "module ex.com/m\n\ngo 1.22\n"),
         (
@@ -392,6 +400,9 @@ fn unused_never_calls_an_alternative_declaration_unused() {
 /// reached; a class nothing uses is not. Needs scip-dotnet and scip-php.
 #[test]
 fn unused_follows_csharp_and_php_namespaces() {
+    if cannot_index_here(&["php"]) {
+        return;
+    }
     let (_tmp, root) = fixture("csharp");
     fs::write(
         config(&root),

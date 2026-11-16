@@ -14,8 +14,8 @@ use crate::common::{fixture, git, on_feature, project, write_all};
 use crate::diff::diff_main;
 use crate::languages::THREE;
 use crate::run::{
-    by_rule, cache, cache_in, check, check_with, composer_install, config, found, json, pinned,
-    text,
+    by_rule, cache, cache_in, cannot_index_here, check, check_with, composer_install, config,
+    found, json, pinned, text,
 };
 
 /// A project of the components `blob`, `chunk` and `gw` in the directories under
@@ -166,6 +166,9 @@ fn a_typescript_glob_re_export_changed_alone_is_judged_in_a_diff_run() {
 
 #[test]
 fn a_python_name_an_init_re_exports_changed_alone_is_judged_in_a_diff_run() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = three(
         "app/",
         &[
@@ -313,6 +316,9 @@ fn a_typescript_barrel_re_export_changed_alone_is_judged_in_a_diff_run() {
 /// which depends on `blob`, but re-exports nothing that `gw` uses.
 #[test]
 fn a_name_written_through_a_module_alias_names_no_re_exporter() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = three(
         "app/",
         &[
@@ -349,6 +355,9 @@ fn a_name_written_through_a_module_alias_names_no_re_exporter() {
 /// `infra`, yet the function of `infra` that `web` calls comes from `infra` itself.
 #[test]
 fn a_class_import_beside_a_function_import_names_no_re_exporter() {
+    if cannot_index_here(&["php"]) {
+        return;
+    }
     let (_tmp, root) = fixture("php");
     write_all(
         &root,
@@ -533,6 +542,9 @@ fn a_rust_pub_use_in_a_third_component_opens_no_closed_file() {
 /// `Block` of `core` from `blob`'s public `api`.
 #[test]
 fn a_python_init_import_in_a_third_component_opens_no_closed_file() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = closed_core(
         "app/",
         "[app/blob/api.py, app/blob/__init__.py]",

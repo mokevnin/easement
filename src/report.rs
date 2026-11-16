@@ -5,7 +5,9 @@ use serde_sarif::sarif::{self, ResultLevel};
 use std::collections::BTreeMap;
 
 use crate::baseline::{Severity, Verdict};
-use crate::check::{self, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation};
+use crate::check::{
+    self, CannotRun, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation,
+};
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
 use crate::drift::Drift;
@@ -113,6 +115,9 @@ pub struct EvidenceGap {
     pub message: String,
     /// How to close the gap.
     pub close: String,
+    /// Why the files were not indexed, when their indexer cannot run on this platform.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cannot_run: Option<CannotRun>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -215,12 +220,17 @@ impl EvidenceGap {
             places: unjudged.places.clone(),
             message: unjudged.reason.clone(),
             close: unjudged.close.as_deref().unwrap_or(close).to_string(),
+            cannot_run: None,
         }
     }
 }
 
 pub const CLOSE_UNCOVERED: &str =
     "add them to a project the indexer reads, `exclude` them, or accept them in `uncovered_ok`";
+
+/// What closes the gap of files whose indexer cannot run on this platform.
+pub const CLOSE_CANNOT_RUN: &str =
+    "check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`";
 
 /// Code a check could not read or judge, in the order the reasons were always given.
 pub fn evidence_gaps(stats: &Stats) -> Vec<EvidenceGap> {
@@ -240,6 +250,42 @@ pub fn graph_gaps(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
 
 /// The evidence gaps of a run, with `unread` as the files no indexer read.
 fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
+    // A file easement could not read is told apart from one no indexer covered,
+    // and one whose indexer cannot run here from both, since what closes the gap differs.
+    let mut uncovered: Vec<&String> = unread
+        .iter()
+        .filter(|f| !stats.unreadable.contains(f))
+        .collect();
+    let mut cannot_run = Vec::new();
+    for unavailable in &stats.unavailable {
+        let files: Vec<&String> = uncovered
+            .iter()
+            .copied()
+            .filter(|f| unavailable.files.contains(f))
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        uncovered.retain(|f| !files.contains(f));
+        let CannotRun {
+            language,
+            indexer,
+            platform,
+            reason,
+        } = unavailable.cannot_run;
+        let mut gap = EvidenceGap::of(
+            GapKind::Uncovered,
+            &Unjudged::new(format!(
+                "{} {language} source files were not indexed, since {indexer} cannot run on {}: {reason}; the dependencies in or on them were not checked",
+                files.len(),
+                platform.name()
+            ))
+            .in_files(files.into_iter().cloned()),
+            CLOSE_CANNOT_RUN,
+        );
+        gap.cannot_run = Some(unavailable.cannot_run.clone());
+        cannot_run.push(gap);
+    }
     let mut gaps = Vec::new();
     let mut add = |kind, unjudged: &[Unjudged], close: &str| {
         gaps.extend(unjudged.iter().map(|u| EvidenceGap::of(kind, u, close)));
@@ -306,12 +352,6 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
             "name the standard modules the rule means instead of `$std`",
         );
     }
-    // A file easement could not read is told apart from one no indexer covered,
-    // since what closes the gap differs.
-    let uncovered: Vec<&String> = unread
-        .iter()
-        .filter(|f| !stats.unreadable.contains(f))
-        .collect();
     if !uncovered.is_empty() {
         add(
             GapKind::Uncovered,
@@ -334,6 +374,7 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
             "make the files readable (their permissions, a broken link), or `exclude` them",
         );
     }
+    gaps.extend(cannot_run);
     gaps
 }
 

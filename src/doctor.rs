@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use crate::indexer::{Diagnosis, Probe};
+use crate::report;
 
 #[derive(Serialize)]
 struct Report<'a> {
@@ -29,6 +30,17 @@ pub fn text(diagnoses: &[Diagnosis]) -> String {
     }
     let mut out = String::new();
     for d in diagnoses {
+        if let Some(cannot_run) = &d.cannot_run {
+            out.push_str(&format!(
+                "{}: {} cannot run on {}: {}; a check reports its files as uncovered, so {}\n",
+                d.language,
+                d.binary,
+                cannot_run.platform.name(),
+                cannot_run.reason,
+                report::CLOSE_CANNOT_RUN
+            ));
+            continue;
+        }
         if !d.found {
             out.push_str(&format!(
                 "{}: {} not found; install it with `{}`\n",
@@ -50,7 +62,7 @@ pub fn text(diagnoses: &[Diagnosis]) -> String {
     }
     let missing: Vec<&str> = diagnoses
         .iter()
-        .filter(|d| !d.found)
+        .filter(|d| !d.found && d.cannot_run.is_none())
         .filter_map(|d| d.mise)
         .collect();
     if !missing.is_empty() {
@@ -59,10 +71,20 @@ pub fn text(diagnoses: &[Diagnosis]) -> String {
             out.push_str(&format!("\"{tool}\" = \"latest\"\n"));
         }
     }
-    out.push_str(if ok(diagnoses) {
-        "\neasement doctor: ok\n"
+    let cannot_run: Vec<&str> = diagnoses
+        .iter()
+        .filter(|d| d.cannot_run.is_some())
+        .map(|d| d.language)
+        .collect();
+    out.push_str(&if !ok(diagnoses) {
+        "\neasement doctor: something is missing\n".to_string()
+    } else if cannot_run.is_empty() {
+        "\neasement doctor: ok\n".to_string()
     } else {
-        "\neasement doctor: something is missing\n"
+        format!(
+            "\neasement doctor: ok, but the {} files will be uncovered here\n",
+            crate::check::in_words(&cannot_run)
+        )
     });
     out
 }

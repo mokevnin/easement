@@ -349,6 +349,7 @@ pub fn graph_unread(
     let accepted;
     (stats.uncovered, accepted) = map.split_uncovered(&scan.uncovered);
     stats.unreadable = map.split_uncovered(&scan.unreadable).0;
+    stats.unavailable = scan.unavailable.clone();
     stats.imports_partial = unresolved_reasons(&scan.unresolved_imports);
     if config.tests.is_some() {
         stats.parts_partial = parts_reasons(&scan.parts_doubts);

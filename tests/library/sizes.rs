@@ -7,7 +7,7 @@ use std::path::Path;
 use easement::commands;
 
 use crate::common::project;
-use crate::run::{cache, config, pinned};
+use crate::run::{cache, cannot_index_here, config, pinned};
 
 /// What `why` says of `from -> to` in the project at `root`, as text and as data.
 fn why(root: &Path, from: &str, to: &str) -> (String, serde_json::Value) {
@@ -273,6 +273,9 @@ fn the_size_of_a_dependency_has_the_same_shape_in_go_and_python() {
     );
     assert!(text.contains("a writes 2 names of b:\n"), "{text}");
 
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let python_policy = policy("app/a", "app/b");
     let (_tmp, root) = project(&[
         ("easement.yml", &python_policy),
@@ -352,6 +355,9 @@ fn the_names_a_file_writes_in_a_language_without_verified_uses_are_a_gap() {
     assert_eq!(json["names"], serde_json::json!([]), "{json}");
     assert_eq!(name_gaps(&json, "kotlin"), [], "{json}");
 
+    if cannot_index_here(&["java"]) {
+        return;
+    }
     let (_tmp, root) = crate::languages::java_three();
     let (_, json) = why(&root, "chunk", "blob");
     assert_eq!(json["names"], serde_json::json!([]), "{json}");

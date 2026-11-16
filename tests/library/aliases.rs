@@ -14,7 +14,7 @@ use crate::common::{project, write_all};
 use crate::diff::diff_main;
 use crate::reexports::{change, rust, three};
 use crate::run::{
-    cache, cache_in, check, check_with, config, found, json, no_scip_ruby_here, pinned, text,
+    cache, cache_in, cannot_index_here, check, check_with, config, found, json, pinned, text,
 };
 
 /// The violations `gw -> blob` of `report`, by file and line.
@@ -196,7 +196,7 @@ fn a_typescript_type_alias_is_a_dependency_on_what_it_stands_for_and_a_const_is_
 
 #[test]
 fn a_ruby_constant_alias_is_a_dependency_on_what_it_stands_for() {
-    if no_scip_ruby_here() {
+    if cannot_index_here(&["ruby"]) {
         return;
     }
     let (_tmp, root) = three(
@@ -237,6 +237,9 @@ fn a_ruby_constant_alias_is_a_dependency_on_what_it_stands_for() {
 /// The index marks no Python alias: an assignment, annotated or not, is a value.
 #[test]
 fn a_python_assignment_is_no_alias() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
     let (_tmp, root) = three(
         "app/",
         &[

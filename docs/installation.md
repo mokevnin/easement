@@ -25,4 +25,4 @@ Homebrew works on macOS and Linux. Other options:
 - `cargo install easement`;
 - prebuilt binaries for macOS, Linux and Windows, with a PowerShell installer for Windows, on each release.
 
-Windows binaries are built, but Windows is not tested and its support is not guaranteed: some indexers do not work there.
+On Windows, Python, PHP, Java and Ruby files cannot be checked, because their indexers do not run there (see [Indexers](languages.md#indexers)): easement checks the other languages and reports those files as uncovered, with the reason.

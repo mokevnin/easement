@@ -188,6 +188,7 @@ pub fn run(root: &Path, force: bool, cache: &mut scan::Cache) -> Result<String> 
     // The allowances come from the graph: what it could not read, they leave out.
     let stats = check::Stats {
         uncovered: scanned.uncovered.clone(),
+        unavailable: scanned.unavailable.clone(),
         ..check::Stats::default()
     };
     let gaps = report::gap_lines(

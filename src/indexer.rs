@@ -12,6 +12,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
+use crate::check::{self, Platform};
 use crate::lang::registry::{self, Language};
 use crate::relpath;
 use crate::scip::{self, Document, Documents};
@@ -32,6 +33,10 @@ pub struct Indexer {
     install: &'static str,
     /// The mise tool that installs the indexer, for the `[tools]` of a `mise.toml`.
     mise: Option<&'static str>,
+    /// Why it cannot run on Windows, with the upstream cause; `None` when it can.
+    /// There easement does not start it: its files are uncovered with this reason.
+    /// Removed by hand once the pinned indexer runs there (the Windows CI run shows it).
+    not_on_windows: Option<&'static str>,
     /// For an indexer that has no output option: the file it writes in its working directory.
     writes_in_cwd: Option<&'static str>,
     /// The argument that makes it print its version, for `doctor`; `None` for an
@@ -191,6 +196,7 @@ pub static INDEXERS: &[Indexer] = &[
         args: |out| vec!["--output".into(), out.display().to_string()],
         install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
         mise: Some("go:github.com/scip-code/scip-go/cmd/scip-go"),
+        not_on_windows: None,
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -213,6 +219,7 @@ pub static INDEXERS: &[Indexer] = &[
         },
         install: "mise use -g npm:@sourcegraph/scip-typescript",
         mise: Some("npm:@sourcegraph/scip-typescript"),
+        not_on_windows: None,
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: require_installed,
@@ -245,6 +252,9 @@ pub static INDEXERS: &[Indexer] = &[
         },
         install: "mise use -g npm:@sourcegraph/scip-python",
         mise: Some("npm:@sourcegraph/scip-python"),
+        not_on_windows: Some(
+            "scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224)",
+        ),
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -260,6 +270,9 @@ pub static INDEXERS: &[Indexer] = &[
         args: |_| Vec::new(),
         install: "composer global require davidrjenni/scip-php",
         mise: None,
+        not_on_windows: Some(
+            "scip-php leaves every file out of its index there (https://github.com/davidrjenni/scip-php/issues/814)",
+        ),
         writes_in_cwd: Some("index.scip"),
         version_flag: None,
         needs: require_composer,
@@ -275,6 +288,9 @@ pub static INDEXERS: &[Indexer] = &[
         args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
         install: "mise use -g github:sourcegraph/scip-java",
         mise: Some("github:sourcegraph/scip-java"),
+        not_on_windows: Some(
+            "the scip-java release ships a POSIX launcher only, which Windows cannot run",
+        ),
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -290,6 +306,7 @@ pub static INDEXERS: &[Indexer] = &[
         args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
         install: "dotnet tool install --global scip-dotnet",
         mise: None,
+        not_on_windows: None,
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -313,6 +330,7 @@ pub static INDEXERS: &[Indexer] = &[
         },
         install: "mise use -g github:sourcegraph/scip-ruby",
         mise: Some("github:sourcegraph/scip-ruby"),
+        not_on_windows: Some("scip-ruby has no Windows release"),
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -337,6 +355,7 @@ pub static INDEXERS: &[Indexer] = &[
         },
         install: "rustup component add rust-analyzer",
         mise: None,
+        not_on_windows: None,
         writes_in_cwd: None,
         version_flag: Some("--version"),
         needs: nothing_needed,
@@ -348,6 +367,24 @@ pub static INDEXERS: &[Indexer] = &[
 impl Indexer {
     pub fn name(&self) -> &'static str {
         self.language.name
+    }
+
+    /// Why it cannot run on `platform`, `None` when it can.
+    fn cannot_run_on(&self, platform: Platform) -> Option<&'static str> {
+        match platform {
+            Platform::Windows => self.not_on_windows,
+            Platform::Unix => None,
+        }
+    }
+
+    /// Why it cannot run on `platform`, as data; `None` when it can.
+    fn cannot_run(&self, platform: Platform) -> Option<check::CannotRun> {
+        self.cannot_run_on(platform).map(|reason| check::CannotRun {
+            language: self.name(),
+            indexer: self.binary,
+            platform,
+            reason,
+        })
     }
 
     /// Whether it reads `file`: a file of its language that is the project's
@@ -435,27 +472,60 @@ impl CacheUse {
     }
 }
 
+impl Platform {
+    /// Why the indexer of `language` (a registry name, `python`) cannot run on
+    /// this platform; `None` when it can, or when the language has no indexer.
+    pub fn cannot_index(self, language: &str) -> Option<&'static str> {
+        INDEXERS
+            .iter()
+            .find(|indexer| indexer.name() == language)
+            .and_then(|indexer| indexer.cannot_run_on(self))
+    }
+}
+
 /// The environment the indexers run in, which their cache key reads too: the
-/// variables of the process easement runs in, unless the caller sets others.
+/// variables of the process easement runs in, unless the caller sets others,
+/// and the platform it runs on, which decides which indexers can run.
 #[derive(Clone, Debug)]
-pub struct Environment(BTreeMap<OsString, OsString>);
+pub struct Environment {
+    vars: BTreeMap<OsString, OsString>,
+    platform: Platform,
+}
 
 impl Environment {
-    /// The variables of this process.
+    /// The variables and the platform of this process.
     pub fn of_process() -> Self {
-        Environment(std::env::vars_os().collect())
+        Environment {
+            vars: std::env::vars_os().collect(),
+            platform: Platform::current(),
+        }
+    }
+
+    /// Only `vars`, on the platform of this process.
+    #[cfg(test)]
+    fn of_vars(vars: BTreeMap<OsString, OsString>) -> Self {
+        Environment {
+            vars,
+            platform: Platform::current(),
+        }
     }
 
     /// This environment with `key` set to `value`.
     pub fn with(mut self, key: &str, value: impl Into<OsString>) -> Self {
-        self.0.insert(key.into(), value.into());
+        self.vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// This environment as on `platform`: the indexers that cannot run there are not started.
+    pub fn on(mut self, platform: Platform) -> Self {
+        self.platform = platform;
         self
     }
 
     /// The value of `key`, `None` when it is unset or empty. Windows spells a
     /// name in any case (`Path`).
     pub fn get(&self, key: &str) -> Option<&OsStr> {
-        self.0
+        self.vars
             .iter()
             .find(|(name, _)| {
                 if cfg!(windows) {
@@ -486,7 +556,7 @@ impl Environment {
         let repository = crate::diff::repository_env();
         let mut command = Command::new(program);
         command.env_clear().envs(
-            self.0
+            self.vars
                 .iter()
                 .filter(|(name, _)| !repository.iter().any(|r| name.as_os_str() == r.as_str())),
         );
@@ -494,7 +564,7 @@ impl Environment {
     }
 
     fn vars(&self) -> impl Iterator<Item = (OsString, OsString)> + '_ {
-        self.0.iter().map(|(k, v)| (k.clone(), v.clone()))
+        self.vars.iter().map(|(k, v)| (k.clone(), v.clone()))
     }
 }
 
@@ -517,14 +587,35 @@ pub struct Indexed {
     pub cached: usize,
     /// Source files of an indexed language that no index mentions.
     pub uncovered: Vec<String>,
+    /// The languages whose indexer cannot run on this platform, so was not
+    /// started: their files are among `uncovered`.
+    pub unavailable: Vec<check::Unavailable>,
 }
 
-/// The indexers of the languages with source files among `files`, each with the
-/// directories it indexes. Source files with no `go.mod` or `tsconfig.json` above
-/// them are not indexed; they are reported as uncovered, or can be `exclude`d.
-fn groups(files: &[String]) -> Vec<(&'static Indexer, Vec<String>)> {
+/// The indexers that cannot run on `platform`, each with the files of `files` it would read.
+fn unavailable(files: &[String], platform: Platform) -> Vec<check::Unavailable> {
     INDEXERS
         .iter()
+        .filter_map(|indexer| {
+            let cannot_run = indexer.cannot_run(platform)?;
+            let files: Vec<String> = files
+                .iter()
+                .filter(|f| indexer.covers(f))
+                .cloned()
+                .collect();
+            (!files.is_empty()).then_some(check::Unavailable { cannot_run, files })
+        })
+        .collect()
+}
+
+/// The indexers of the languages with source files among `files` that can run on
+/// `platform`, each with the directories it indexes. Source files with no `go.mod`
+/// or `tsconfig.json` above them are not indexed; they are reported as uncovered,
+/// or can be `exclude`d.
+fn groups(files: &[String], platform: Platform) -> Vec<(&'static Indexer, Vec<String>)> {
+    INDEXERS
+        .iter()
+        .filter(|language| language.cannot_run_on(platform).is_none())
         .filter(|language| files.iter().any(|f| language.covers(f)))
         .map(|language| (language, language.roots(files)))
         .filter(|(_, roots)| !roots.is_empty())
@@ -548,7 +639,8 @@ pub fn run(
     let wanted = INDEXERS
         .iter()
         .flat_map(|language| files.iter().filter(|f| language.covers(f)));
-    let groups = groups(files);
+    let platform = indexing.environment.platform;
+    let groups = groups(files, platform);
     let results = in_parallel(&groups, indexing.jobs.get(), |(language, roots)| {
         roots
             .iter()
@@ -579,6 +671,7 @@ pub fn run(
         ran,
         cached,
         uncovered,
+        unavailable: unavailable(files, platform),
     })
 }
 
@@ -1021,7 +1114,7 @@ pub fn probe(
         .filter(|name| name.ends_with(".scip"))
         .collect();
     let mut probes = Vec::new();
-    for (language, roots) in groups(files) {
+    for (language, roots) in groups(files, environment.platform) {
         let env = settings_env(language, settings, environment);
         for dir in roots {
             let reason = match (
@@ -1065,11 +1158,17 @@ pub struct Diagnosis {
     pub mise: Option<&'static str>,
     /// What is missing around the indexer: dependencies that are not installed.
     pub problems: Vec<String>,
+    /// Why it cannot run on this platform, where it cannot: easement does not
+    /// start it, and the files of its language are uncovered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cannot_run: Option<check::CannotRun>,
 }
 
 impl Diagnosis {
+    /// Whether the indexer can run, or cannot run on this platform at all: then
+    /// nothing is missing, and a check reports its files as uncovered.
     pub fn ok(&self) -> bool {
-        self.found && self.problems.is_empty()
+        self.cannot_run.is_some() || (self.found && self.problems.is_empty())
     }
 }
 
@@ -1080,13 +1179,19 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
         .iter()
         .filter(|language| files.iter().any(|f| language.covers(f)))
         .map(|language| {
+            let cannot_run = language.cannot_run(environment.platform);
             let binary = environment.which(language.binary, root);
             let version = binary
                 .as_deref()
                 .zip(language.version_flag)
                 .and_then(|(binary, flag)| version_of(binary, flag, environment));
-            let problems = language
-                .roots(files)
+            // What the indexer needs is beside the point where it cannot run.
+            let roots = if cannot_run.is_some() {
+                Vec::new()
+            } else {
+                language.roots(files)
+            };
+            let problems = roots
                 .iter()
                 .filter_map(|dir| {
                     let shown = if dir.is_empty() { "." } else { dir };
@@ -1104,6 +1209,7 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
                 install: language.install,
                 mise: language.mise,
                 problems,
+                cannot_run,
             }
         })
         .collect()
@@ -1488,7 +1594,7 @@ mod tests {
     /// works on the project and inherits none of that.
     #[test]
     fn an_indexer_runs_without_the_repository_a_parent_git_names() {
-        let environment = Environment(
+        let environment = Environment::of_vars(
             [
                 ("GIT_DIR", "/elsewhere/.git"),
                 ("GIT_INDEX_FILE", "/elsewhere/.git/index"),
@@ -1824,7 +1930,7 @@ mod tests {
         let binary = root.join("scip-go");
         std::fs::write(&binary, "binary").unwrap();
         let go = &INDEXERS[0];
-        let environment = Environment(BTreeMap::new());
+        let environment = Environment::of_vars(BTreeMap::new());
         let key = || fingerprint(go, &binary, root, "a", &files, &[], &environment);
         let before = key();
         std::fs::write(root.join("b/y.go"), "2").unwrap();
@@ -1857,7 +1963,7 @@ mod tests {
         let fake = bin.join("scip-php");
         std::fs::write(&fake, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let environment = Environment(BTreeMap::new()).with("PATH", bin.as_os_str());
+        let environment = Environment::of_vars(BTreeMap::new()).with("PATH", bin.as_os_str());
         (tmp, root, environment)
     }
 

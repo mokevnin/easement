@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use easement::commands::{self, CheckOptions, Checked, Outcome};
-use easement::{Cache, CacheUse, Environment, Indexing, Jobs};
+use easement::{Cache, CacheUse, Environment, Indexing, Jobs, Platform};
 
 use crate::common::test_cache_dir;
 
@@ -130,10 +130,24 @@ pub fn composer_install(root: &Path) {
     assert!(status.success(), "composer install");
 }
 
-/// scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228), so the Ruby tests
-/// skip themselves there. Anywhere else a missing indexer is still an error.
-pub fn no_scip_ruby_here() -> bool {
-    cfg!(all(target_os = "linux", target_arch = "aarch64")) && which::which("scip-ruby").is_err()
+/// Whether a test of any of `languages` (registry names) skips itself here, saying
+/// why: the indexer cannot run on this platform (as the indexer itself says), or
+/// scip-ruby, which has no Linux arm64 release (sourcegraph/scip-ruby#228), is
+/// missing there. Anywhere else a missing indexer is still an error.
+pub fn cannot_index_here(languages: &[&str]) -> bool {
+    languages.iter().any(|language| {
+        if let Some(reason) = Platform::current().cannot_index(language) {
+            eprintln!("skipped: the {language} indexer cannot run here: {reason}");
+            return true;
+        }
+        let no_scip_ruby = *language == "ruby"
+            && cfg!(all(target_os = "linux", target_arch = "aarch64"))
+            && which::which("scip-ruby").is_err();
+        if no_scip_ruby {
+            eprintln!("skipped: scip-ruby has no Linux arm64 release (sourcegraph/scip-ruby#228)");
+        }
+        no_scip_ruby
+    })
 }
 
 /// The check of the whole project at `root` with the indexes of `dir`, taken as

@@ -1,0 +1,13 @@
+---
+source: tests/library/indexers.rs
+expression: text(&checked)
+---
+internal/handlers/books.go:6: handler -> repository is not allowed (written as internal/repository/books.go) [dependency]
+
+Evidence gaps (a pass says nothing about this code):
+  2 python source files were not indexed, since scip-python cannot run on Windows: scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224); the dependencies in or on them were not checked
+    to close: check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`
+    scripts/seed.py
+    scripts/util.py
+
+easement failed: 1 violation(s), 0 stale, 0 legalized; 5 files, 6 internal deps, 2 files not covered by an indexer, 1 files outside components

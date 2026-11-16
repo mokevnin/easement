@@ -66,6 +66,9 @@ pub struct Scan {
     /// for example files outside every `tsconfig.json`, and the source files an
     /// adapter could not read.
     pub uncovered: Vec<String>,
+    /// The languages whose indexer cannot run on this platform, with their files,
+    /// which are among `uncovered`.
+    pub unavailable: Vec<crate::check::Unavailable>,
     /// Source files easement could not read: what they import beyond the index,
     /// and what they suppress, is unknown.
     pub unreadable: Vec<String>,
@@ -603,6 +606,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         symbols,
         unverified_symbols,
         suppressions,
+        unavailable: indexed.unavailable,
         uncovered: {
             let mut uncovered = indexed.uncovered;
             uncovered.extend(unread_sources.iter().cloned());
