@@ -132,8 +132,13 @@ pub struct Setting {
 pub enum Relations {
     /// The relations its code declares (`extends`, `implements`, a base class),
     /// read from the index. `unrelated` finds the declarations the index gives
-    /// none for, which are an evidence gap.
-    Declared { unrelated: Option<Unrelated> },
+    /// none for, which are an evidence gap. `anonymous` says why the index gives a
+    /// class no type, when it gives only its methods relations to the methods they
+    /// implement (a Java anonymous class): such a class is an evidence gap too.
+    Declared {
+        unrelated: Option<Unrelated>,
+        anonymous: Option<&'static str>,
+    },
     /// Relations by the shape of a type alone, which no code declares (a Go type
     /// that has the methods of an interface): no implementation is read from them.
     /// `because` says why, as a clause.
@@ -153,11 +158,20 @@ impl Relations {
 /// may declare some, and why.
 #[derive(Debug)]
 pub struct Unrelated {
-    /// The lines, 1-based and inclusive, of each such declaration of a file, from
-    /// its path and text.
-    pub find: fn(&str, &str) -> Vec<std::ops::RangeInclusive<usize>>,
+    /// The spans of such declarations in a file, from its path and text.
+    pub find: fn(&str, &str) -> Vec<UnrelatedSpan>,
     /// Why the index gives them none, as a clause.
     pub because: &'static str,
+}
+
+/// The lines of a declaration whose index gives no relations, 1-based and
+/// inclusive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrelatedSpan {
+    pub lines: std::ops::RangeInclusive<usize>,
+    /// Whether it counts only when it writes a type alias: a clause whose other
+    /// names the index relates, but not the names an alias stands for.
+    pub through_alias: bool,
 }
 
 #[derive(Debug)]
@@ -300,8 +314,9 @@ pub static TYPESCRIPT: Language = Language {
     relations: Relations::Declared {
         unrelated: Some(Unrelated {
             find: super::typescript::unrelated,
-            because: "scip-typescript gives an interface declaration or a class expression no relations",
+            because: "scip-typescript gives an interface declaration, a class expression or a class that implements a type alias no relations",
         }),
+        anonymous: None,
     },
     parts: None,
     runs_on_import: None,
@@ -334,7 +349,10 @@ pub static PYTHON: Language = Language {
     conventional: &["**/conftest.py", "**/__main__.py", "**/setup.py"],
     manifest: None,
     symbols: true,
-    relations: Relations::Declared { unrelated: None },
+    relations: Relations::Declared {
+        unrelated: None,
+        anonymous: None,
+    },
     parts: None,
     runs_on_import: Some("__init__.py"),
     uses_unimported: &[],
@@ -362,7 +380,12 @@ pub static JAVA: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
-    relations: Relations::Declared { unrelated: None },
+    relations: Relations::Declared {
+        unrelated: None,
+        anonymous: Some(
+            "scip-java gives an anonymous class no type, only its methods relations to the methods they implement",
+        ),
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],
@@ -423,7 +446,10 @@ pub static CSHARP: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
-    relations: Relations::Declared { unrelated: None },
+    relations: Relations::Declared {
+        unrelated: None,
+        anonymous: None,
+    },
     parts: None,
     runs_on_import: None,
     uses_unimported: &[],

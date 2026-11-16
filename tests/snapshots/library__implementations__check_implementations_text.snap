@@ -9,4 +9,9 @@ src/main/java/com/acme/cache/ReadOnly.java:5: cache -> ports: ReadOnly implement
 src/main/java/com/acme/sql/SqlRepo.java:5: sql -> ports: SqlRepo implements ports' OrderRepository; ports may be implemented only in adapters, tests [implementation]
   because: ports are implemented only by adapters and test doubles
 
-easement failed: 3 violation(s), 0 stale, 0 legalized; 8 files, 7 internal deps
+Evidence gaps (a pass says nothing about this code):
+  `implementation` cannot judge 1 java declarations that write a name of ports outside the components that may implement it: scip-java gives an anonymous class no type, only its methods relations to the methods they implement, so whether they implement or extend a type of ports was not checked
+    to close: review those types by hand, or move them into a component `allow_implementers` lists
+    src/main/java/com/acme/cache/Anonymous.java:8
+
+easement failed: 3 violation(s), 0 stale, 0 legalized; 9 files, 8 internal deps
