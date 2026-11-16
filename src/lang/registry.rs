@@ -814,14 +814,30 @@ fn module_separators(file: &str) -> &'static [&'static str] {
 /// writes it, would be used through: `qualifier` cut at the member separator of
 /// the file's language into the qualifier of the type and the type (`ent` and
 /// `Client` of `ent.Client`), never inside the name of a module. `None` for a
-/// file of no language, or a qualifier that names no type. Where the language
-/// cuts its modules at the same separator, the cut may be a module's instead.
-pub fn member_type<'a>(file: &str, qualifier: &'a str) -> Option<(&'a str, &'a str)> {
+/// file of no language, or a qualifier that names no type.
+pub fn member_type<'a>(file: &str, qualifier: &'a str) -> Option<MemberType<'a>> {
     let language = of(file)?;
-    let (outer, ty) = qualifier.rsplit_once(language.member_separator)?;
+    let separator = language.member_separator;
+    let (outer, ty) = qualifier.rsplit_once(separator)?;
     let module = |separator: &&str| ty.contains(*separator);
     (!outer.is_empty() && !ty.is_empty() && !language.module_separators.iter().any(module))
-        .then_some((outer, ty))
+        .then_some(MemberType {
+            qualifier: outer,
+            name: ty,
+            certain: !language.module_separators.contains(&separator),
+        })
+}
+
+/// The type a written member is used through, as [`member_type`] cuts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemberType<'a> {
+    pub qualifier: &'a str,
+    pub name: &'a str,
+    /// Whether the name is a member for sure: its language cuts modules at
+    /// other separators (Go's `/`), so the cut can be no module's. Where it cuts
+    /// them at the same one (`.` in Python, `::` in Rust), the qualifier may as
+    /// well end in a module, and the name be no member.
+    pub certain: bool,
 }
 
 /// Every separator some language cuts its module names at, for a name that

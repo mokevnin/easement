@@ -83,11 +83,12 @@ pub struct Use<'a> {
 impl<'a> Use<'a> {
     /// The use of `symbol` in `file`, written as `forbid_symbol` writes a name:
     /// `example.com/app/ent.Client`, and a member after its type, `ent.Client.Query`
-    /// or `db::client::Client.query`. Without the index, whether the qualifier ends
-    /// in a type cannot always be told (the registry cuts it, see
-    /// [`registry::member_type`]), so a name that may be a member is read both
-    /// ways: a ban on either names it, and `public_symbols` listing either lets
-    /// it through. `None` when `symbol` has no qualifier.
+    /// or `db::client::Client.query`. A ban on the member or on its type names a
+    /// member, and `public_symbols` judges its type, as for a use the scan finds.
+    /// Where the language cannot tell a member from a name under a module without
+    /// the index (see [`registry::MemberType`]), the name is read both ways: a ban
+    /// on either names it, and `public_symbols` listing either lets it through.
+    /// `None` when `symbol` has no qualifier.
     pub fn written(
         file: &'a str,
         owner: Option<&'a str>,
@@ -96,13 +97,20 @@ impl<'a> Use<'a> {
     ) -> Option<Self> {
         let (qualifier, name) = symbol.rsplit_once('.')?;
         let ty = registry::member_type(file, qualifier);
+        let public_as = match ty {
+            Some(ty) if ty.certain => vec![ty.name],
+            Some(ty) => vec![name, ty.name],
+            None => vec![name],
+        };
         Some(Use {
             file,
             owner,
             defined_by,
-            called: std::iter::once((qualifier, name)).chain(ty).collect(),
-            public_as: std::iter::once(name).chain(ty.map(|(_, ty)| ty)).collect(),
-            name,
+            called: std::iter::once((qualifier, name))
+                .chain(ty.map(|ty| (ty.qualifier, ty.name)))
+                .collect(),
+            name: public_as[0],
+            public_as,
             target: symbol.to_string(),
         })
     }
@@ -581,7 +589,7 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
                     ("example.com/app/ent.Client", "Query"),
                     ("example.com/app/ent", "Client")
                 ],
-                vec!["Query", "Client"]
+                vec!["Client"]
             )
         );
         let read_in = |file, symbol| {

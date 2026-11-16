@@ -381,7 +381,8 @@ fn a_symbol_example_pins_who_may_use_a_name() {
 /// The examples of the uses of names that the rest of the symbol rules decide:
 /// the own `forbid_symbol` of the user's component, on a name nothing defines,
 /// a member through its banned type, and the `public_symbols` of the component
-/// `defined_in` names, which without it is not consulted.
+/// `defined_in` names, which without it is not consulted, and which judge a
+/// member by its type, whatever the member is called.
 #[test]
 fn a_symbol_example_is_judged_by_every_symbol_rule() {
     let policy = format!(
@@ -390,6 +391,7 @@ fn a_symbol_example_is_judged_by_every_symbol_rule() {
   - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, expect: allowed }}
   - {{ from: internal/web/page.go, symbol: example.com/app/billing.Invoice.Total, defined_in: internal/billing/charge.go, expect: allowed }}
   - {{ from: internal/api/site/access.go, symbol: example.com/app/ent.Client.Query, expect: rejected }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge.Invoice, defined_in: internal/billing/charge.go, expect: rejected, rule: symbol }}
 "
     );
     let (_tmp, root) = symbol_examples_project(&policy);
@@ -403,7 +405,7 @@ fn a_symbol_example_is_judged_by_every_symbol_rule() {
     fs::write(root.join("easement.yml"), loosened).unwrap();
     let failed = example_failures(&root);
     let lines: Vec<u64> = failed.iter().map(|(line, _)| *line).collect();
-    assert_eq!(lines, [14, 16, 17, 20], "{failed:?}");
+    assert_eq!(lines, [14, 16, 17, 20, 21], "{failed:?}");
     assert!(
         failed[1].1.contains(
             "example internal/web/page.go uses example.com/app/ent.Tx: expects rejected [symbol], but the policy now decides allowed (web): no rule restricts it"
@@ -413,6 +415,12 @@ fn a_symbol_example_is_judged_by_every_symbol_rule() {
     assert!(
         failed[2].1.contains(
             "example internal/web/page.go uses example.com/app/billing.Charge defined in internal/billing/charge.go: expects rejected [symbol], but the policy now decides allowed (web -> billing): no rule restricts it"
+        ),
+        "{failed:?}"
+    );
+    assert!(
+        failed[4].1.contains(
+            "example internal/web/page.go uses example.com/app/billing.Charge.Invoice defined in internal/billing/charge.go: expects rejected [symbol], but the policy now decides allowed (web -> billing): no rule restricts it"
         ),
         "{failed:?}"
     );
