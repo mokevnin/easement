@@ -122,11 +122,7 @@ pub fn written_imports(_file: &str, text: &str) -> Vec<Import> {
             let path = spec.child_by_field_name("path")?;
             let quoted = path.utf8_text(text.as_bytes()).ok()?;
             let specifier = quoted.get(1..quoted.len().checked_sub(1)?)?;
-            (specifier != "C").then(|| Import {
-                specifier: specifier.to_string(),
-                line: path.start_position().row + 1,
-                form: super::Form::Static,
-            })
+            (specifier != "C").then(|| Import::at(path, specifier, super::Form::Static))
         }));
     }
     imports

@@ -1,0 +1,11 @@
+version: 1
+
+components:
+  app:   { in: src/app }
+  lib:   { in: src/lib }
+  inner: { in: src/ns/inner }
+  ns:    { in: src/ns/a.py }
+
+rules:
+  app:   { may_depend_on: [lib] }
+  inner: { may_depend_on: [ns] }

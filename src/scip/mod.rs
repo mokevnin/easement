@@ -1006,12 +1006,15 @@ impl<'a> Indexed<'a> {
 
     /// What the index holds on the specifier of `import`, written in `document`,
     /// any document the index read, whose text is `lines`: a module it resolved stands on the text
-    /// of the path, with or without its quotes, in every language. An alias, or
+    /// of the path, with or without its quotes, in every language, or on the text
+    /// the import says it is recorded on ([`Import::recorded_on`]). An alias, or
     /// another import on the same line, stands on other text, so it resolves
     /// nothing here; nor does a reference whose range is not on one line, since
     /// what it stands on is unknown. A module resolves it only when it is taken
     /// where the dependencies are: to a file of the project, checked or excluded,
-    /// or to an external module.
+    /// or to an external module; a name at the top level of a file of the project
+    /// resolves it too (Python's `from . import VERSION`). Neither does when it is
+    /// the importing file itself.
     pub fn resolution(&self, document: &Document, lines: &[&str], import: &Import) -> Resolution {
         let text = import.line.checked_sub(1).and_then(|line| lines.get(line));
         let lookup = Lookup {
@@ -1024,19 +1027,20 @@ impl<'a> Indexed<'a> {
                 && reference.columns.is_some_and(|columns| {
                     text.and_then(|text| between(text, columns, document.encoding))
                         .is_some_and(|spelled| {
-                            unquoted(spelled).unwrap_or(spelled) == import.specifier
+                            unquoted(spelled).unwrap_or(spelled) == import.recorded_text()
                         })
                 });
             let Some(name) = self.names.get(&reference.symbol).filter(|_| on_path) else {
                 continue;
             };
+            let file = lookup.file_of(name);
             match name.shape {
-                Shape::Module
-                    if lookup.file_of(name).is_some()
-                        || self.external(name, reference).is_some() =>
-                {
+                // The file itself is no target of its own import.
+                _ if file == Some(document.path.as_str()) => {}
+                Shape::Module if file.is_some() || self.external(name, reference).is_some() => {
                     return Resolution::Target;
                 }
+                Shape::TopLevel if file.is_some() => return Resolution::Target,
                 Shape::Wildcard => found = Resolution::Wildcard,
                 _ => {}
             }
@@ -2707,11 +2711,7 @@ mod tests {
             Indexed::of(&names).resolution(
                 document,
                 &lines,
-                &Import {
-                    specifier: specifier.into(),
-                    line,
-                    form: crate::lang::Form::Static,
-                },
+                &Import::new(specifier, line, crate::lang::Form::Static),
             )
         };
         let resolved = |line, specifier: &str| resolution(&document, line, specifier);
@@ -2785,11 +2785,7 @@ mod tests {
             index.resolution(
                 &main,
                 &lines,
-                &Import {
-                    specifier: specifier.into(),
-                    line,
-                    form: crate::lang::Form::Static,
-                },
+                &Import::new(specifier, line, crate::lang::Form::Static),
             )
         };
         assert_eq!(resolution(1, "./app.css"), Resolution::Wildcard);
@@ -2808,6 +2804,77 @@ mod tests {
             )
             .collect();
         assert!(externals.is_empty(), "{externals:?}");
+    }
+
+    /// A name of a file of the project that stands on the text the index records
+    /// an import on resolves it, as Python's `from . import VERSION` does; a module
+    /// that is the importing file itself names no target, as scip-python takes a
+    /// `from .. import x` above the top package to.
+    #[test]
+    fn a_name_of_the_project_resolves_an_import_and_the_file_itself_does_not() {
+        let lines = [
+            "from . import VERSION as V",
+            "from .. import lib",
+            "from . import sibling",
+        ];
+        let py = "scip-python python project 0 ";
+        let on = |line: usize, text: &str, symbol: String| Reference {
+            line,
+            columns: Some({
+                let start = lines[line - 1].rfind(text).unwrap();
+                (start, start + text.len())
+            }),
+            symbol,
+            spelled: None,
+        };
+        let main = Document {
+            path: "src/app/main.py".into(),
+            definitions: vec![format!("{py}`src.app.main`/__init__:")],
+            references: vec![
+                on(1, "VERSION as V", format!("{py}`src.app`/VERSION.")),
+                on(2, "lib", format!("{py}`src.app.main`/__init__:")),
+                on(3, "sibling", format!("{py}sibling/__init__:")),
+            ],
+            encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
+            ..Document::default()
+        };
+        let init = doc(
+            "src/app/__init__.py",
+            &[
+                &format!("{py}`src.app`/__init__:"),
+                &format!("{py}`src.app`/VERSION."),
+            ],
+            &[],
+        );
+        let sibling = doc(
+            "src/app/sibling.py",
+            &[&format!("{py}`src.app.sibling`/__init__:")],
+            &[],
+        );
+        let documents = [main.clone(), init, sibling];
+        let names = Names::of(&documents, &[]);
+        let index = Indexed::of(&names);
+        let resolution = |line, specifier: &str, recorded_on: &str| {
+            index.resolution(
+                &main,
+                &lines,
+                &Import {
+                    recorded_on: Some(recorded_on.into()),
+                    ..Import::new(specifier, line, crate::lang::Form::Static)
+                },
+            )
+        };
+        assert_eq!(
+            resolution(1, ".VERSION", "VERSION as V"),
+            Resolution::Target
+        );
+        assert_eq!(resolution(2, "..lib", "lib"), Resolution::Nothing);
+        assert_eq!(resolution(3, ".sibling", "sibling"), Resolution::Target);
+        assert_eq!(
+            resolution(3, ".sibling", ".sibling"),
+            Resolution::Nothing,
+            "the module stands on `sibling`, not on the specifier"
+        );
     }
 
     #[test]

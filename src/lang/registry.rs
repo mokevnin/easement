@@ -99,9 +99,11 @@ pub struct Explained {
 /// What the text of a specifier spells, without resolving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Spelled {
-    /// A path relative to the file that writes it, as it names a file: a query
-    /// (`?raw`) left off, no extension or `index` added.
-    Path(String),
+    /// The paths, relative to the file that writes it, of the files it may name,
+    /// each as the language reads it: a query (`?raw`) left off, no extension or
+    /// `index` guessed; Python's `.x` is `x.py` or the package `x/__init__.py`.
+    /// It names the one of them that exists, and none when not exactly one does.
+    Paths(Vec<String>),
     /// A package, by its name (`some-pkg` of `some-pkg/style.css`).
     Package(String),
     /// Neither: an alias of the build (`#lib/x`, `$lib/x`), a scheme (`virtual:x`).
@@ -364,7 +366,11 @@ pub static PYTHON: Language = Language {
     uses_unimported: &[],
     program: None,
     unindexed_uses: None,
-    written_imports: None,
+    written_imports: Some(WrittenImports {
+        list: super::python::written_imports,
+        explained: super::python::EXPLAINED,
+        spelled: Some(super::python::spelled),
+    }),
     adapter: None,
     foreign_dirs: &[],
     third_party: &[],
