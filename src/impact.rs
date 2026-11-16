@@ -9,7 +9,7 @@ use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
 use crate::decision;
 use crate::explain::DependencyDecision;
-use crate::lang::{Called, Dep, Mention, Unit, registry};
+use crate::lang::{Aliased, Dep, Mention, Qualified, Unit, registry};
 use crate::policy::Policy;
 use crate::relpath;
 use crate::report::{self, Coverage, EvidenceGap, GapKind};
@@ -501,7 +501,7 @@ fn written_names<'a>(
     #[derive(Default)]
     struct Found {
         places: BTreeSet<(String, usize)>,
-        called: Option<Called>,
+        called: Option<Qualified>,
         closed: bool,
     }
     let mut names: BTreeMap<(String, String), Found> = BTreeMap::new();
@@ -511,12 +511,7 @@ fn written_names<'a>(
         // The lines that refer to each target, the uses of an alias that stands for a
         // name of it, and the names of the other files of the module it is, which no
         // dependency of their own stands for.
-        let aliased = dep.aliased.iter().map(|aliased| Mention {
-            line: aliased.line,
-            symbol: aliased.symbol.clone(),
-            called: aliased.called.clone(),
-            bare: aliased.symbol.is_none(),
-        });
+        let aliased = dep.aliased.iter().map(Aliased::mention);
         let own: Vec<Mention> = dep.mentions.iter().cloned().chain(aliased).collect();
         let elsewhere = dep
             .elsewhere
@@ -539,7 +534,7 @@ fn written_names<'a>(
             let name = mention
                 .called
                 .as_ref()
-                .map_or_else(|| symbol.clone(), Called::to_string);
+                .map_or_else(|| symbol.clone(), Qualified::to_string);
             let found = names.entry((name, target.clone())).or_default();
             found.closed |= *closed || closed_lines.contains(&place);
             found.called = found.called.take().or_else(|| mention.called.clone());
@@ -555,7 +550,7 @@ fn written_names<'a>(
     let names = names
         .into_iter()
         .map(|((name, file), found)| {
-            let listed = |called: &Called| {
+            let listed = |called: &Qualified| {
                 from == to
                     || symbols::outside_public_symbols(config, to, &[called.name.as_str()])
                         .is_none()
