@@ -4,11 +4,11 @@
 
 use std::path::PathBuf;
 
-use easement::commands;
+use easement::commands::{self, Outcome};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project};
-use crate::run::{cache, check, gap_messages, json, leaves_out, parse, pinned, text};
+use crate::run::{cache, check, check_with, gap_messages, json, leaves_out, parse, pinned, text};
 
 /// The file that imports the name.
 const IMPORT: &str = "app/src/main/kotlin/com/acme/App.kt";
@@ -59,7 +59,7 @@ fn project_of(copies: &[(&str, &str)]) -> (TempDir, PathBuf) {
 }
 
 /// Two files that declare one name leave a gap: the import of it may mean
-/// either, so the graph may be short.
+/// either, so which one it means is not proven.
 #[test]
 fn a_name_declared_in_two_components_is_an_evidence_gap() {
     let (_tmp, root) = fixture("kotlin_duplicate");
@@ -75,6 +75,24 @@ fn a_name_declared_in_two_components_is_an_evidence_gap() {
     pinned(|| {
         insta::assert_json_snapshot!("declarations_gap", gaps[0]);
     });
+}
+
+/// A real duplicate fails `--require-evidence` with `Outcome::EvidenceRequired`
+/// on a run that would otherwise pass, and leaves the run passing without the
+/// flag: the gap makes the result partial, not wrong.
+#[test]
+fn a_name_declared_in_two_components_fails_require_evidence() {
+    let (_tmp, root) = fixture("kotlin_duplicate");
+    assert_eq!(check(&root).outcome(), Outcome::Passed);
+
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    assert_eq!(checked.outcome(), Outcome::EvidenceRequired);
+    let report = json(&checked);
+    assert_eq!(report["passed"], false);
+    assert!(
+        !gap_messages(&report, "declarations").is_empty(),
+        "{report}"
+    );
 }
 
 /// A dependency that two components may answer for says how certain its
@@ -296,6 +314,35 @@ fn a_wildcard_import_over_two_directories_is_no_gap() {
         "{report}"
     );
     assert!(gap_messages(&report, "declarations").is_empty(), "{report}");
+}
+
+/// A class and a top-level function of its name in another file (the factory
+/// function idiom) are one type declared once: the import means both, as an
+/// overload does, and no gap is raised.
+#[test]
+fn a_class_and_a_factory_function_of_its_name_are_no_gap() {
+    let (_tmp, root) = project_with(
+        &policy(
+            &["app", "lib"],
+            "  app: { must_not_depend_on: [lib] }\n",
+            &[],
+            false,
+        ),
+        &[
+            (IMPORT, APP),
+            ("lib/src/main/kotlin/com/acme/thing/Thing.kt", THING),
+            (
+                "lib/src/main/kotlin/com/acme/thing/Things.kt",
+                "package com.acme.thing\n\nfun Thing(size: Int): Thing = Thing()\n",
+            ),
+        ],
+    );
+    let report = json(&check(&root));
+    assert!(gap_messages(&report, "declarations").is_empty(), "{report}");
+    assert_eq!(
+        report["violations"][0]["resolution"], "same_scope",
+        "{report}"
+    );
 }
 
 /// A function of one name in several files is an overload or an extension, not
