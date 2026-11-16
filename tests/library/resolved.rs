@@ -81,6 +81,7 @@ forbid_external:
 examples:
   - { from: src/web/page.ts, to: src/http/api/client.ts, expect: allowed }
   - { from: src/web/page.ts, external: axios, expect: rejected, rule: external }
+  - { from: src/web/page.ts, symbol: db.Client, defined_in: src/stores/users/db.ts, expect: rejected, rule: symbol }
 
 no_cycles: [domain, web]
 strict: true
@@ -270,6 +271,7 @@ fn examples_layers_and_common_name_where_they_are_written() {
             &json!({ "field": "examples[0]", "input": "policy/base.yml" }),
             &json!({ "field": "examples[1]", "input": "easement.yml" }),
             &json!({ "field": "examples[2]", "input": "easement.yml" }),
+            &json!({ "field": "examples[3]", "input": "easement.yml" }),
         ]
     );
     assert_eq!(

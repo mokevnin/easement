@@ -140,11 +140,11 @@ pub struct Config {
     #[serde(default)]
     #[schemars(schema_with = "schema::warn_schema")]
     pub warn: Vec<String>,
-    /// Policy examples: proposed dependencies with the decision each must get, judged by
-    /// every `check` without any code that imports them. One that gets another decision
-    /// fails as `example` at its line, so a later grant cannot silently undo a prohibition.
-    /// Paths are relative to the root and need not exist; a source or a target path no
-    /// component owns cannot be judged and fails. `extends` joins the lists.
+    /// Policy examples: proposed dependencies, or uses of a name, with the decision each
+    /// must get, judged by every `check` without any code that writes them. One that gets
+    /// another decision fails as `example` at its line, so a later grant cannot silently
+    /// undo a prohibition. Paths are relative to the root and need not exist; a source or
+    /// a target path no component owns cannot be judged and fails. `extends` joins the lists.
     #[serde(default)]
     pub examples: Vec<Example>,
     /// What the globs and sets expanded to, and where each expanded name is written.
@@ -153,18 +153,28 @@ pub struct Config {
     pub expansion: Expansion,
 }
 
-/// A policy example: a proposed dependency and the decision it must get.
+/// A policy example: a proposed dependency, or a use of a name, and the decision it
+/// must get.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Example {
-    /// The file that would hold the import.
+    /// The file that would hold the import, or use the name.
     pub from: String,
-    /// The path it would import; or `external`.
+    /// The path it would import; or `external`, or `symbol`.
     #[serde(default)]
     pub to: Option<String>,
-    /// The external module it would import; or `to`.
+    /// The external module it would import; or `to`, or `symbol`.
     #[serde(default)]
     pub external: Option<String>,
+    /// The name it would use, as `forbid_symbol` writes it (`example.com/app/ent.Client`,
+    /// a member after its type: `ent.Client.Query`); or `to`, or `external`. Judged by
+    /// `forbid_symbol` from the paths alone, so the name need not exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// The file that defines `symbol`, so that the `public_symbols` of its component
+    /// judge it too; without it they are not consulted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defined_in: Option<String>,
     /// The decision it must get.
     pub expect: Expect,
     /// The rule that must reject it, when the reason matters; without it any rejection
@@ -193,7 +203,8 @@ impl Expect {
     }
 }
 
-/// The rules that can reject one dependency, and so a policy example.
+/// The rules that can reject one dependency or one use of a name, and so a policy
+/// example.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ExampleRule {
@@ -201,6 +212,7 @@ pub enum ExampleRule {
     Privacy,
     Isolation,
     External,
+    Symbol,
 }
 
 impl ExampleRule {
@@ -210,6 +222,7 @@ impl ExampleRule {
             ExampleRule::Privacy => RuleId::Privacy,
             ExampleRule::Isolation => RuleId::Isolation,
             ExampleRule::External => RuleId::External,
+            ExampleRule::Symbol => RuleId::Symbol,
         }
     }
 }

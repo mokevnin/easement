@@ -566,6 +566,10 @@ pub struct ExampleEntry {
     pub to: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defined_in: Option<String>,
     pub expect: crate::config::Expect,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<crate::config::ExampleRule>,
@@ -680,6 +684,8 @@ impl ResolvedPolicy {
                     from: example.from.clone(),
                     to: example.to.clone(),
                     external: example.external.clone(),
+                    symbol: example.symbol.clone(),
+                    defined_in: example.defined_in.clone(),
                     expect: example.expect,
                     rule: example.rule,
                     because: example.because.clone(),
@@ -769,11 +775,19 @@ impl ResolvedPolicy {
         if !self.examples.is_empty() {
             out.push_str("examples:\n");
             for example in &self.examples {
-                let to = example
-                    .to
-                    .clone()
-                    .or_else(|| example.external.as_ref().map(|m| format!("external {m}")))
-                    .unwrap_or_default();
+                let to = match (&example.to, &example.external, &example.symbol) {
+                    (Some(path), _, _) => format!(" -> {path}"),
+                    (None, Some(module), _) => format!(" -> external {module}"),
+                    (None, None, Some(symbol)) => {
+                        let defined = example
+                            .defined_in
+                            .as_ref()
+                            .map(|path| format!(" defined in {path}"))
+                            .unwrap_or_default();
+                        format!(" uses {symbol}{defined}")
+                    }
+                    (None, None, None) => String::new(),
+                };
                 let rule = example
                     .rule
                     .map(|r| format!(" [{}]", r.id().as_str()))
@@ -785,7 +799,7 @@ impl ResolvedPolicy {
                     .map(|i| format!(" ({i})"))
                     .unwrap_or_default();
                 out.push_str(&format!(
-                    "  {} -> {to}: {}{rule}{}{input}\n",
+                    "  {}{to}: {}{rule}{}{input}\n",
                     example.from,
                     example.expect.as_str(),
                     reason(example.because.as_deref())

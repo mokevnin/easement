@@ -322,18 +322,41 @@ impl Config {
         }
         for (i, example) in self.examples.iter().enumerate() {
             let at = format!("examples[{i}] ({})", example.from);
-            match (&example.to, &example.external, example.rule) {
-                (Some(_), Some(_), _) | (None, None, _) => {
-                    bail!("{at} needs exactly one of `to` and `external`")
-                }
-                (_, _, Some(rule)) if example.expect == Expect::Allowed => bail!(
+            let what = [&example.to, &example.external, &example.symbol];
+            if what.iter().filter(|w| w.is_some()).count() != 1 {
+                bail!("{at} needs exactly one of `to`, `external` and `symbol`")
+            }
+            if example.defined_in.is_some() && example.symbol.is_none() {
+                bail!("{at}: `defined_in` says where a `symbol` is defined, so it needs `symbol`")
+            }
+            if let Some(symbol) = &example.symbol
+                && !symbol.contains('.')
+            {
+                bail!(
+                    "{at}: `symbol` `{symbol}` has no qualifier, so no `forbid_symbol` name can match it; write it as `forbid_symbol` does, `package.Name` or `import/path.Name`"
+                )
+            }
+            let Some(rule) = example.rule else {
+                continue;
+            };
+            if example.expect == Expect::Allowed {
+                bail!(
                     "{at} expects allowed, so no rule `{}` can reject it; drop `rule` or expect rejected",
                     rule.id().as_str()
+                )
+            }
+            match (&example.to, &example.external, &example.symbol) {
+                (None, None, Some(_)) if rule != ExampleRule::Symbol => bail!(
+                    "{at}: a use of a `symbol` is rejected only by rule `symbol`, never `{}`",
+                    rule.id().as_str()
                 ),
-                (Some(_), None, Some(ExampleRule::External)) => {
+                (_, _, None) if rule == ExampleRule::Symbol => {
+                    bail!("{at}: only a use of a `symbol` can be rejected by rule `symbol`")
+                }
+                (Some(_), None, None) if rule == ExampleRule::External => {
                     bail!("{at}: only an `external` module can be rejected by rule `external`")
                 }
-                (None, Some(_), Some(rule)) if rule != ExampleRule::External => bail!(
+                (None, Some(_), None) if rule != ExampleRule::External => bail!(
                     "{at}: an `external` module is rejected only by rule `external`, never `{}`",
                     rule.id().as_str()
                 ),
@@ -767,14 +790,48 @@ components:
         };
         with("{ from: a/x, to: a/y, expect: rejected, rule: privacy }").unwrap();
         with("{ from: a/x, external: lodash, expect: rejected, rule: external }").unwrap();
+        with("{ from: a/x, symbol: d.T, defined_in: a/y, expect: rejected, rule: symbol }")
+            .unwrap();
         for (example, error) in [
             (
                 "{ from: a/x, expect: allowed }",
-                "exactly one of `to` and `external`",
+                "exactly one of `to`, `external` and `symbol`",
             ),
             (
                 "{ from: a/x, to: a/y, external: lodash, expect: allowed }",
-                "exactly one of `to` and `external`",
+                "exactly one of `to`, `external` and `symbol`",
+            ),
+            (
+                "{ from: a/x, to: a/y, symbol: d.T, expect: allowed }",
+                "exactly one of `to`, `external` and `symbol`",
+            ),
+            (
+                "{ from: a/x, external: lodash, symbol: d.T, expect: allowed }",
+                "exactly one of `to`, `external` and `symbol`",
+            ),
+            (
+                "{ from: a/x, to: a/y, defined_in: a/z, expect: allowed }",
+                "`defined_in` says where a `symbol` is defined, so it needs `symbol`",
+            ),
+            (
+                "{ from: a/x, symbol: Client, expect: rejected }",
+                "`symbol` `Client` has no qualifier",
+            ),
+            (
+                "{ from: a/x, symbol: d.T, expect: rejected, rule: dependency }",
+                "a use of a `symbol` is rejected only by rule `symbol`, never `dependency`",
+            ),
+            (
+                "{ from: a/x, to: a/y, expect: rejected, rule: symbol }",
+                "only a use of a `symbol` can be rejected by rule `symbol`",
+            ),
+            (
+                "{ from: a/x, external: lodash, expect: rejected, rule: symbol }",
+                "only a use of a `symbol` can be rejected by rule `symbol`",
+            ),
+            (
+                "{ from: a/x, symbol: d.T, expect: allowed, rule: symbol }",
+                "expects allowed, so no rule `symbol` can reject it",
             ),
             (
                 "{ from: a/x, to: a/y, expect: allowed, rule: privacy }",

@@ -18,97 +18,210 @@ pub fn symbols(config: &Config, map: &ComponentMap, uses: &[SymbolRef]) -> Vec<V
     for used in uses {
         let file = slash(&used.file);
         let owner = map.component_of_unit(&used.from);
-        // A file that belongs to no component is judged by the top-level list alone.
-        let from = owner.unwrap_or_default();
-        let mut report = |message: String, target: String, to: &str, because: Option<&str>| {
-            found.push(Violation {
-                evidence: vec![Place::new(file.clone(), used.line)],
-                file: file.clone(),
-                line: used.line,
-                message,
-                because: because.map(str::to_string),
-                from: from.to_string(),
-                to: to.to_string(),
-                target,
-                specifier: used.specifier.clone(),
-                ..Violation::of(RuleId::Symbol)
-            });
+        let defined_by = match &used.target {
+            Some(Target::Internal(unit)) => map.component_of_unit(unit),
+            _ => None,
         };
-        let own = owner
-            .and_then(|component| config.rules.get(component))
-            .into_iter()
-            .flat_map(|rule| {
-                rule.forbid_symbol
-                    .iter()
-                    .map(move |listed| (listed, rule.because.as_deref(), None))
-            });
-        let global = config
-            .forbid_symbol
-            .iter()
-            .enumerate()
-            .map(|(item, listed)| (listed, None, Some(item)));
-        let mut seen = std::collections::BTreeSet::new();
-        for (listed, fallback, item) in global.chain(own) {
-            let pattern = listed.name();
-            if names_symbol(pattern, &used.specifier, &used.name)
-                || used
-                    .method
+        let called = std::iter::once((used.specifier.as_str(), used.name.as_str()))
+            .chain(
+                used.method
                     .as_ref()
-                    .is_some_and(|(owner, method)| names_symbol(pattern, owner, method))
-            {
-                // A component the item allows may use the name.
-                if owner.is_some_and(|component| listed.allows(component)) {
-                    continue;
-                }
-                // So may a file in a path the item allows, whatever owns it.
-                if item.is_some_and(|item| map.granted_in(Ban::Symbol, item, &file).is_some()) {
-                    continue;
-                }
-                // A name in both lists is one violation.
-                if !seen.insert(pattern) {
-                    continue;
-                }
-                let who = crate::check::who(from);
-                let allowed: Vec<&str> = listed
-                    .allow()
-                    .into_iter()
-                    .chain(listed.allow_in())
-                    .flatten()
-                    .map(String::as_str)
-                    .collect();
-                let only = if allowed.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (only {} may)", in_words(&allowed))
-                };
-                report(
-                    format!("{who} must not use {pattern}{only}"),
-                    pattern.to_string(),
-                    "",
-                    listed.because().or(fallback),
-                );
-            }
-        }
-        if owner.is_some()
-            && let Some(Target::Internal(unit)) = &used.target
-            && let Some(to) = map.component_of_unit(unit)
-            && to != from
-            && let Some(public) = &config.components[to].public_symbols
-            && !public.contains(&used.name)
-        {
-            report(
-                format!(
-                    "{from} -> {to}: {} is not in the public symbols of {to} ({})",
-                    used.name,
-                    public.join(", ")
-                ),
-                format!("{}.{}", used.specifier, used.name),
-                to,
-                config.components[to].because.as_deref(),
-            );
-        }
+                    .map(|(owner, method)| (owner.as_str(), method.as_str())),
+            )
+            .collect();
+        let judged = judge(
+            config,
+            map,
+            &Use {
+                file: &file,
+                owner,
+                defined_by,
+                called,
+                public_as: vec![&used.name],
+                name: &used.name,
+                target: format!("{}.{}", used.specifier, used.name),
+            },
+        );
+        found.extend(judged.found.into_iter().map(|said| Violation {
+            evidence: vec![Place::new(file.clone(), used.line)],
+            file: file.clone(),
+            line: used.line,
+            message: said.message,
+            because: said.because,
+            // A file that belongs to no component is judged by the top-level list alone.
+            from: owner.unwrap_or_default().to_string(),
+            to: said.to,
+            target: said.target,
+            specifier: used.specifier.clone(),
+            ..Violation::of(RuleId::Symbol)
+        }));
     }
     found
+}
+
+/// One use of a name, as the symbol rules judge it: by the paths and the
+/// components alone, so a use the code does not have yet (a policy example) is
+/// judged as the scan judges one it has.
+pub struct Use<'a> {
+    /// The file that uses the name, relative to the root.
+    pub file: &'a str,
+    /// The component of the code that uses it; none for a file of no component.
+    pub owner: Option<&'a str>,
+    /// The component that defines the name, when one is known to.
+    pub defined_by: Option<&'a str>,
+    /// What `forbid_symbol` may call the name, each a qualifier and a name: the
+    /// name itself, and a member also as the type it is used through.
+    pub called: Vec<(&'a str, &'a str)>,
+    /// The names `public_symbols` may list it as: the name, or the type it is a member of.
+    pub public_as: Vec<&'a str>,
+    /// The name a `public_symbols` violation tells.
+    pub name: &'a str,
+    /// The name as a violation's target tells it.
+    pub target: String,
+}
+
+impl<'a> Use<'a> {
+    /// The use of `symbol` in `file`, written as `forbid_symbol` writes a name:
+    /// `example.com/app/ent.Client`, and a member after its type, `ent.Client.Query`
+    /// or `db::client::Client.query`. Without the index, whether the qualifier ends
+    /// in a type is unknown, so it is read both ways. `None` when `symbol` has no
+    /// qualifier.
+    pub fn written(
+        file: &'a str,
+        owner: Option<&'a str>,
+        defined_by: Option<&'a str>,
+        symbol: &'a str,
+    ) -> Option<Self> {
+        let (qualifier, name) = symbol.rsplit_once('.')?;
+        // The type a member would be used through: the qualifier cut at its last
+        // `.` or `::`, never inside a path of modules.
+        let types: Vec<(&str, &str)> = [".", "::"]
+            .into_iter()
+            .filter_map(|separator| qualifier.rsplit_once(separator))
+            .filter(|(outer, ty)| !outer.is_empty() && !ty.is_empty() && !ty.contains('/'))
+            .collect();
+        Some(Use {
+            file,
+            owner,
+            defined_by,
+            called: std::iter::once((qualifier, name))
+                .chain(types.iter().copied())
+                .collect(),
+            public_as: std::iter::once(name)
+                .chain(types.iter().map(|(_, ty)| *ty))
+                .collect(),
+            name,
+            target: symbol.to_string(),
+        })
+    }
+
+    /// Whether `pattern`, a `forbid_symbol` name, names the name used.
+    fn is(&self, pattern: &str) -> bool {
+        self.called
+            .iter()
+            .any(|(specifier, name)| names_symbol(pattern, specifier, name))
+    }
+}
+
+/// What the symbol rules say of one use.
+pub struct Judged {
+    /// One for each rule item that forbids it.
+    pub found: Vec<Found>,
+    /// The grant that lets in a name an item forbids, when one does:
+    /// `forbid_symbol allow` or `forbid_symbol allow_in`.
+    pub granted: Option<&'static str>,
+}
+
+/// A symbol rule that forbids a use.
+pub struct Found {
+    pub message: String,
+    pub because: Option<String>,
+    /// The component that defines the name, for `public_symbols`; else empty.
+    pub to: String,
+    pub target: String,
+}
+
+/// The decision of `forbid_symbol` (the top-level list and that of the user's
+/// component) and of the `public_symbols` of the component that defines the name.
+pub fn judge(config: &Config, map: &ComponentMap, used: &Use) -> Judged {
+    let mut found = Vec::new();
+    let mut granted = None;
+    let owner = used.owner;
+    let from = owner.unwrap_or_default();
+    let own = owner
+        .and_then(|component| config.rules.get(component))
+        .into_iter()
+        .flat_map(|rule| {
+            rule.forbid_symbol
+                .iter()
+                .map(move |listed| (listed, rule.because.as_deref(), None))
+        });
+    let global = config
+        .forbid_symbol
+        .iter()
+        .enumerate()
+        .map(|(item, listed)| (listed, None, Some(item)));
+    let mut seen = BTreeSet::new();
+    for (listed, fallback, item) in global.chain(own) {
+        let pattern = listed.name();
+        if !used.is(pattern) {
+            continue;
+        }
+        // A component the item allows may use the name.
+        if owner.is_some_and(|component| listed.allows(component)) {
+            granted.get_or_insert("forbid_symbol allow");
+            continue;
+        }
+        // So may a file in a path the item allows, whatever owns it.
+        if item.is_some_and(|item| map.granted_in(Ban::Symbol, item, used.file).is_some()) {
+            granted.get_or_insert("forbid_symbol allow_in");
+            continue;
+        }
+        // A name in both lists is one violation.
+        if !seen.insert(pattern) {
+            continue;
+        }
+        let who = crate::check::who(from);
+        let allowed: Vec<&str> = listed
+            .allow()
+            .into_iter()
+            .chain(listed.allow_in())
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let only = if allowed.is_empty() {
+            String::new()
+        } else {
+            format!(" (only {} may)", in_words(&allowed))
+        };
+        found.push(Found {
+            message: format!("{who} must not use {pattern}{only}"),
+            because: listed.because().or(fallback).map(str::to_string),
+            to: String::new(),
+            target: pattern.to_string(),
+        });
+    }
+    if owner.is_some()
+        && let Some(to) = used.defined_by
+        && to != from
+        && let Some(public) = &config.components[to].public_symbols
+        && !used
+            .public_as
+            .iter()
+            .any(|name| public.iter().any(|p| p == name))
+    {
+        found.push(Found {
+            message: format!(
+                "{from} -> {to}: {} is not in the public symbols of {to} ({})",
+                used.name,
+                public.join(", ")
+            ),
+            because: config.components[to].because.clone(),
+            to: to.to_string(),
+            target: used.target.clone(),
+        });
+    }
+    Judged { found, granted }
 }
 
 /// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a
@@ -454,6 +567,39 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
         let first = "forbid_symbol[0].allow_in lets `web/b` use `d.T`, but web/b/x.go there belongs to `web`, whose rules.web.forbid_symbol forbids it";
         assert_eq!(said(&["web/a/x.go", "web/b/y.go", "web/b/x.go"]), first);
         assert_eq!(said(&["web/b/x.go", "web/b/y.go", "web/a/x.go"]), first);
+    }
+
+    /// A name an example writes is read as `forbid_symbol` reads a use: a member
+    /// also as the type it is used through, whether its language joins them with
+    /// `.` or `::`; a module path is never cut into a type.
+    #[test]
+    fn a_written_name_is_read_with_the_type_of_a_member() {
+        let read = |symbol| {
+            let used = Use::written("web/a.go", Some("web"), None, symbol).unwrap();
+            (used.called, used.public_as)
+        };
+        assert_eq!(
+            read("example.com/app/ent.Client"),
+            (vec![("example.com/app/ent", "Client")], vec!["Client"])
+        );
+        assert_eq!(
+            read("example.com/app/ent.Client.Query"),
+            (
+                vec![
+                    ("example.com/app/ent.Client", "Query"),
+                    ("example.com/app/ent", "Client")
+                ],
+                vec!["Query", "Client"]
+            )
+        );
+        assert_eq!(
+            read("db::client::Client.query"),
+            (
+                vec![("db::client::Client", "query"), ("db::client", "Client")],
+                vec!["query", "Client"]
+            )
+        );
+        assert!(Use::written("web/a.go", None, None, "Client").is_none());
     }
 
     #[test]

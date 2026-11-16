@@ -46,7 +46,7 @@
       }
     },
     "examples": {
-      "description": "Policy examples: proposed dependencies with the decision each must get, judged by every `check` without any code that imports them. One that gets another decision fails as `example` at its line, so a later grant cannot silently undo a prohibition. Paths are relative to the root and need not exist; a source or a target path no component owns cannot be judged and fails. `extends` joins the lists.",
+      "description": "Policy examples: proposed dependencies, or uses of a name, with the decision each must get, judged by every `check` without any code that writes them. One that gets another decision fails as `example` at its line, so a later grant cannot silently undo a prohibition. Paths are relative to the root and need not exist; a source or a target path no component owns cannot be judged and fails. `extends` joins the lists.",
       "type": "array",
       "default": [],
       "items": {
@@ -390,7 +390,7 @@
       ]
     },
     "Example": {
-      "description": "A policy example: a proposed dependency and the decision it must get.",
+      "description": "A policy example: a proposed dependency, or a use of a name, and the decision it must get.",
       "type": "object",
       "properties": {
         "because": {
@@ -401,6 +401,13 @@
           ],
           "default": null
         },
+        "defined_in": {
+          "description": "The file that defines `symbol`, so that the `public_symbols` of its component judge it too; without it they are not consulted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "expect": {
           "description": "The decision it must get.",
           "allOf": [
@@ -410,7 +417,7 @@
           ]
         },
         "external": {
-          "description": "The external module it would import; or `to`.",
+          "description": "The external module it would import; or `to`, or `symbol`.",
           "type": [
             "string",
             "null"
@@ -418,7 +425,7 @@
           "default": null
         },
         "from": {
-          "description": "The file that would hold the import.",
+          "description": "The file that would hold the import, or use the name.",
           "type": "string"
         },
         "rule": {
@@ -433,8 +440,15 @@
           ],
           "default": null
         },
+        "symbol": {
+          "description": "The name it would use, as `forbid_symbol` writes it (`example.com/app/ent.Client`, a member after its type: `ent.Client.Query`); or `to`, or `external`. Judged by `forbid_symbol` from the paths alone, so the name need not exist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "to": {
-          "description": "The path it would import; or `external`.",
+          "description": "The path it would import; or `external`, or `symbol`.",
           "type": [
             "string",
             "null"
@@ -449,13 +463,14 @@
       ]
     },
     "ExampleRule": {
-      "description": "The rules that can reject one dependency, and so a policy example.",
+      "description": "The rules that can reject one dependency or one use of a name, and so a policy example.",
       "type": "string",
       "enum": [
         "dependency",
         "privacy",
         "isolation",
-        "external"
+        "external",
+        "symbol"
       ]
     },
     "Expect": {

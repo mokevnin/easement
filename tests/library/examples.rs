@@ -299,3 +299,153 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
         "{report}"
     );
 }
+
+/// A Go project where no file uses a name of another: only the symbol examples
+/// say who may use `ent.Client`.
+fn symbol_examples_project(policy: &str) -> (TempDir, PathBuf) {
+    project(&[
+        ("easement.yml", policy),
+        ("go.mod", "module example.com/app\n\ngo 1.25\n"),
+        ("ent/client.go", "package ent\n\ntype Client struct{}\n"),
+        ("internal/api/site/access.go", "package site\n"),
+        ("internal/app/entclient/client.go", "package entclient\n"),
+        ("internal/web/page.go", "package web\n"),
+        (
+            "internal/billing/charge.go",
+            "package billing\n\ntype Charge struct{}\n\ntype Invoice struct{}\n",
+        ),
+    ])
+}
+
+const SYMBOL_EXAMPLES_POLICY: &str = "version: 1
+components:
+  ent: { in: ent }
+  api: { in: internal/api }
+  wiring: { in: internal/app }
+  web: { in: internal/web }
+  billing: { in: internal/billing, public_symbols: [Invoice] }
+forbid_symbol:
+  - name: example.com/app/ent.Client
+    allow: [wiring]
+rules:
+  web: { forbid_symbol: [ent.Tx] }
+examples:
+  - { from: internal/api/site/access.go, symbol: example.com/app/ent.Client, expect: rejected, because: a handler takes a scoped client }
+  - { from: internal/app/entclient/client.go, symbol: example.com/app/ent.Client, expect: allowed }
+";
+
+/// The violations of a failed check as their line and message.
+fn example_failures(root: &std::path::Path) -> Vec<(u64, String)> {
+    let report = failed_json(root);
+    report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .inspect(|v| assert_eq!(v["rule"], "example", "{report}"))
+        .map(|v| {
+            (
+                v["line"].as_u64().unwrap(),
+                v["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// `forbid_symbol` with `allow` is judged from the policy alone: flipping the
+/// grant fails both examples at their lines although no code uses the name.
+#[test]
+fn a_symbol_example_pins_who_may_use_a_name() {
+    let (_tmp, root) = symbol_examples_project(SYMBOL_EXAMPLES_POLICY);
+    let checked = check(&root);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+
+    let flipped = SYMBOL_EXAMPLES_POLICY.replace("allow: [wiring]", "allow: [api]");
+    fs::write(root.join("easement.yml"), flipped).unwrap();
+    let report = failed_json(&root);
+    let found = report["violations"].as_array().unwrap();
+    assert_eq!(found.len(), 2, "{report}");
+    assert_eq!(found[0]["rule"], "example");
+    assert_eq!(found[0]["line"], 14);
+    assert_eq!(found[0]["because"], "a handler takes a scoped client");
+    assert_eq!(
+        found[0]["message"],
+        "example internal/api/site/access.go uses example.com/app/ent.Client: expects rejected, but the policy now decides allowed by forbid_symbol allow (api); restore what the policy meant, or update the example if the change is meant"
+    );
+    assert_eq!(found[1]["line"], 15);
+    assert_eq!(
+        found[1]["message"],
+        "example internal/app/entclient/client.go uses example.com/app/ent.Client: expects allowed, but the policy now decides rejected [symbol]: wiring must not use example.com/app/ent.Client (only api may); restore what the policy meant, or update the example if the change is meant"
+    );
+}
+
+/// The examples of the uses of names that the rest of the symbol rules decide:
+/// the own `forbid_symbol` of the user's component, on a name nothing defines,
+/// a member through its banned type, and the `public_symbols` of the component
+/// `defined_in` names, which without it is not consulted.
+#[test]
+fn a_symbol_example_is_judged_by_every_symbol_rule() {
+    let policy = format!(
+        "{SYMBOL_EXAMPLES_POLICY}  - {{ from: internal/web/page.go, symbol: example.com/app/ent.Tx, expect: rejected, rule: symbol }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, defined_in: internal/billing/charge.go, expect: rejected, rule: symbol }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, expect: allowed }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Invoice.Total, defined_in: internal/billing/charge.go, expect: allowed }}
+  - {{ from: internal/api/site/access.go, symbol: example.com/app/ent.Client.Query, expect: rejected }}
+"
+    );
+    let (_tmp, root) = symbol_examples_project(&policy);
+    let checked = check(&root);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+
+    let loosened = policy
+        .replace("  web: { forbid_symbol: [ent.Tx] }\n", "  web: {}\n")
+        .replace(", public_symbols: [Invoice]", "")
+        .replace("allow: [wiring]", "allow: [wiring, api]");
+    fs::write(root.join("easement.yml"), loosened).unwrap();
+    let failed = example_failures(&root);
+    let lines: Vec<u64> = failed.iter().map(|(line, _)| *line).collect();
+    assert_eq!(lines, [14, 16, 17, 20], "{failed:?}");
+    assert!(
+        failed[1].1.contains(
+            "example internal/web/page.go uses example.com/app/ent.Tx: expects rejected [symbol], but the policy now decides allowed (web): no rule restricts it"
+        ),
+        "{failed:?}"
+    );
+    assert!(
+        failed[2].1.contains(
+            "example internal/web/page.go uses example.com/app/billing.Charge defined in internal/billing/charge.go: expects rejected [symbol], but the policy now decides allowed (web -> billing): no rule restricts it"
+        ),
+        "{failed:?}"
+    );
+    assert!(
+        failed[3].1.contains(
+            "example internal/api/site/access.go uses example.com/app/ent.Client.Query: expects rejected, but the policy now decides allowed by forbid_symbol allow (api)"
+        ),
+        "{failed:?}"
+    );
+}
+
+/// A use of a name in a path that no component owns, or that `exclude` hides,
+/// says nothing of the policy, so its example fails rather than passing; so does
+/// a `defined_in` no component owns. A source no component owns is judged by the
+/// top-level `forbid_symbol` alone, as the scan judges it.
+#[test]
+fn a_symbol_example_no_component_owns_cannot_be_judged() {
+    let policy = format!(
+        "{SYMBOL_EXAMPLES_POLICY}  - {{ from: internal/gone/x.go, symbol: example.com/app/billing.Charge, expect: allowed }}
+  - {{ from: internal/gen/x.go, symbol: example.com/app/ent.Client, expect: rejected }}
+  - {{ from: internal/web/page.go, symbol: example.com/app/billing.Charge, defined_in: internal/gone/x.go, expect: allowed }}
+  - {{ from: internal/gone/x.go, symbol: example.com/app/ent.Client, expect: rejected, rule: symbol }}
+exclude: [internal/gen]
+"
+    );
+    let (_tmp, root) = symbol_examples_project(&policy);
+    let failed = example_failures(&root);
+    assert_eq!(
+        failed,
+        [
+            (16, "example internal/gone/x.go uses example.com/app/billing.Charge: cannot be judged: internal/gone/x.go belongs to no component; point it at a path a component owns, or drop it".to_string()),
+            (17, "example internal/gen/x.go uses example.com/app/ent.Client: cannot be judged: `exclude` hides internal/gen/x.go; point it at a path a component owns, or drop it".to_string()),
+            (18, "example internal/web/page.go uses example.com/app/billing.Charge defined in internal/gone/x.go: cannot be judged: internal/gone/x.go belongs to no component; point it at a path a component owns, or drop it".to_string()),
+        ]
+    );
+}

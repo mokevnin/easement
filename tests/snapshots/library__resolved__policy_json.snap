@@ -657,6 +657,17 @@ expression: policy_json(&root)
         "input": "easement.yml"
       },
       "rule": "external"
+    },
+    {
+      "defined_in": "src/stores/users/db.ts",
+      "expect": "rejected",
+      "from": "src/web/page.ts",
+      "provenance": {
+        "field": "examples[3]",
+        "input": "easement.yml"
+      },
+      "rule": "symbol",
+      "symbol": "db.Client"
     }
   ],
   "exclude": [
