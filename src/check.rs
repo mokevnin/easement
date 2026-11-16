@@ -90,17 +90,19 @@ impl RuleId {
     /// stands behind them, so `--diff` and `--scope` keep them, and the
     /// baseline never accepts them.
     pub fn is_config_rule(self) -> bool {
-        matches!(
-            self,
-            RuleId::Unmatched | RuleId::Example | RuleId::UnusedAllowance
-        )
+        self.is_config_mistake() || self == RuleId::UnusedAllowance
     }
 
     /// Rules that `warn` may list: those about the code, and an allowance no import
-    /// uses, which the policy may keep a while on purpose. A pattern that matches
-    /// nothing or an example decided otherwise is a mistake in the policy.
+    /// uses, which the policy may keep a while on purpose.
     pub fn warnable(self) -> bool {
-        !matches!(self, RuleId::Unmatched | RuleId::Example)
+        !self.is_config_mistake()
+    }
+
+    /// A pattern that matches nothing, or an example the policy decides otherwise:
+    /// a mistake in the policy, to fix rather than tolerate.
+    fn is_config_mistake(self) -> bool {
+        matches!(self, RuleId::Unmatched | RuleId::Example)
     }
 
     /// Every rule, in the order of the declaration.

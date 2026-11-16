@@ -74,9 +74,14 @@ struct CacheReport<'a> {
     indexes: &'a [Probe],
 }
 
+/// Whether every index is in the cache, so that a run indexes nothing.
+pub fn all_cached(probes: &[Probe]) -> bool {
+    probes.iter().all(|p| p.cached)
+}
+
 pub fn cache_json(probes: &[Probe]) -> String {
     let report = CacheReport {
-        cached: probes.iter().all(|p| p.cached),
+        cached: all_cached(probes),
         indexes: probes,
     };
     serde_json::to_string_pretty(&report).expect("report serializes") + "\n"
@@ -99,7 +104,7 @@ pub fn cache_text(probes: &[Probe]) -> String {
         }
     }
     let missing = probes.iter().filter(|p| !p.cached).count();
-    out.push_str(&if missing == 0 {
+    out.push_str(&if all_cached(probes) {
         "\neasement doctor --cache: every index is cached, so a run indexes nothing\n".to_string()
     } else {
         format!(

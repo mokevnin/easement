@@ -544,7 +544,7 @@ pub fn run(
     settings: &registry::IndexerSettings,
 ) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
-    let keyed: Vec<String> = files.iter().chain(excluded).cloned().collect();
+    let keyed = keyed(files, excluded);
     let wanted = INDEXERS
         .iter()
         .flat_map(|language| files.iter().filter(|f| language.covers(f)));
@@ -974,6 +974,18 @@ pub enum Miss {
     IndexerChanged,
 }
 
+impl Probe {
+    fn new(language: &Indexer, dir: String, reason: Option<Miss>) -> Self {
+        Probe {
+            language: language.name(),
+            dir: if dir.is_empty() { ".".to_string() } else { dir },
+            // Said apart in the JSON, for a reader that only asks whether it is.
+            cached: reason.is_none(),
+            reason,
+        }
+    }
+}
+
 impl Miss {
     pub fn text(self) -> &'static str {
         match self {
@@ -997,7 +1009,7 @@ pub fn probe(
     settings: &registry::IndexerSettings,
 ) -> Vec<Probe> {
     let environment = &indexing.environment;
-    let keyed: Vec<String> = files.iter().chain(excluded).cloned().collect();
+    let keyed = keyed(files, excluded);
     let names: Vec<String> = indexing
         .cache_dir
         .as_deref()
@@ -1010,7 +1022,7 @@ pub fn probe(
         .collect();
     let mut probes = Vec::new();
     for (language, roots) in groups(files) {
-        let env = registry::settings_env(language.language, settings, &|key| environment.text(key));
+        let env = settings_env(language, settings, environment);
         for dir in roots {
             let reason = match (
                 indexing.cache_dir.as_deref(),
@@ -1032,12 +1044,7 @@ pub fn probe(
                     }
                 }
             };
-            probes.push(Probe {
-                language: language.name(),
-                dir: if dir.is_empty() { ".".to_string() } else { dir },
-                cached: reason.is_none(),
-                reason,
-            });
+            probes.push(Probe::new(language, dir, reason));
         }
     }
     probes
@@ -1114,6 +1121,21 @@ fn version_of(binary: &Path, flag: &str, environment: &Environment) -> Option<St
     })
 }
 
+/// The files whose content keys an index: the project files, and the excluded
+/// ones, which the index resolves imports of.
+fn keyed(files: &[String], excluded: &[String]) -> Vec<String> {
+    files.iter().chain(excluded).cloned().collect()
+}
+
+/// The variables easement sets for a run of the indexer, from the policy's `settings`.
+fn settings_env(
+    language: &Indexer,
+    settings: &registry::IndexerSettings,
+    environment: &Environment,
+) -> Vec<(&'static str, String)> {
+    registry::settings_env(language.language, settings, &|key| environment.text(key))
+}
+
 /// The directory the indexer of `dir` runs in.
 fn cwd(root: &Path, dir: &str) -> PathBuf {
     if dir.is_empty() {
@@ -1132,7 +1154,7 @@ fn index_dir(
     settings: &registry::IndexerSettings,
 ) -> Result<(Vec<Document>, bool)> {
     let environment = &indexing.environment;
-    let env = registry::settings_env(language.language, settings, &|key| environment.text(key));
+    let env = settings_env(language, settings, environment);
     let cwd = cwd(root, dir);
     let shown = if dir.is_empty() { "." } else { dir };
     let binary = environment.which(language.binary, &cwd).ok_or_else(|| {

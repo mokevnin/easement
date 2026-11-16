@@ -76,9 +76,9 @@ pub struct Checked {
     pub coverage: report::Coverage,
     pub diff: Option<diff::Diff>,
     pub require_evidence: bool,
-    /// Under `--suggest`, the `may_depend_on` entries no import among the files read
-    /// uses, next to files no indexer read: not judged.
-    pub unreliable_allowances: Vec<suggest::Pair>,
+    /// Under `--suggest`, the `may_depend_on` entries no import uses that it does not
+    /// fail on, since it cannot tell whether they can go.
+    pub spared: suggest::Spared,
 }
 
 impl Checked {
@@ -90,7 +90,7 @@ impl Checked {
             coverage: &self.coverage,
             diff: self.diff.as_ref(),
             require_evidence: self.require_evidence,
-            unreliable_allowances: &self.unreliable_allowances,
+            spared: &self.spared,
         }
     }
 
@@ -142,9 +142,9 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         unindexed,
         ..
     } = project.analysis(scan)?;
-    let mut unreliable_allowances = Vec::new();
+    let mut spared = suggest::Spared::default();
     if options.suggest {
-        let (unused, unreliable) = suggest::unused_allowances(
+        let (unused, left) = suggest::unused_allowances(
             &project.policy,
             &map,
             &edges,
@@ -152,7 +152,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
             &project.config_file()?,
         );
         violations.extend(unused);
-        unreliable_allowances = unreliable;
+        spared = left;
     }
     let current = violations.iter().map(check::Violation::key).collect();
     // Cycles and limits come from the whole project, so a violation belongs to
@@ -204,7 +204,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         coverage,
         diff,
         require_evidence: options.require_evidence,
-        unreliable_allowances,
+        spared,
     })
 }
 
@@ -542,7 +542,7 @@ impl Probed {
 
     /// `NotCached` while a run would index anything again.
     pub fn outcome(&self) -> Outcome {
-        if self.0.iter().all(|p| p.cached) {
+        if doctor::all_cached(&self.0) {
             Outcome::Passed
         } else {
             Outcome::NotCached

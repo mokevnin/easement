@@ -138,7 +138,17 @@ rules:
     let found = commands::suggest(&config(&root), &mut cache()).unwrap();
     assert!(found.text().contains("api-b -> db"), "{}", found.text());
     let checked = check_with(&root, |o| o.suggest = true);
-    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+    let report = json(&checked);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{report}");
+    // Listed apart, to remove by hand if no component the glob covers needs it.
+    assert_eq!(
+        report["held_allowances"],
+        serde_json::json!([{ "from": "api-b", "to": "db" }]),
+        "{report}"
+    );
+    let said = text(&checked);
+    assert!(said.contains("  api-b -> db\n"), "{said}");
+    assert!(said.contains("through a glob or a set"), "{said}");
 }
 
 /// An entry next to files no indexer read does not fail: whether it is used is
