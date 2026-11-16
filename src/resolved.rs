@@ -566,12 +566,19 @@ pub struct ExampleEntry {
     pub to: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defined_in: Option<String>,
     pub expect: crate::config::Expect,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<crate::config::ExampleRule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub because: Option<String>,
     pub provenance: Provenance,
+    /// The example as reports name it ([`crate::examples::label`]).
+    #[serde(skip)]
+    pub label: String,
 }
 
 /// What `no_cycles` covers: every component, or those it lists.
@@ -680,10 +687,13 @@ impl ResolvedPolicy {
                     from: example.from.clone(),
                     to: example.to.clone(),
                     external: example.external.clone(),
+                    symbol: example.symbol.clone(),
+                    defined_in: example.defined_in.clone(),
                     expect: example.expect,
                     rule: example.rule,
                     because: example.because.clone(),
                     provenance: policy.example_provenance(i),
+                    label: crate::examples::label(example),
                 })
                 .collect(),
             no_cycles: match no_cycles {
@@ -769,11 +779,6 @@ impl ResolvedPolicy {
         if !self.examples.is_empty() {
             out.push_str("examples:\n");
             for example in &self.examples {
-                let to = example
-                    .to
-                    .clone()
-                    .or_else(|| example.external.as_ref().map(|m| format!("external {m}")))
-                    .unwrap_or_default();
                 let rule = example
                     .rule
                     .map(|r| format!(" [{}]", r.id().as_str()))
@@ -785,8 +790,8 @@ impl ResolvedPolicy {
                     .map(|i| format!(" ({i})"))
                     .unwrap_or_default();
                 out.push_str(&format!(
-                    "  {} -> {to}: {}{rule}{}{input}\n",
-                    example.from,
+                    "  {}: {}{rule}{}{input}\n",
+                    example.label,
                     example.expect.as_str(),
                     reason(example.because.as_deref())
                 ));

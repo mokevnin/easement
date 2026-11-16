@@ -627,13 +627,13 @@ impl Examples {
         // is one change; with several (`extends` joins the lists), which
         // became which is unknown, so they stay added and removed.
         let named_once = |list: &[Example], example: &Example| {
-            list.iter().filter(|e| same_dependency(e, example)).count() == 1
+            list.iter().filter(|e| same_subject(e, example)).count() == 1
         };
         let removed = missing(base, head, same_expectation)
             .into_iter()
             .filter_map(|before| {
                 let after = (named_once(base, &before) && named_once(head, &before))
-                    .then(|| added.iter().position(|a| same_dependency(a, &before)))
+                    .then(|| added.iter().position(|a| same_subject(a, &before)))
                     .flatten();
                 match after {
                     Some(i) => {
@@ -659,22 +659,24 @@ impl Examples {
     }
 }
 
-/// Whether both are examples of the same proposed dependency.
-fn same_dependency(a: &Example, b: &Example) -> bool {
-    examples::proposal(a) == examples::proposal(b)
+/// Whether both are examples of the same proposed dependency, or of the same
+/// use of a name.
+fn same_subject(a: &Example, b: &Example) -> bool {
+    (&a.from, &a.to, &a.external, &a.symbol, &a.defined_in)
+        == (&b.from, &b.to, &b.external, &b.symbol, &b.defined_in)
 }
 
 /// Whether both expect the same decision of the same dependency; the reason
 /// they give does not count.
 fn same_expectation(a: &Example, b: &Example) -> bool {
-    same_dependency(a, b) && (a.expect, a.rule) == (b.expect, b.rule)
+    same_subject(a, b) && (a.expect, a.rule) == (b.expect, b.rule)
 }
 
 /// The example and what it expects: `web/a.ts -> db/b.ts: expects rejected`.
 fn example_line(example: &Example) -> String {
     format!(
         "{}: expects {}",
-        examples::proposal(example).label(),
+        examples::label(example),
         examples::expected(example)
     )
 }
@@ -1304,6 +1306,39 @@ components:
         assert_eq!(
             example_lines(&change.after, Some(&change.before)),
             "    web/a.ts -> db/b.ts: expects rejected (was allowed)\n      because: db is private\n"
+        );
+    }
+
+    /// Examples of the uses of one name from one file are told apart by the file
+    /// that defines it, and from an example of a dependency of that file.
+    #[test]
+    fn an_example_of_a_name_is_told_by_its_name_and_definition() {
+        let base = format!(
+            "{TWO}examples:\n  - {{ from: web/a.ts, to: db/b.ts, expect: rejected }}\n  - {{ from: web/a.ts, symbol: db/b.Pool, defined_in: db/b.ts, expect: rejected, rule: symbol }}\n"
+        );
+        let head = format!(
+            "{base}  - {{ from: web/a.ts, symbol: db/b.Pool, expect: allowed }}\n  - {{ from: web/a.ts, symbol: db/b.Conn, expect: rejected }}\n"
+        );
+        let examples = compare(&base, &head, Examples::of);
+        assert!(
+            examples.removed.is_empty() && examples.changed.is_empty(),
+            "{examples:?}"
+        );
+        assert_eq!(
+            lines(&examples.added),
+            [
+                "web/a.ts uses db/b.Pool: expects allowed",
+                "web/a.ts uses db/b.Conn: expects rejected"
+            ]
+        );
+        let head = base.replace("expect: rejected, rule: symbol", "expect: allowed");
+        let examples = compare(&base, &head, Examples::of);
+        let [change] = examples.changed.as_slice() else {
+            panic!("one change: {examples:?}");
+        };
+        assert_eq!(
+            example_line(&change.after),
+            "web/a.ts uses db/b.Pool defined in db/b.ts: expects allowed"
         );
     }
 

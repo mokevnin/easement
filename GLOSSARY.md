@@ -104,7 +104,7 @@ A dependency judged before the code that would create it exists.
 _Avoid_: hypothetical edge, synthetic edge, preflight edge
 
 **Policy example**:
-A proposed dependency kept in the policy together with the decision it must receive, so that a policy change that flips it fails.
+A proposed dependency, or a proposed use of a name, kept in the policy together with the decision it must receive, so that a policy change that flips it fails.
 _Avoid_: contract test, policy test, contract
 
 **Policy delta**:

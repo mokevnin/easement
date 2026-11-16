@@ -58,7 +58,7 @@ Change the config only when a human asks for it or agrees to it.
 
 - A new directory that belongs to no component: add a component with `in`, and a rule with `may_depend_on` and `because`. With `strict: true` such a directory fails as `orphan` until it has a component or is listed in `unowned`.
 - Every rule gets a `because` that tells the reader where the code should go instead.
-- A prohibition no code exercises yet gets a policy example (`examples: [{ from: <file>, to: <file>, expect: rejected }]`), so a later grant cannot undo it unnoticed.
+- A prohibition no code exercises yet gets a policy example (`examples: [{ from: <file>, to: <file>, expect: rejected }]`, or `symbol: <name>` in place of `to` for a `forbid_symbol` name), so a later grant cannot undo it unnoticed.
 - `easement suggest` lists the allowances no import uses and the imports nothing allows. `easement suggest --patch | git apply` drops the unused allowances and keeps comments and reasons. Leave alone the entries it lists apart as unreliable: they sit next to files no indexer covered.
 - Run the full `easement check` after every change to the config.
 

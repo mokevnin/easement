@@ -1,29 +1,49 @@
-//! Policy examples: proposed dependencies the policy keeps with the decision
-//! each must get. Every `check` judges them as `propose` judges a proposal,
-//! through [`crate::decision::decide`], so a change to the policy that flips
-//! one fails as `example` at its line although no code changed.
+//! Policy examples: proposed dependencies, and uses of names, that the policy
+//! keeps with the decision each must get. Every `check` judges a dependency as
+//! `propose` judges a proposal, through [`crate::decision::decide`], and a use
+//! of a name as the scan judges one, through [`crate::symbols::judge`], so a
+//! change to the policy that flips one fails as `example` at its line although
+//! no code changed.
 
 use std::path::Path;
 
 use crate::check::{RuleId, Violation};
 use crate::components::ComponentMap;
-use crate::config::{Example, Expect};
+use crate::config::{Config, Example, Expect};
+use crate::decision::{self, Outside};
 use crate::policy::Policy;
 use crate::propose::{self, Judged, Kind, Proposal, To};
+use crate::symbols;
 
 /// One violation for each example of the policy that does not get the
 /// decision it expects, at its line in the policy input that writes it.
 pub fn check(policy: &Policy, map: &ComponentMap, root: &Path) -> Vec<Violation> {
     let examples = &policy.config.examples;
-    let proposals: Vec<Proposal> = examples.iter().map(proposal).collect();
-    let judged = propose::judge(&policy.config, map, &proposals);
+    let proposals: Vec<Proposal> = examples
+        .iter()
+        .filter(|example| example.symbol.is_none())
+        .map(proposal)
+        .collect();
+    let mut dependencies = propose::judge(&policy.config, map, &proposals).into_iter();
     examples
         .iter()
-        .zip(&proposals)
-        .zip(&judged)
         .enumerate()
-        .filter_map(|(i, ((example, proposal), judged))| {
-            let problem = problem(example, judged)?;
+        .filter_map(|(i, example)| {
+            let (judged, why) = match &example.symbol {
+                Some(symbol) => {
+                    let judged = judge_use(&policy.config, map, example, symbol);
+                    let why = unjudged(&judged).or_else(|| unjudged_definition(map, example));
+                    (judged, why)
+                }
+                None => {
+                    let judged = dependencies
+                        .next()
+                        .expect("a decision for each example of a dependency");
+                    let why = unjudged(&judged);
+                    (judged, why)
+                }
+            };
+            let problem = problem(example, &judged, why)?;
             let (file, line) = policy.example_at(i).map_or_else(
                 || (String::new(), 1),
                 |(input, line)| (crate::diff::input_path(input, root), line),
@@ -31,15 +51,87 @@ pub fn check(policy: &Policy, map: &ComponentMap, root: &Path) -> Vec<Violation>
             Some(Violation {
                 file,
                 line,
-                message: format!("example {}: {problem}", proposal.label()),
+                message: format!("example {}: {problem}", label(example)),
                 because: example.because.clone(),
                 from: judged.from.clone(),
-                to: judged.target(),
+                to: example.symbol.clone().unwrap_or_else(|| judged.target()),
                 target: expected(example),
                 ..Violation::of(RuleId::Example)
             })
         })
         .collect()
+}
+
+/// The example as reports name it: `web/a.go -> db/b.go`, or for a use of a name
+/// `web/a.go uses billing.Charge defined in billing/charge.go`.
+pub fn label(example: &Example) -> String {
+    let Some(symbol) = &example.symbol else {
+        return proposal(example).label();
+    };
+    let defined = example
+        .defined_in
+        .as_ref()
+        .map(|path| format!(" defined in {path}"))
+        .unwrap_or_default();
+    format!("{} uses {symbol}{defined}", example.from)
+}
+
+/// The decision of the symbol rules on the use of `symbol` that the example
+/// proposes, taken from its paths alone, as [`symbols::judge`] takes the scan's.
+/// A source no component owns is judged by the top-level `forbid_symbol` alone,
+/// and is otherwise `unowned`, as for a dependency.
+fn judge_use(config: &Config, map: &ComponentMap, example: &Example, symbol: &str) -> Judged {
+    let from = example.from.as_str();
+    let undecided = |decision| Judged::of(from, decision);
+    match decision::unread(map, from) {
+        Some(Outside::Excluded) => return undecided(Kind::Excluded),
+        Some(Outside::TargetOnly) => return undecided(Kind::TargetOnly),
+        _ => {}
+    }
+    let owner = map.component_of(from);
+    let defined_by = example
+        .defined_in
+        .as_deref()
+        .filter(|path| decision::unread(map, path) != Some(Outside::Excluded))
+        .and_then(|path| map.component_of(path));
+    let Some(use_) = symbols::Use::written(from, owner, defined_by, symbol) else {
+        // Loading refuses a name with no qualifier.
+        return undecided(Kind::Unowned);
+    };
+    let judged = symbols::judge(config, map, &use_);
+    let component = owner.map(str::to_string);
+    let target_component = defined_by.map(str::to_string);
+    match judged.found.into_iter().next() {
+        Some(found) => Judged {
+            component,
+            target_component,
+            rule: Some(RuleId::Symbol),
+            message: Some(found.message),
+            because: found.because,
+            warning: config.warns(RuleId::Symbol),
+            ..undecided(Kind::Rejected)
+        },
+        None if owner.is_none() => undecided(Kind::Unowned),
+        None => Judged {
+            component,
+            target_component,
+            grant: judged.granted,
+            ..undecided(Kind::Allowed)
+        },
+    }
+}
+
+/// Why the `defined_in` of the example says nothing of `public_symbols`: no
+/// component owns it, `exclude` hiding it among the reasons.
+fn unjudged_definition(map: &ComponentMap, example: &Example) -> Option<String> {
+    let path = example.defined_in.as_deref()?;
+    if decision::unread(map, path) == Some(Outside::Excluded) {
+        return Some(format!("`exclude` hides {path}"));
+    }
+    if map.component_of(path).is_none() {
+        return Some(format!("{path} belongs to no component"));
+    }
+    None
 }
 
 pub fn proposal(example: &Example) -> Proposal {
@@ -60,9 +152,10 @@ pub fn expected(example: &Example) -> String {
     }
 }
 
-/// What is wrong with the decision on the example, if anything.
-fn problem(example: &Example, judged: &Judged) -> Option<String> {
-    if let Some(why) = unjudged(judged) {
+/// What is wrong with the decision on the example, if anything; `why` it
+/// cannot be judged, when it cannot.
+fn problem(example: &Example, judged: &Judged, why: Option<String>) -> Option<String> {
+    if let Some(why) = why {
         return Some(format!(
             "cannot be judged: {why}; point it at a path a component owns, or drop it"
         ));

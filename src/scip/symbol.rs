@@ -366,9 +366,10 @@ pub(super) fn modules(symbol: &str, parsed: &Parsed) -> Name {
             qualifier,
             name: name.clone(),
             member: inner.get(1).map(|member| Member {
-                // A Rust path joins a type and what is in it as it joins modules.
+                // A Rust path joins a type and what is in it as it joins modules,
+                // as the registry says for a name an example writes.
                 through: Through::Joined(if parsed.scheme == "rust-analyzer" {
-                    "::"
+                    registry::RUST.member_separator
                 } else {
                     "."
                 }),

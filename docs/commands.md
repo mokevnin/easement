@@ -125,7 +125,7 @@ The baseline and suppressions never apply: they are for code that is already wri
 - `components`: each component with its `name`, its `in` and `except` patterns, its `public` surface, `public_symbols`, `surfaces`, `allow_importers`, `isolated`, `optional`, `priority`, `owner`, `defines`, `part` and `because`, its `rule` (the fields of `explain`'s `rule`, and its own `forbid_symbol`; each item of its `forbid_symbol` and `forbid_external` with its own `provenance`), and its `grants` and `prohibitions` on the other components with the decision fields of `explain`;
 - `common`, each with its `name`, and `layers`, from the top one down, each row with its `components` and whether it is `closed`;
 - `forbid_symbol` and `forbid_external`: each top-level item with its `name`, its `because`, the components its `allow` lets use it (globs and sets expanded) and the paths of its `allow_in`, apart;
-- `examples`: each with `from`, `to` or `external`, `expect`, `rule` and `because`;
+- `examples`: each with `from`, `to`, `external` or `symbol` (with its `defined_in`), `expect`, `rule` and `because`;
 - the settings `no_cycles` (`true`, `false` or the components), `strict`, `unowned`, `tests` (whether `tests: auto` is on), `entry`, `exclude`, `target_only`, `uncovered_ok`, `reach`, `manifests`, `packages` and `warn`.
 
 Each component, rule, decision and item carries its `provenance` (the settings carry none): the `field` in the merged policy (`rules.web.may_depend_on[0]`, `examples[1]`), the `input` that writes it, and the globs and sets it comes `through`. The component `tests: auto` makes is written at `tests`.

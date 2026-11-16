@@ -55,6 +55,7 @@ examples:
   src/domain/order.ts -> src/http/client.ts: rejected [dependency]: the domain knows no transport (policy/base.yml)
   src/web/page.ts -> src/http/api/client.ts: allowed (easement.yml)
   src/web/page.ts -> external axios: rejected [external] (easement.yml)
+  src/web/page.ts uses db.Client defined in src/stores/users/db.ts: rejected [symbol] (easement.yml)
 no_cycles: domain, web
 strict: true
 unowned: scripts
