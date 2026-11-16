@@ -62,6 +62,10 @@ _Avoid_: indexed import, import with a reference
 The file by which a name a file writes enters the component that defines it: the module the file names, else the first re-exporting module or alias of that component on the way the name came, else the file that defines the name. Surfaces judge the name there, against the component of the file that writes it.
 _Avoid_: entry point (a program's start), target (the file that defines the name)
 
+**Framework**:
+A dependency of a package that loads files of the package by convention, which no import names, such as SvelteKit's routes or Next.js's pages. It is a row of the table of the kind of manifest that lists it, and holds below that manifest's directory only, not in a package nested in it. `unused` takes the files it loads as entries, unless a config file may move them.
+_Avoid_: plugin, convention (a convention is what the framework loads)
+
 **Augmentation**:
 A declaration of the project that the compiler merges into an external name, such as a TypeScript `declare module "pkg" { … }`. Writing the external name is a dependency on the package only, while a name that only the augmentation defines is a dependency on its file.
 _Avoid_: merged declaration, alias (an alias is a name of its own), re-export (a re-export makes a name of the project available), ambient module (one with no package behind it is the only definition of its name)

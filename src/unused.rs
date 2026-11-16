@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::chains::{file_graph, reach};
-use crate::check::{self, Framework, Place, RuleId, Unjudged, Violation};
+use crate::check::{self, Place, RecognisedFramework, RuleId, Unjudged, Violation};
 use crate::components::ComponentMap;
 use crate::config::{Config, TESTS};
 use crate::lang::Dep;
@@ -50,7 +50,7 @@ pub struct Unused {
     pub reasons: Vec<Unjudged>,
     /// The frameworks found in packages, whose conventional files were taken as
     /// entries.
-    pub frameworks: Vec<Framework>,
+    pub frameworks: Vec<RecognisedFramework>,
 }
 
 /// The language of a file the rule judges: each is checked against its indexer

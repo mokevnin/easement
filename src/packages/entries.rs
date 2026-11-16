@@ -39,7 +39,7 @@ pub struct Setting {
 pub struct Entries {
     pub files: BTreeSet<String>,
     /// The frameworks found, by package.
-    pub frameworks: Vec<check::Framework>,
+    pub frameworks: Vec<check::RecognisedFramework>,
     /// Packages whose files were all taken as entries, since what they load
     /// could not be told; each lists those files.
     pub untrusted: Vec<Unjudged>,
@@ -110,7 +110,7 @@ pub fn entries(
                 .collect()
         };
         for framework in kind.frameworks(&text) {
-            found.frameworks.push(check::Framework {
+            found.frameworks.push(check::RecognisedFramework {
                 name: framework.name.into(),
                 package: manifest.into(),
                 dependency: framework.dependency.into(),
@@ -289,7 +289,7 @@ mod tests {
         );
         assert_eq!(
             got.frameworks,
-            [check::Framework {
+            [check::RecognisedFramework {
                 name: "SvelteKit".into(),
                 package: "apps/web/package.json".into(),
                 dependency: "@sveltejs/kit".into(),
