@@ -406,7 +406,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "expect": {
           "description": "The decision it must get.",
@@ -445,7 +446,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "to": {
           "description": "The path it would import; or `external`, or `symbol`.",

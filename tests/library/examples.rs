@@ -238,7 +238,7 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
         )
         .replace(
             "expect: allowed }\n",
-            "expect: allowed }\n  - { from: src/storage/Db.kt, external: lodash, expect: allowed }\n",
+            "expect: allowed }\n  - { from: src/storage/Db.kt, external: lodash, expect: allowed }\n  - { from: src/web/Page.kt, symbol: storage.Db, defined_in: src/storage/Db.kt, expect: allowed }\n",
         );
     fs::write(root.join("easement.yml"), head).unwrap();
 
@@ -249,8 +249,9 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
         "  removed (1), so the policy no longer pins their decision:",
         "    src/web/Page.kt -> src/storage/Db.kt: expects rejected",
         "      because: web reads through the api",
-        "  added (1):",
+        "  added (2):",
         "    src/storage/Db.kt -> external lodash: expects allowed",
+        "    src/web/Page.kt uses storage.Db defined in src/storage/Db.kt: expects allowed",
         "  changed (1):",
         "    src/web/Page.kt -> src/billing/internal/Ledger.kt: expects rejected (was rejected [privacy])",
     ] {
@@ -265,6 +266,17 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
                 "from": "src/storage/Db.kt",
                 "to": null,
                 "external": "lodash",
+                "symbol": null,
+                "defined_in": null,
+                "expect": "allowed",
+                "rule": null,
+                "because": null,
+            }, {
+                "from": "src/web/Page.kt",
+                "to": null,
+                "external": null,
+                "symbol": "storage.Db",
+                "defined_in": "src/storage/Db.kt",
                 "expect": "allowed",
                 "rule": null,
                 "because": null,
@@ -273,6 +285,8 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
                 "from": "src/web/Page.kt",
                 "to": "src/storage/Db.kt",
                 "external": null,
+                "symbol": null,
+                "defined_in": null,
                 "expect": "rejected",
                 "rule": null,
                 "because": "web reads through the api",
@@ -282,6 +296,8 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
                     "from": "src/web/Page.kt",
                     "to": "src/billing/internal/Ledger.kt",
                     "external": null,
+                    "symbol": null,
+                    "defined_in": null,
                     "expect": "rejected",
                     "rule": "privacy",
                     "because": null,
@@ -290,6 +306,8 @@ fn review_lists_the_policy_examples_a_change_adds_removes_or_changes() {
                     "from": "src/web/Page.kt",
                     "to": "src/billing/internal/Ledger.kt",
                     "external": null,
+                    "symbol": null,
+                    "defined_in": null,
                     "expect": "rejected",
                     "rule": null,
                     "because": null,

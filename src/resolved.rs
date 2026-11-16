@@ -576,6 +576,9 @@ pub struct ExampleEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub because: Option<String>,
     pub provenance: Provenance,
+    /// The example as reports name it ([`crate::examples::label`]).
+    #[serde(skip)]
+    pub label: String,
 }
 
 /// What `no_cycles` covers: every component, or those it lists.
@@ -690,6 +693,7 @@ impl ResolvedPolicy {
                     rule: example.rule,
                     because: example.because.clone(),
                     provenance: policy.example_provenance(i),
+                    label: crate::examples::label(example),
                 })
                 .collect(),
             no_cycles: match no_cycles {
@@ -775,19 +779,6 @@ impl ResolvedPolicy {
         if !self.examples.is_empty() {
             out.push_str("examples:\n");
             for example in &self.examples {
-                let to = match (&example.to, &example.external, &example.symbol) {
-                    (Some(path), _, _) => format!(" -> {path}"),
-                    (None, Some(module), _) => format!(" -> external {module}"),
-                    (None, None, Some(symbol)) => {
-                        let defined = example
-                            .defined_in
-                            .as_ref()
-                            .map(|path| format!(" defined in {path}"))
-                            .unwrap_or_default();
-                        format!(" uses {symbol}{defined}")
-                    }
-                    (None, None, None) => String::new(),
-                };
                 let rule = example
                     .rule
                     .map(|r| format!(" [{}]", r.id().as_str()))
@@ -799,8 +790,8 @@ impl ResolvedPolicy {
                     .map(|i| format!(" ({i})"))
                     .unwrap_or_default();
                 out.push_str(&format!(
-                    "  {}{to}: {}{rule}{}{input}\n",
-                    example.from,
+                    "  {}: {}{rule}{}{input}\n",
+                    example.label,
                     example.expect.as_str(),
                     reason(example.because.as_deref())
                 ));

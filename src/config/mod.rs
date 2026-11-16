@@ -169,11 +169,11 @@ pub struct Example {
     /// The name it would use, as `forbid_symbol` writes it (`example.com/app/ent.Client`,
     /// a member after its type: `ent.Client.Query`); or `to`, or `external`. Judged by
     /// `forbid_symbol` from the paths alone, so the name need not exist.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub symbol: Option<String>,
     /// The file that defines `symbol`, so that the `public_symbols` of its component
     /// judge it too; without it they are not consulted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub defined_in: Option<String>,
     /// The decision it must get.
     pub expect: Expect,
