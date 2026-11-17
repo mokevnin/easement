@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.7.0](https://github.com/mokevnin/easement/compare/v0.6.6...v0.7.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **explain:** `explain --format json` drops `symbol_grants`; its grants are in `symbols.allowed`. The text header for a file of no component no longer ends in "of the external modules:".
+* `suggest --check` is removed; use `check --suggest`.
+
+### Features
+
+* check --suggest and doctor --cache for a two-step CI gate ([#201](https://github.com/mokevnin/easement/issues/201)) ([8e26bcd](https://github.com/mokevnin/easement/commit/8e26bcd746ca921b7335307a3d7178be5811e7e7))
+* **check:** compare the imports a change added with the plan it was proposed with ([#211](https://github.com/mokevnin/easement/issues/211)) ([d125d2f](https://github.com/mokevnin/easement/commit/d125d2f38eedef3fde2244424c4de68d7ff630c4))
+* **check:** leave the files of an indexer that cannot run on Windows uncovered, with the reason ([c457c66](https://github.com/mokevnin/easement/commit/c457c66838771fc2f415baa10eef603f15d68088)), closes [#147](https://github.com/mokevnin/easement/issues/147)
+* **explain:** list the names a file may and may not use ([#208](https://github.com/mokevnin/easement/issues/208)) ([9d777cf](https://github.com/mokevnin/easement/commit/9d777cf7806a0f06f2894a434d10676dc1e174ce)), closes [#151](https://github.com/mokevnin/easement/issues/151)
+* **imports:** compare the imports a Python file writes with its index ([#206](https://github.com/mokevnin/easement/issues/206)) ([d972ee8](https://github.com/mokevnin/easement/commit/d972ee87a9a97ab4fe442d42109cb49ce8687033))
+* **policy:** judge local classes, and leave no anonymous or alias implementation unseen ([#203](https://github.com/mokevnin/easement/issues/203)) ([da6e26d](https://github.com/mokevnin/easement/commit/da6e26d280d34009f64eaa7869cc98073dac2a10)), closes [#199](https://github.com/mokevnin/easement/issues/199)
+* **policy:** limit who may implement a component with `allow_implementers` ([#200](https://github.com/mokevnin/easement/issues/200)) ([620063c](https://github.com/mokevnin/easement/commit/620063c514f19ac9fcd02d8cbf2c853b47df35a3)), closes [#137](https://github.com/mokevnin/easement/issues/137)
+* **policy:** pin a decision on the use of a name with a `symbol` example ([#205](https://github.com/mokevnin/easement/issues/205)) ([7fabc9e](https://github.com/mokevnin/easement/commit/7fabc9e162693ae74137266a9a714cb40210bffa))
+* **policy:** print the resolved policy with `easement policy` ([#188](https://github.com/mokevnin/easement/issues/188)) ([1cec70b](https://github.com/mokevnin/easement/commit/1cec70bc7396d7f8ac96ee6c74cf956bfe28433e)), closes [#151](https://github.com/mokevnin/easement/issues/151)
+* **unused:** take the files SvelteKit and Next.js load by convention as entries ([c1607e7](https://github.com/mokevnin/easement/commit/c1607e70777fc4269cbf8cf3d8e3a0ebfedf1518)), closes [#140](https://github.com/mokevnin/easement/issues/140)
+* **why:** report the size of a dependency, the names of `to` that `from` writes ([#209](https://github.com/mokevnin/easement/issues/209)) ([baf8bf0](https://github.com/mokevnin/easement/commit/baf8bf005b145ba9e8377c29f56a41248ee454df))
+
+
+### Bug Fixes
+
+* **check:** count both rules [#200](https://github.com/mokevnin/easement/issues/200) and [#201](https://github.com/mokevnin/easement/issues/201) added in RuleId::ALL ([#202](https://github.com/mokevnin/easement/issues/202)) ([582969d](https://github.com/mokevnin/easement/commit/582969d9ea8b1ae926072b78e84509e233e2daaa))
+* **doctor:** start no indexer that cannot run here, and give no install hint for it ([0f58f72](https://github.com/mokevnin/easement/commit/0f58f7287b1418355b33e8ad8e0802fa9c242fc9)), closes [#147](https://github.com/mokevnin/easement/issues/147)
+* **kotlin:** take a factory function of a type's name for no duplicate ([#207](https://github.com/mokevnin/easement/issues/207)) ([b22dde9](https://github.com/mokevnin/easement/commit/b22dde9364ba8ddd5e5d52dfda53365c614f9129))
+
 ## [0.6.6](https://github.com/mokevnin/easement/compare/v0.6.5...v0.6.6) (2026-11-15)
 
 
