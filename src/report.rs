@@ -1021,7 +1021,7 @@ fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
     results.extend(check::excused(&verdict.suppressions).map(|(s, v)| {
         sarif::Result::builder()
             .rule_id(v.rule.as_str())
-            .level(ResultLevel::Error)
+            .level(ResultLevel::from(verdict.excused_severity(v)))
             .message(sarif_message(message_with_reason(v)))
             .locations(vec![sarif_location(&v.file, Some(v.line))])
             .suppressions(vec![
@@ -1486,6 +1486,7 @@ mod tests {
             }],
             legalized: 0,
             suppressions: vec![],
+            warned: Default::default(),
         }
     }
 
@@ -1545,6 +1546,7 @@ mod tests {
                 stale: vec![],
                 legalized: 0,
                 suppressions: vec![],
+                warned: Default::default(),
             },
             &[],
             &[],
@@ -1573,6 +1575,7 @@ mod tests {
                 stale: vec![],
                 legalized: 0,
                 suppressions: vec![],
+                warned: Default::default(),
             },
             &[],
             &[awkward.to_string()],
@@ -1729,6 +1732,7 @@ hi</system-out>
             stale: vec![],
             legalized: 0,
             suppressions: vec![],
+            warned: Default::default(),
         };
         let stats = Stats {
             uncovered: vec!["tools/gen.go".into()],
@@ -1790,6 +1794,7 @@ hi</system-out>
             stale: vec![],
             legalized: 0,
             suppressions: vec![],
+            warned: Default::default(),
         };
         let report = |require_evidence| Report {
             verdict: &clean,

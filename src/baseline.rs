@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::check::{HonouredSuppression, Key, Violation};
+use crate::check::{HonouredSuppression, Key, RuleId, Violation};
 
 /// Whether a reported violation fails the check (`Error`) or is only said
 /// (`Warning`, a rule in `warn`).
@@ -101,6 +101,9 @@ pub struct Verdict {
     /// The inline suppressions that excused what is judged, with what each
     /// excused: reported, never failing, and not counted as legalized.
     pub suppressions: Vec<HonouredSuppression>,
+    /// The rules in `warn` that a suppression can excuse: an excused violation
+    /// of one would have been a warning, not an error.
+    pub warned: BTreeSet<RuleId>,
 }
 
 impl Verdict {
@@ -121,6 +124,7 @@ impl Verdict {
                 stale: Vec::new(),
                 legalized: 0,
                 suppressions: Vec::new(),
+                warned: BTreeSet::new(),
             };
         };
         let stale = baseline.violations.difference(current).cloned().collect();
@@ -134,6 +138,7 @@ impl Verdict {
             stale,
             legalized: legal.len(),
             suppressions: Vec::new(),
+            warned: BTreeSet::new(),
         }
     }
 
@@ -143,6 +148,15 @@ impl Verdict {
         std::iter::repeat(Severity::Error)
             .zip(&self.new)
             .chain(std::iter::repeat(Severity::Warning).zip(&self.warnings))
+    }
+
+    /// What `v`, which a suppression excused, would have been without it.
+    pub fn excused_severity(&self, v: &Violation) -> Severity {
+        if self.warned.contains(&v.rule) {
+            Severity::Warning
+        } else {
+            Severity::Error
+        }
     }
 
     /// Who to ask about `v`: the owner of its `from`, or of each component of

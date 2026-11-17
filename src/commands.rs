@@ -218,6 +218,12 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
     let mut verdict = Verdict::judge(judged, warnings, &current, baseline.as_ref());
     verdict.owners = project.config().owners();
     verdict.suppressions = suppressions;
+    verdict.warned = project
+        .config()
+        .warn
+        .iter()
+        .filter_map(|rule| check::RuleId::suppressible(rule))
+        .collect();
     // A file no indexer read shows none of its debt, which is not paid for
     // that: `baseline` keeps its entries, so they are not stale (the evidence
     // gaps name the file).

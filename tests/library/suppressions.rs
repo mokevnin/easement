@@ -319,3 +319,47 @@ fn a_run_judged_in_full_lists_every_suppression() {
         "{said}"
     );
 }
+
+/// An excused violation keeps what a violation carries: the clause of the
+/// policy it breaks, and in SARIF the level its rule has, a warning for a rule
+/// in `warn`. The suppressions are listed by file and line.
+#[test]
+fn an_excused_violation_is_reported_as_its_rule_would_be() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  web: { in: src/web }\n  storage: { in: src/storage }\nrules:\n  web: { must_not_depend_on: [storage] }\nwarn: [dependency]\n",
+        ),
+        ("src/web/b.ts", OLD),
+        ("src/web/a.ts", &OLD.replace("legacy save", "a saves")),
+        ("src/storage/db.ts", "export const save = 1;\n"),
+    ]);
+    let checked = check_with(&root, |_| {});
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+    let report = json(&checked);
+    let files: Vec<&str> = report["suppressions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(files, ["src/web/a.ts", "src/web/b.ts"], "{report}");
+    assert_eq!(
+        report["suppressions"][0]["excused"][0]["provenance"]["field"],
+        "rules.web.must_not_depend_on[0]",
+        "{report}"
+    );
+    let sarif = parse(&checked.report().sarif());
+    let run = &sarif["runs"][0];
+    assert_eq!(
+        run["tool"]["driver"]["rules"][0]["id"], "dependency",
+        "{sarif}"
+    );
+    let levels: Vec<&str> = run["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["level"].as_str().unwrap())
+        .collect();
+    assert_eq!(levels, ["warning", "warning"], "{sarif}");
+}
