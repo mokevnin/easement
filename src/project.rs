@@ -57,6 +57,12 @@ impl Project {
         self.analysis(scan)
     }
 
+    /// As [`Project::analyze`], with the flow of the index whatever `reach` says.
+    pub fn analyze_with_flow(&self, cache: &mut scan::Cache) -> Result<Analysis> {
+        let scan = scan::scan_with_flow(&self.root, &self.config().scan_policy(), cache)?;
+        self.analysis(scan)
+    }
+
     /// The project as the policy it was opened with scans it.
     pub fn scan(&self, cache: &mut scan::Cache) -> Result<scan::Scan> {
         scan::scan(&self.root, &self.config().scan_policy(), cache)
@@ -128,7 +134,7 @@ impl Project {
             &map,
             &scan.deps,
             &scan.all_files,
-            scan.flow.as_ref(),
+            scan.reach_flow(config),
         ));
         violations.extend(check::metrics(config, &edges));
         violations.extend(matching::orphans(config, &map, &scan.paths));
@@ -249,6 +255,7 @@ impl Project {
             files: scan.paths,
             stats,
             map,
+            flow: scan.flow,
         })
     }
 
@@ -306,6 +313,9 @@ pub struct Analysis {
     pub map: ComponentMap,
     /// As [`Judgment::unread_diagram`].
     pub unread_diagram: Option<String>,
+    /// The references of the index by the definition that holds them, when the scan
+    /// built them ([`Project::analyze_with_flow`]).
+    pub flow: Option<crate::flow::Flow>,
 }
 
 /// How many files a line about test code that was not told apart names.

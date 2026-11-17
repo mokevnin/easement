@@ -1,0 +1,77 @@
+---
+source: tests/library/callers.rs
+expression: parse(&impacted.json().unwrap())
+---
+{
+  "accepted_gaps": [],
+  "callers_leave_out": "uses through an interface, a trait, reflection or a framework, and uses of a name the change removed or renamed: the files that depend on the changes are the full set to re-check",
+  "changed": [
+    "src/lib/rates.ts"
+  ],
+  "dependents": [
+    {
+      "component": "app",
+      "file": "src/app/a.ts"
+    },
+    {
+      "component": "app",
+      "file": "src/app/b.ts"
+    }
+  ],
+  "evidence_gaps": [
+    {
+      "close": "build the project and run its type checker: they show the uses of a removed name",
+      "count": 1,
+      "files": [
+        "src/lib/rates.ts"
+      ],
+      "kind": "removed_definitions",
+      "message": "1 file(s) lost lines outside every definition the head index has: any definition those lines held is gone from the index, so its former callers are not named"
+    }
+  ],
+  "narrowed": [],
+  "touched": [
+    {
+      "callers": [
+        {
+          "component": "app",
+          "file": "src/app/a.ts",
+          "line": 1
+        },
+        {
+          "component": "app",
+          "file": "src/app/a.ts",
+          "line": 2
+        },
+        {
+          "component": "lib",
+          "file": "src/lib/rates.ts",
+          "line": 4
+        }
+      ],
+      "component": "lib",
+      "file": "src/lib/rates.ts",
+      "part": "own_code"
+    },
+    {
+      "callers": [
+        {
+          "component": "app",
+          "file": "src/app/b.ts",
+          "line": 1
+        },
+        {
+          "component": "app",
+          "file": "src/app/b.ts",
+          "line": 2
+        }
+      ],
+      "component": "lib",
+      "file": "src/lib/rates.ts",
+      "first": 3,
+      "last": 5,
+      "name": "scale",
+      "part": "definition"
+    }
+  ]
+}

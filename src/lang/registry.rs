@@ -207,6 +207,10 @@ pub struct Language {
     /// `forbid_symbol` and `public_symbols` judge. A symbol rule over a language
     /// without them is an evidence gap.
     pub symbols: bool,
+    /// Whether its index gives each method and function the lines it spans, which
+    /// `impact --diff` maps the changed lines onto. Without them a changed file is
+    /// one whole, and an evidence gap says so.
+    pub definition_ranges: bool,
     /// What its index gives of the types a type implements or extends, which the
     /// `implementation` rule judges. A language without declared relations is an
     /// evidence gap for that rule.
@@ -274,6 +278,7 @@ pub static GO: Language = Language {
     conventional: &[],
     manifest: Some(Manifest::Go),
     symbols: true,
+    definition_ranges: true,
     relations: Relations::Structural {
         because: "a go type implements an interface by having its methods, which declares nothing",
     },
@@ -318,6 +323,7 @@ pub static TYPESCRIPT: Language = Language {
     conventional: &[],
     manifest: Some(Manifest::Npm),
     symbols: true,
+    definition_ranges: true,
     relations: Relations::Declared {
         unrelated: Some(Unrelated {
             find: super::typescript::unrelated,
@@ -357,6 +363,7 @@ pub static PYTHON: Language = Language {
     conventional: &["**/conftest.py", "**/__main__.py", "**/setup.py"],
     manifest: None,
     symbols: true,
+    definition_ranges: true,
     relations: Relations::Declared {
         unrelated: None,
         anonymous: None,
@@ -393,6 +400,7 @@ pub static JAVA: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    definition_ranges: true,
     relations: Relations::Declared {
         unrelated: None,
         anonymous: Some(
@@ -427,6 +435,7 @@ pub static KOTLIN: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: false,
+    definition_ranges: false,
     relations: Relations::None {
         because: "kotlin files are read without an index, which declares no implementations",
     },
@@ -461,6 +470,7 @@ pub static CSHARP: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    definition_ranges: false,
     relations: Relations::Declared {
         unrelated: None,
         anonymous: None,
@@ -493,6 +503,7 @@ pub static PHP: Language = Language {
     manifest: None,
     // Its indexer reports member uses, but none is verified yet.
     symbols: false,
+    definition_ranges: false,
     relations: Relations::None {
         because: "the php index declares no implementations",
     },
@@ -524,6 +535,7 @@ pub static SWIFT: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: false,
+    definition_ranges: false,
     relations: Relations::None {
         because: "swift files are read without an index, which declares no implementations",
     },
@@ -555,6 +567,7 @@ pub static RUBY: Language = Language {
     conventional: &[],
     manifest: None,
     symbols: true,
+    definition_ranges: true,
     relations: Relations::None {
         because: "the ruby index declares no implementations",
     },
@@ -604,6 +617,7 @@ pub static RUST: Language = Language {
     ],
     manifest: Some(Manifest::Cargo),
     symbols: true,
+    definition_ranges: true,
     relations: Relations::None {
         because: "the rust index declares no implementations",
     },

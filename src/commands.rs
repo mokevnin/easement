@@ -372,34 +372,60 @@ pub fn impact(
     if paths.is_empty() && diff.is_none() {
         anyhow::bail!("name the changed files or directories, or pass `--diff <base>`");
     }
-    let analysis = project.analyze(cache)?;
+    // Only changed lines tell what a change touched, and only the flow who uses it.
+    let analysis = match diff {
+        Some(_) => project.analyze_with_flow(cache)?,
+        None => project.analyze(cache)?,
+    };
     let named: Vec<String> = paths
         .iter()
         .map(|p| explain::root_relative(&project.root, p))
         .collect();
     let mut changed = impact::files_under(&named, &analysis.all_files)?;
-    let mut deleted = Vec::new();
+    let mut changes = None;
     if let Some(base) = diff {
-        let changes = diff::Changes::collect(&project.root, base)?;
+        let collected = diff::Changes::collect(&project.root, base)?;
         let known: std::collections::HashSet<&str> =
             analysis.all_files.iter().map(String::as_str).collect();
         changed.extend(
-            changes
+            collected
                 .files()
                 .filter(|f| known.contains(f))
                 .map(str::to_string),
         );
-        deleted = changes.deleted;
+        changes = Some(collected);
     }
+    let touched = match &changes {
+        Some(changes) => {
+            // Without the flow every caller list would be empty and look whole.
+            let flow = analysis
+                .flow
+                .as_ref()
+                .context("the scan of an `impact --diff` built no flow")?;
+            Some(impact::touched(
+                &analysis.map,
+                flow,
+                changes,
+                &changed,
+                &analysis.files,
+            ))
+        }
+        None => None,
+    };
     let mut result = impact::impact(
         &analysis.map,
         &analysis.deps,
         &analysis.all_files,
         changed,
-        deleted,
+        changes.map(|changes| changes.deleted).unwrap_or_default(),
         report::graph_gaps(&analysis.stats, &analysis.unindexed),
         analysis.accepted,
     );
+    if let Some((touched, gaps)) = touched {
+        result.touched = Some(touched);
+        result.callers_leave_out = Some(impact::CALLERS_LEAVE_OUT);
+        result.coverage.evidence_gaps.extend(gaps);
+    }
     result.cached = report::cache_note(&analysis.stats);
     Ok(Impacted {
         impact: result,
@@ -778,7 +804,7 @@ pub fn propose(
             map: &map,
             deps: &scan.deps,
             files: &scan.all_files,
-            flow: scan.flow.as_ref(),
+            flow: scan.reach_flow(config),
         };
         let consequences = propose::consequences(&graph, &proposals)?;
         // What the graph could not read is what its consequences cannot see.

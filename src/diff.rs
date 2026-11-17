@@ -15,7 +15,8 @@ use crate::lang::registry;
 use crate::policy::{Policy, PolicyInput};
 
 /// Lines added or changed since the merge-base with a base revision, including
-/// uncommitted and untracked files. Paths are relative to the project root.
+/// uncommitted and untracked files, and the points where lines were deleted. Paths
+/// are relative to the project root.
 #[derive(Debug, Default)]
 pub struct Changes {
     pub base: String,
@@ -28,7 +29,25 @@ pub struct Changes {
 #[derive(Debug)]
 enum Lines {
     All,
-    Ranges(Vec<(usize, usize)>),
+    Ranges {
+        changed: Vec<(usize, usize)>,
+        /// The lines after which a hunk deleted lines and added none (0 at the top).
+        deleted_after: Vec<usize>,
+    },
+}
+
+/// What a change did to the lines of one file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Touch<'a> {
+    /// Every line is new: an untracked file.
+    Whole,
+    Lines {
+        /// The ranges of lines added or changed, first and last.
+        changed: &'a [(usize, usize)],
+        /// The lines after which lines were deleted and none added: a deletion
+        /// after line `p` falls between `p` and `p + 1`.
+        deleted_after: &'a [usize],
+    },
 }
 
 impl Changes {
@@ -88,10 +107,10 @@ impl Changes {
             }
             // Changed although no line of it may be added: a manifest loses a
             // dependency by a deleted line.
-            let ranges = file
-                .hunks()
+            let (added, deleted): (Vec<_>, Vec<_>) =
+                file.hunks().iter().partition(|hunk| hunk.target_length > 0);
+            let changed = added
                 .iter()
-                .filter(|hunk| hunk.target_length > 0)
                 .map(|hunk| {
                     (
                         hunk.target_start,
@@ -99,7 +118,15 @@ impl Changes {
                     )
                 })
                 .collect();
-            files.insert(file.target_file.clone(), Lines::Ranges(ranges));
+            // A hunk that adds nothing starts at the line before it.
+            let deleted_after = deleted.iter().map(|hunk| hunk.target_start).collect();
+            files.insert(
+                file.target_file.clone(),
+                Lines::Ranges {
+                    changed,
+                    deleted_after,
+                },
+            );
         }
         Ok(Self {
             files,
@@ -113,12 +140,29 @@ impl Changes {
         self.files.keys().map(String::as_str)
     }
 
+    /// Whether `line` of `file` is added or changed.
     pub fn contains(&self, file: &str, line: usize) -> bool {
         match self.files.get(file) {
             Some(Lines::All) => true,
-            Some(Lines::Ranges(ranges)) => ranges.iter().any(|(a, b)| (*a..=*b).contains(&line)),
+            Some(Lines::Ranges { changed, .. }) => {
+                changed.iter().any(|(a, b)| (*a..=*b).contains(&line))
+            }
             None => false,
         }
+    }
+
+    /// What the change did to the lines of `file`; `None` when it left the file as it was.
+    pub fn touch(&self, file: &str) -> Option<Touch<'_>> {
+        Some(match self.files.get(file)? {
+            Lines::All => Touch::Whole,
+            Lines::Ranges {
+                changed,
+                deleted_after,
+            } => Touch::Lines {
+                changed,
+                deleted_after,
+            },
+        })
     }
 }
 
@@ -428,6 +472,33 @@ mod tests {
         let changes = Changes::parse(diff).unwrap();
         assert!(changes.deleted.is_empty(), "{:?}", changes.deleted);
         assert_eq!(changes.files().collect::<Vec<_>>(), ["src/top.ts"]);
+    }
+
+    /// A hunk that only deletes lines changes none, but says where they were.
+    #[test]
+    fn keeps_where_lines_were_deleted() {
+        let diff = "\
+--- src/a.ts
++++ src/a.ts
+@@ -1 +0,0 @@
+-top
+@@ -3 +2 @@
+-old
++new
+@@ -10,2 +8,0 @@
+-gone
+-gone
+";
+        let changes = Changes::parse(diff).unwrap();
+        assert_eq!(
+            changes.touch("src/a.ts"),
+            Some(Touch::Lines {
+                changed: &[(2, 2)],
+                deleted_after: &[0, 8],
+            })
+        );
+        assert!(!changes.contains("src/a.ts", 8));
+        assert_eq!(changes.touch("src/b.ts"), None);
     }
 
     #[test]

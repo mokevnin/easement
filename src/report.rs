@@ -154,6 +154,12 @@ pub enum GapKind {
     /// Files whose names of another component `why` does not count: easement reads
     /// no uses of names from their language.
     Names,
+    /// Files a change deleted lines from outside every definition of the head index:
+    /// a definition they held is gone, and so are its callers from `impact --diff`.
+    RemovedDefinitions,
+    /// Changed files whose language's index gives no definition ranges: `impact
+    /// --diff` takes each as touched whole.
+    NoDefinitionRanges,
 }
 
 impl GapKind {
@@ -173,7 +179,9 @@ impl GapKind {
             | GapKind::Symbols
             | GapKind::Implementation
             | GapKind::Unused
-            | GapKind::Names => false,
+            | GapKind::Names
+            | GapKind::RemovedDefinitions
+            | GapKind::NoDefinitionRanges => false,
         }
     }
 }

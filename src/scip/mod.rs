@@ -24,7 +24,7 @@ use protobuf::Message;
 use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 
 use crate::check::SymbolRef;
-use crate::flow::{Edge, Flow, Node};
+use crate::flow::{Edge, Flow, Node, Use};
 use crate::lang::parts::Part;
 use crate::lang::registry::{self, Manifest};
 use crate::lang::{
@@ -1729,6 +1729,36 @@ pub(crate) fn flow(documents: &[Document]) -> Flow {
     Indexed::of(&names).flow()
 }
 
+/// A definition as its symbol spells it, past the package and the modules around it:
+/// the names of its other descriptors joined by `.` (`Order.total`); the symbol
+/// itself when it cannot be read.
+fn shown_name(symbol: &str) -> String {
+    split(symbol)
+        .map(|parsed| {
+            parsed
+                .descriptors
+                .iter()
+                .filter(|(_, kind)| *kind != Kind::Namespace)
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| symbol.to_string())
+}
+
+/// The method of `scoped` that `symbol` is or is defined in, the innermost: a
+/// parameter or a local an indexer names globally (`scale().(x)`) is part of its method.
+fn within_scope<'a>(symbol: &'a str, scoped: &HashSet<&str>) -> Option<&'a str> {
+    if scoped.contains(symbol) {
+        return Some(symbol);
+    }
+    symbol
+        .rmatch_indices(").")
+        .map(|(at, _)| &symbol[..at + 2])
+        .find(|prefix| scoped.contains(prefix))
+}
+
 impl Indexed<'_> {
     /// The references of `documents`, each from the definition that holds it to the
     /// definition it names. A symbol that more than one file defines (a Ruby module
@@ -1743,6 +1773,8 @@ impl Indexed<'_> {
         for document in documents {
             for scope in &document.scopes {
                 scoped.insert(&scope.symbol);
+                flow.names
+                    .insert(scope.symbol.clone(), shown_name(&scope.symbol));
             }
             if !document.scopes.is_empty() {
                 flow.scopes
@@ -1799,6 +1831,20 @@ impl Indexed<'_> {
                     // any of the file's methods may be what runs.
                     flow.nodes_of(file)
                 };
+                // A module named on its own (an import) names no definition.
+                if !symbol.ends_with('/') {
+                    flow.uses.push(Use {
+                        file: document.path.clone(),
+                        line: reference.line,
+                        to: match within_scope(symbol, &scoped) {
+                            Some(scope) => Node {
+                                file: file.to_string(),
+                                scope: Some(scope.to_string()),
+                            },
+                            None => Node::file(file),
+                        },
+                    });
+                }
                 for from in flow.owners(&document.path, reference.line) {
                     for to in &targets {
                         if from != *to {

@@ -1,0 +1,20 @@
+---
+source: tests/library/callers.rs
+expression: impacted.text()
+---
+Changed: 1 file(s) in lib
+Depend on them: 2 file(s) in app
+  app: src/app/a.ts, src/app/b.ts
+Touched: 2 part(s) of the changed files
+  src/lib/rates.ts: own code, outside every function (lib), used at:
+    src/app/a.ts:1 (app)
+    src/app/a.ts:2 (app)
+    src/lib/rates.ts:4 (lib)
+  src/lib/rates.ts:3-5 scale (lib), used at:
+    src/app/b.ts:1 (app)
+    src/app/b.ts:2 (app)
+  Not named: uses through an interface, a trait, reflection or a framework, and uses of a name the change removed or renamed: the files that depend on the changes are the full set to re-check.
+Evidence gaps (a use of what the changes touched in this code is not named):
+  1 file(s) lost lines outside every definition the head index has: any definition those lines held is gone from the index, so its former callers are not named
+    to close: build the project and run its type checker: they show the uses of a removed name
+    src/lib/rates.ts

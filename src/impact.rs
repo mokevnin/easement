@@ -8,7 +8,9 @@ use crate::check::{Chain, Hop, Place, RuleId, Unjudged, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
 use crate::decision;
+use crate::diff::{Changes, Touch};
 use crate::explain::DependencyDecision;
+use crate::flow::{Flow, Node};
 use crate::lang::{Aliased, Dep, Mention, Qualified, Unit, registry};
 use crate::policy::Policy;
 use crate::relpath;
@@ -24,6 +26,15 @@ pub struct Impact {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub deleted: Vec<String>,
     pub dependents: Vec<Dependent>,
+    /// With `--diff`: the definitions the change touched and the places the head
+    /// index says use them, a narrower list of what to re-check than `dependents`,
+    /// never a whole one. `None` without `--diff`, which knows no changed lines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touched: Option<Vec<Touched>>,
+    /// With `touched`: which uses its callers leave out, so that they are never
+    /// taken for every use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callers_leave_out: Option<&'static str>,
     #[serde(flatten)]
     pub coverage: Coverage,
     /// Set when the indexes came from the cache: what their key leaves out and
@@ -37,6 +48,172 @@ pub struct Dependent {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
+}
+
+/// What the callers of [`Touched`] leave out.
+pub const CALLERS_LEAVE_OUT: &str = "uses through an interface, a trait, reflection or a framework, and uses of a name the change removed or renamed: the files that depend on the changes are the full set to re-check";
+
+/// A part of a changed file that the change touched, with the places that use it.
+#[derive(Serialize)]
+pub struct Touched {
+    pub file: String,
+    #[serde(flatten)]
+    pub part: Part,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    /// Every use of it the head index records from outside it: places to re-check,
+    /// not places that are broken. A call through an interface, a trait, reflection
+    /// or a framework uses no implementation (ADR 0008), so it is not here.
+    pub callers: Vec<Caller>,
+}
+
+/// What part of its file a [`Touched`] is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "part", rename_all = "snake_case")]
+pub enum Part {
+    /// A method or function, by its name as the index spells it and the lines it spans.
+    Definition {
+        name: String,
+        first: usize,
+        last: usize,
+    },
+    /// The code of the file that is in no method or function: class bodies,
+    /// constants, top-level code. Its callers use its classes and constants.
+    OwnCode,
+    /// The whole file, as its language's index gives no definition ranges. Its
+    /// callers use any of its definitions.
+    File,
+}
+
+/// A place that uses what a change touched.
+#[derive(Serialize)]
+pub struct Caller {
+    pub file: String,
+    pub line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+}
+
+/// What `changes` touched in each of the `changed` files, and the evidence gaps of
+/// that answer. A changed line touches the innermost method or function that holds
+/// it, else the file's own code; a point where lines were deleted touches the
+/// innermost one that holds the lines around it, else nothing: what the lines held
+/// is gone from the head index, an evidence gap. Callers are uses from `sources`, the
+/// files whose dependencies the graph reads.
+pub fn touched(
+    map: &ComponentMap,
+    flow: &Flow,
+    changes: &Changes,
+    changed: &BTreeSet<String>,
+    sources: &[String],
+) -> (Vec<Touched>, Vec<EvidenceGap>) {
+    let sources: HashSet<&str> = sources.iter().map(String::as_str).collect();
+    let named = |uses: Vec<&crate::flow::Use>| -> Vec<Caller> {
+        uses.into_iter()
+            .filter(|used| sources.contains(used.file.as_str()))
+            .map(|used| Caller {
+                file: used.file.clone(),
+                line: used.line,
+                component: map.component_of(&used.file).map(str::to_string),
+            })
+            .collect()
+    };
+    let mut touched = Vec::new();
+    let mut removed = BTreeSet::new();
+    let mut whole: BTreeMap<&str, (&registry::Language, BTreeSet<String>)> = BTreeMap::new();
+    for file in changed {
+        let (Some(touch), Some(language)) = (changes.touch(file), registry::of(file)) else {
+            continue;
+        };
+        let component = map.component_of(file).map(str::to_string);
+        if !language.definition_ranges {
+            whole
+                .entry(language.name)
+                .or_insert((language, BTreeSet::new()))
+                .1
+                .insert(file.clone());
+            let callers = flow.file_callers(file);
+            touched.push(Touched {
+                file: file.clone(),
+                part: Part::File,
+                component,
+                callers: named(callers),
+            });
+            continue;
+        }
+        let mut nodes: Vec<Node> = Vec::new();
+        match touch {
+            Touch::Whole => nodes.extend(flow.nodes_of(file)),
+            Touch::Lines {
+                changed,
+                deleted_after,
+            } => {
+                for &(first, last) in changed {
+                    for line in first..=last {
+                        nodes.extend(flow.owners(file, line));
+                    }
+                }
+                for &line in deleted_after {
+                    match flow.holders(file, line, line + 1).as_slice() {
+                        [Node { scope: None, .. }] => {
+                            removed.insert(file.clone());
+                        }
+                        held => nodes.extend(held.iter().cloned()),
+                    }
+                }
+            }
+        }
+        // Its own code first, then each definition by where it starts.
+        let start = |node: &Node| flow.scope_of(node).map_or(0, |scope| scope.first);
+        nodes.sort_by(|a, b| (start(a), a).cmp(&(start(b), b)));
+        nodes.dedup();
+        for node in nodes {
+            let part = match (flow.scope_of(&node), &node.scope) {
+                (Some(scope), Some(symbol)) => Part::Definition {
+                    name: flow.names.get(symbol).cloned().unwrap_or(symbol.clone()),
+                    first: scope.first,
+                    last: scope.last,
+                },
+                _ => Part::OwnCode,
+            };
+            let callers = named(flow.callers(&node));
+            touched.push(Touched {
+                file: file.clone(),
+                part,
+                component: component.clone(),
+                callers,
+            });
+        }
+    }
+    let mut gaps = Vec::new();
+    if !removed.is_empty() {
+        gaps.push(EvidenceGap::of(
+            GapKind::RemovedDefinitions,
+            &Unjudged::new(format!(
+                "{} file(s) lost lines outside every definition the head index has: any definition those lines held is gone from the index, so its former callers are not named",
+                removed.len()
+            ))
+            .in_files(removed),
+            "build the project and run its type checker: they show the uses of a removed name",
+        ));
+    }
+    for (name, (language, files)) in whole {
+        // A language read without an index records no use of anything.
+        let uses = match language.adapter {
+            Some(_) => format!("and {name} is read without an index, so no use of them is named"),
+            None => "and a use of any of their definitions is named".to_string(),
+        };
+        gaps.push(EvidenceGap::of(
+            GapKind::NoDefinitionRanges,
+            &Unjudged::new(format!(
+                "{} changed {name} file(s) are touched whole: easement reads no definition ranges from {name}, so what a change touched in them is not narrowed to a definition, {uses}",
+                files.len()
+            ))
+            .in_files(files),
+            "re-check every file that depends on them: the dependents are listed in full",
+        ));
+    }
+    (touched, gaps)
 }
 
 /// The files of the project that `paths` name, a file or everything under a directory.
@@ -107,6 +284,8 @@ pub fn impact(
         changed: changed.into_iter().collect(),
         deleted,
         dependents,
+        touched: None,
+        callers_leave_out: None,
         coverage,
         cached: None,
     }
@@ -151,16 +330,61 @@ pub fn render(impact: &Impact, map: &ComponentMap) -> String {
             out.push_str(&format!("  {component}: {}\n", files.join(", ")));
         }
     }
+    if let Some(touched) = impact.touched.as_ref().filter(|t| !t.is_empty()) {
+        out.push_str(&touched_lines(touched));
+    }
+    let gaps = &impact.coverage.evidence_gaps;
+    let silent = match (
+        gaps.iter().any(|gap| gap.kind.hides_dependencies()),
+        gaps.iter().all(|gap| gap.kind.hides_dependencies()),
+    ) {
+        (_, true) => "what depends on the changes through this code is missing",
+        (false, false) => "a use of what the changes touched in this code is not named",
+        (true, false) => {
+            "what depends on the changes, or a use of what they touched, through this code is missing"
+        }
+    };
     out.push_str(&report::gap_lines(
-        &impact.coverage.evidence_gaps,
+        gaps,
         &impact.coverage.accepted_gaps,
-        "what depends on the changes through this code is missing",
+        silent,
         false,
         false,
     ));
     if let Some(note) = &impact.cached {
         out.push_str(&format!("Cached: {note}\n"));
     }
+    out
+}
+
+/// The text form of what a change touched: each part with the places that use it,
+/// then what the list leaves out.
+fn touched_lines(touched: &[Touched]) -> String {
+    let mut out = format!("Touched: {} part(s) of the changed files\n", touched.len());
+    for entry in touched {
+        let what = match &entry.part {
+            Part::Definition { name, first, last } => {
+                format!("{}:{first}-{last} {name}", entry.file)
+            }
+            Part::OwnCode => format!("{}: own code, outside every function", entry.file),
+            Part::File => format!("{}: the whole file", entry.file),
+        };
+        let component = entry.component.as_deref().unwrap_or(NO_COMPONENT);
+        if entry.callers.is_empty() {
+            out.push_str(&format!("  {what} ({component}): no use of it is named\n"));
+            continue;
+        }
+        out.push_str(&format!("  {what} ({component}), used at:\n"));
+        for caller in &entry.callers {
+            out.push_str(&format!(
+                "    {}:{} ({})\n",
+                caller.file,
+                caller.line,
+                caller.component.as_deref().unwrap_or(NO_COMPONENT)
+            ));
+        }
+    }
+    out.push_str(&format!("  Not named: {CALLERS_LEAVE_OUT}.\n"));
     out
 }
 

@@ -100,12 +100,21 @@ pub struct Scan {
     pub indexed: usize,
     /// Indexes taken from the cache instead of running their indexer.
     pub from_cache: usize,
-    /// With `reach: symbols`, the references of the index by the definition that holds
-    /// them.
+    /// The references of the index by the definition that holds them: what `reach:
+    /// symbols` follows and what `impact --diff` names the callers of a change from.
+    /// Built only for those two ([`scan_with_flow`]).
     pub flow: Option<crate::flow::Flow>,
 }
 
 impl Scan {
+    /// The flow `must_not_reach` follows under `config`: none unless it reaches by
+    /// symbols (ADR 0005).
+    pub fn reach_flow(&self, config: &crate::config::Config) -> Option<&crate::flow::Flow> {
+        self.flow
+            .as_ref()
+            .filter(|_| config.reach == crate::config::Reach::Symbols)
+    }
+
     /// Whether the index holds all of the project: every source file covered by an
     /// indexer, every import it resolved and every name it saw named. Only then can a name it lacks be told
     /// to be missing.
@@ -278,6 +287,17 @@ pub fn project_files(root: &Path, policy: &ScanPolicy) -> Result<ProjectFiles> {
 
 /// Reads the project as `policy`, the scan-relevant part of the policy, asks.
 pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan> {
+    read(root, policy, cache, false)
+}
+
+/// As [`scan`], with the flow of the index whatever `reach` says: `impact --diff`
+/// names the callers of what a change touched from it. Only then is it built, as it
+/// costs every other run time and memory for nothing.
+pub fn scan_with_flow(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan> {
+    read(root, policy, cache, true)
+}
+
+fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Result<Scan> {
     let exclude = glob_set(&policy.exclude, "exclude")?;
     let target_only = glob_set(&policy.target_only, "target_only")?;
     // One walk serves the adapters and the files: an adapter resolves to anything
@@ -538,7 +558,7 @@ pub fn scan(root: &Path, policy: &ScanPolicy, cache: &mut Cache) -> Result<Scan>
         .into_iter()
         .filter(|i| !target_only.is_match(&i.sub.file) && !target_only.is_match(&i.supertype.file))
         .collect();
-    let flow = (policy.reach == crate::config::Reach::Symbols).then(|| index.flow());
+    let flow = (flow || policy.reach == crate::config::Reach::Symbols).then(|| index.flow());
     let facts = index.facts(policy.uses_symbols, &policy.watched_symbols);
     let is_source = |file: &Path| {
         let file = slash(file);
