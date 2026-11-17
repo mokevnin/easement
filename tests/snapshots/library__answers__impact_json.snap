@@ -9,7 +9,19 @@ expression: parse(&impacted.json().unwrap())
   ],
   "dependents": [
     {
+      "chain": {
+        "hops": [
+          {
+            "file": "src/domain/Order.kt",
+            "from_component": "domain",
+            "line": 2,
+            "to_component": "util"
+          }
+        ],
+        "witness": "shortest"
+      },
       "component": "domain",
+      "end": "src/util/Retry.kt",
       "file": "src/domain/Order.kt"
     }
   ],

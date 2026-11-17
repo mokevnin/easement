@@ -10,11 +10,35 @@ expression: parse(&impacted.json().unwrap())
   ],
   "dependents": [
     {
+      "chain": {
+        "hops": [
+          {
+            "file": "src/app/a.ts",
+            "from_component": "app",
+            "line": 1,
+            "to_component": "lib"
+          }
+        ],
+        "witness": "shortest"
+      },
       "component": "app",
+      "end": "src/lib/rates.ts",
       "file": "src/app/a.ts"
     },
     {
+      "chain": {
+        "hops": [
+          {
+            "file": "src/app/b.ts",
+            "from_component": "app",
+            "line": 1,
+            "to_component": "lib"
+          }
+        ],
+        "witness": "shortest"
+      },
       "component": "app",
+      "end": "src/lib/rates.ts",
       "file": "src/app/b.ts"
     }
   ],

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use anyhow::{Result, bail};
 use serde::Serialize;
 
-use crate::chains::{NO_COMPONENT, describe_chain, file_graph, reach, shortest_chain};
+use crate::chains::{NO_COMPONENT, Reached, describe_chain, file_graph, shortest_chain};
 use crate::check::{Chain, Hop, Place, RuleId, Unjudged, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
@@ -43,11 +43,18 @@ pub struct Impact {
     pub cached: Option<String>,
 }
 
+/// A file that depends on a changed file, with why: the shortest chain of imports
+/// from it to the changed file nearest to it.
 #[derive(Serialize)]
 pub struct Dependent {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
+    /// From the file, through each file that imports the next at the line of its
+    /// import, to `end`: one witness among the chains that may exist.
+    pub chain: Chain,
+    /// The changed file the chain ends in.
+    pub end: String,
 }
 
 /// What the callers of [`Touched`] leave out.
@@ -244,27 +251,41 @@ pub fn impact(
     mut evidence_gaps: Vec<EvidenceGap>,
     accepted: Vec<AcceptedGap>,
 ) -> Impact {
-    let mut importers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Each file -> the files that import it, each with the line of its import.
+    let mut importers: BTreeMap<String, BTreeSet<(String, usize)>> = BTreeMap::new();
     for (from, out) in file_graph(deps, files) {
-        for (to, _) in out {
-            importers.entry(to).or_default().insert(from.clone());
+        for (to, line) in out {
+            importers
+                .entry(to)
+                .or_default()
+                .insert((from.clone(), line));
         }
     }
-    let reached = reach(changed.iter().map(String::as_str), |file| {
+    // One search from every changed file at once: the way back from a dependent
+    // is a shortest chain of imports to the changed file nearest to it.
+    let reached = Reached::search(changed.iter().map(String::as_str), |file| {
         importers
             .get(file)
             .into_iter()
             .flatten()
-            .map(String::as_str)
+            .map(|(from, line)| (from.as_str(), *line))
     });
-    let dependents = reached
-        .into_iter()
+    let of = |file: &str| map.component_of(file);
+    let mut dependents: Vec<Dependent> = reached
+        .files()
         .filter(|file| !changed.contains(*file))
-        .map(|file| Dependent {
-            file: file.to_string(),
-            component: map.component_of(file).map(str::to_string),
+        .map(|file| {
+            let (hops, end) = reached.way_back(file);
+            Dependent {
+                file: file.to_string(),
+                component: of(file).map(str::to_string),
+                chain: Chain::of(&hops, end, of),
+                end: end.to_string(),
+            }
         })
         .collect();
+    // The nearest first: they are the most worth re-checking.
+    dependents.sort_by(|a, b| (a.chain.hops.len(), &a.file).cmp(&(b.chain.hops.len(), &b.file)));
     if !deleted.is_empty() {
         evidence_gaps.push(EvidenceGap::of(
             GapKind::Deleted,
@@ -320,15 +341,21 @@ pub fn render(impact: &Impact, map: &ComponentMap) -> String {
             impact.dependents.len(),
             components(&mut impact.dependents.iter().map(|d| d.file.as_str()))
         ));
-        let mut by_component: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        // The chain says why a file is listed; the nearest stay first.
+        let mut by_component: BTreeMap<&str, Vec<&Dependent>> = BTreeMap::new();
         for d in &impact.dependents {
             by_component
                 .entry(d.component.as_deref().unwrap_or(NO_COMPONENT))
                 .or_default()
-                .push(&d.file);
+                .push(d);
         }
-        for (component, files) in by_component {
-            out.push_str(&format!("  {component}: {}\n", files.join(", ")));
+        for (component, dependents) in by_component {
+            out.push_str(&format!("  {component}:\n"));
+            for d in dependents {
+                let hops: Vec<Place> = d.chain.hops.iter().map(Hop::place).collect();
+                let (_, chain) = describe_chain(&hops, &d.end, |_| None);
+                out.push_str(&format!("    {chain}\n"));
+            }
         }
     }
     if let Some(touched) = impact.touched.as_ref().filter(|t| !t.is_empty()) {
@@ -901,11 +928,7 @@ pub fn render_why(why: &Why) -> String {
         }
     }
     if let Some(WhyChain { chain, end, .. }) = &why.chain {
-        let hops: Vec<Place> = chain
-            .hops
-            .iter()
-            .map(|hop| Place::new(hop.file.clone(), hop.line))
-            .collect();
+        let hops: Vec<Place> = chain.hops.iter().map(Hop::place).collect();
         let (through, chain) = describe_chain(&hops, end, |file| {
             chain
                 .hops
@@ -933,10 +956,7 @@ pub fn render_why(why: &Why) -> String {
             }
             out.push('\n');
             for AliasPath { hops, end } in &import.aliases {
-                let places: Vec<Place> = hops
-                    .iter()
-                    .map(|hop| Place::new(hop.file.clone(), hop.line))
-                    .collect();
+                let places: Vec<Place> = hops.iter().map(Hop::place).collect();
                 let (_, chain) = describe_chain(&places, end, |_| None);
                 out.push_str(&format!("    through an alias: {chain}\n"));
             }

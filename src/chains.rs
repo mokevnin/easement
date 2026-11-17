@@ -1,10 +1,11 @@
 //! Chains of dependencies through the graph: cycles between components, the
 //! chains `must_not_reach` forbids, and the shortest of each as its witness.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use pathfinding::NodeRefs;
-use pathfinding::directed::bfs::{bfs, bfs_loop, bfs_reach};
+use pathfinding::directed::bfs::{bfs, bfs_loop};
 use pathfinding::directed::strongly_connected_components::strongly_connected_components;
 
 use crate::check::{Chain, Edge, Hop, Place, RuleId, Violation};
@@ -351,14 +352,69 @@ pub fn reach<'a, I: IntoIterator<Item = &'a str>>(
     roots: impl IntoIterator<Item = &'a str>,
     mut successors: impl FnMut(&'a str) -> I,
 ) -> BTreeSet<&'a str> {
-    // `None` stands before every root, so one search starts from all of them.
-    let roots: Vec<Option<&str>> = roots.into_iter().map(Some).collect();
-    bfs_reach(None, |node: &Option<&'a str>| match node {
-        None => roots.clone(),
-        Some(file) => successors(file).into_iter().map(Some).collect(),
+    // Only the set is wanted, so the line of each step is never read.
+    Reached::search(roots, |file| {
+        successors(file).into_iter().map(|next| (next, 0))
     })
-    .flatten()
+    .files()
     .collect()
+}
+
+/// What one breadth-first search from every root at once reaches: each file
+/// with the step it was first reached by, so the steps back from a file are a
+/// shortest way to the root nearest to it.
+#[derive(Debug)]
+pub struct Reached<'a> {
+    /// Each file reached -> the file it was reached from and the line of that
+    /// step; `None` for a root.
+    step: BTreeMap<&'a str, Option<(&'a str, usize)>>,
+}
+
+impl<'a> Reached<'a> {
+    /// Searches from `roots` along `successors`, each successor with the line of
+    /// its step. Of two equally short ways to a file, the one found first stays:
+    /// the roots in the order given, then each file's successors in theirs, so
+    /// ordered input gives the same steps on every run.
+    pub fn search<I: IntoIterator<Item = (&'a str, usize)>>(
+        roots: impl IntoIterator<Item = &'a str>,
+        mut successors: impl FnMut(&'a str) -> I,
+    ) -> Self {
+        let mut step = BTreeMap::new();
+        let mut queue = VecDeque::new();
+        // Every root is in before any is followed, so none is reached from another.
+        for root in roots {
+            if step.insert(root, None).is_none() {
+                queue.push_back(root);
+            }
+        }
+        while let Some(file) = queue.pop_front() {
+            for (next, line) in successors(file) {
+                if let Entry::Vacant(entry) = step.entry(next) {
+                    entry.insert(Some((file, line)));
+                    queue.push_back(next);
+                }
+            }
+        }
+        Self { step }
+    }
+
+    /// The files reached, in path order, roots included.
+    pub fn files(&self) -> impl Iterator<Item = &'a str> + '_ {
+        self.step.keys().copied()
+    }
+
+    /// The steps back from `file` to its root: each file on the way with the
+    /// line of its step, and the root it ends in. A root has no steps; a file
+    /// the search did not reach has none either and ends in itself.
+    pub fn way_back(&self, file: &'a str) -> (Vec<Place>, &'a str) {
+        let mut hops = Vec::new();
+        let mut at = file;
+        while let Some(Some((from, line))) = self.step.get(at) {
+            hops.push(Place::new(at, *line));
+            at = from;
+        }
+        (hops, at)
+    }
 }
 
 /// The shortest chain from any of `starts` through files `is_hop` accepts to
@@ -684,6 +740,31 @@ rules:
         );
         assert!(cycles(&config("[a, b]"), &edges).is_empty());
         assert!(cycles(&config("false"), &edges).is_empty());
+    }
+    /// `r1` and `r2` are roots and `r2` imports `r1`; `x` imports `r1` at line 7, `y`
+    /// imports `r2` at line 8, and `z` imports `y` (line 1) and `x` (line 2).
+    #[test]
+    fn reached_steps_back_to_the_nearest_root_the_search_found_first() {
+        let importers: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::from([
+            ("r1", vec![("r2", 5), ("x", 7)]),
+            ("r2", vec![("y", 8)]),
+            ("x", vec![("z", 2)]),
+            ("y", vec![("z", 1)]),
+        ]);
+        let reached = Reached::search(["r1", "r2"], |file| {
+            importers.get(file).cloned().unwrap_or_default()
+        });
+        assert_eq!(
+            reached.files().collect::<Vec<_>>(),
+            ["r1", "r2", "x", "y", "z"]
+        );
+        // A root is reached from no other root.
+        assert_eq!(reached.way_back("r2"), (vec![], "r2"));
+        // `z` is two steps from either root: the way through `x`, found first, stays.
+        assert_eq!(
+            reached.way_back("z"),
+            (vec![Place::new("z", 2), Place::new("x", 7)], "r1")
+        );
     }
     #[test]
     fn file_graph_keeps_an_edge_to_every_candidate() {

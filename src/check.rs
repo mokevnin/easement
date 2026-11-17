@@ -252,6 +252,13 @@ pub struct Hop {
     pub to_component: Option<String>,
 }
 
+impl Hop {
+    /// Where the dependency is written.
+    pub fn place(&self) -> Place {
+        Place::new(self.file.clone(), self.line)
+    }
+}
+
 /// A chain of dependencies that shows a violation: one witness,
 /// the shortest, not every import involved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

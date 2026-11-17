@@ -65,9 +65,114 @@ fn impact_lists_what_depends_on_a_change() {
         .unwrap()
         .text();
     assert!(said.contains("Changed: 1 file(s) in util"), "{said}");
-    assert!(said.contains("  domain: src/domain/Order.kt"), "{said}");
+    assert!(
+        said.contains("  domain:\n    src/domain/Order.kt:2 -> src/util/Retry.kt"),
+        "{said}"
+    );
     let refused = error(commands::impact(&config(&root), &[], None, &mut cache()));
     assert!(refused.contains("--diff"), "{refused}");
+}
+
+/// What `impact` of `paths`, relative to `root`, says of each dependent: its file,
+/// the `file:line` of each hop of its chain, and the changed file the chain ends in.
+fn impact_chains(root: &Path, paths: &[&str]) -> Vec<(String, Vec<String>, String)> {
+    let paths: Vec<_> = paths.iter().map(|p| root.join(p)).collect();
+    let impacted = commands::impact(&config(root), &paths, None, &mut cache()).unwrap();
+    let report = parse(&impacted.json().unwrap());
+    report["dependents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|dependent| {
+            let hops = dependent["chain"]["hops"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|hop| format!("{}:{}", hop["file"].as_str().unwrap(), hop["line"]))
+                .collect();
+            let end = dependent["end"].as_str().unwrap().to_string();
+            (dependent["file"].as_str().unwrap().to_string(), hops, end)
+        })
+        .collect()
+}
+
+/// Each dependent carries the shortest chain of imports from it to a changed file,
+/// and the nearest come first: a direct importer has one hop.
+#[test]
+fn impact_gives_each_dependent_its_chain_to_the_change() {
+    let (_tmp, root) = reach_project(&[]);
+    let owned = |file: &str, hops: &[&str], end: &str| {
+        (
+            file.to_string(),
+            hops.iter().map(|hop| hop.to_string()).collect::<Vec<_>>(),
+            end.to_string(),
+        )
+    };
+    assert_eq!(
+        impact_chains(&root, &["src/http/Client.kt"]),
+        [
+            owned(
+                "src/util/Retry.kt",
+                &["src/util/Retry.kt:2"],
+                "src/http/Client.kt"
+            ),
+            owned(
+                "src/domain/Order.kt",
+                &["src/domain/Order.kt:2", "src/util/Retry.kt:2"],
+                "src/http/Client.kt"
+            ),
+        ]
+    );
+}
+
+/// Of two changed files, a dependent's chain ends in the nearer one, even when the
+/// farther one sorts first.
+#[test]
+fn impact_chains_a_dependent_to_the_nearest_change() {
+    let (_tmp, root) = reach_project(&[
+        ("src/http/Auth.kt", "package http\nclass Auth\n"),
+        (
+            "src/util/Guard.kt",
+            "package util\nimport http.Auth\nclass Guard\n",
+        ),
+        (
+            "src/util/Cache.kt",
+            "package util\nimport util.Guard\nimport http.Client\nclass Cache\n",
+        ),
+    ]);
+    let chains = impact_chains(&root, &["src/http/Auth.kt", "src/http/Client.kt"]);
+    let cache = chains
+        .iter()
+        .find(|(file, _, _)| file == "src/util/Cache.kt")
+        .unwrap();
+    assert_eq!(cache.1, ["src/util/Cache.kt:3"], "{chains:?}");
+    assert_eq!(cache.2, "src/http/Client.kt", "{chains:?}");
+}
+
+/// Of two equally short chains, the one the search finds first is given, on every
+/// run: one hop from the change, through the importer first in path order.
+#[test]
+fn impact_breaks_a_tie_between_chains_by_path() {
+    let (_tmp, root) = reach_project(&[
+        (
+            "src/util/A.kt",
+            "package util\nimport http.Client\nclass A\n",
+        ),
+        (
+            "src/util/B.kt",
+            "package util\nimport http.Client\nclass B\n",
+        ),
+        (
+            "src/domain/D.kt",
+            "package domain\nimport util.B\nimport util.A\nclass D\n",
+        ),
+    ]);
+    let chains = impact_chains(&root, &["src/http/Client.kt"]);
+    let d = chains
+        .iter()
+        .find(|(file, _, _)| file == "src/domain/D.kt")
+        .unwrap();
+    assert_eq!(d.1, ["src/domain/D.kt:3", "src/util/A.kt:2"], "{chains:?}");
 }
 
 /// `explain` and `why` say the same in text and JSON; the JSON names where

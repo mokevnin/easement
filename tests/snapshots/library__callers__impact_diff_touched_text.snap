@@ -4,7 +4,9 @@ expression: impacted.text()
 ---
 Changed: 1 file(s) in lib
 Depend on them: 2 file(s) in app
-  app: src/app/a.ts, src/app/b.ts
+  app:
+    src/app/a.ts:1 -> src/lib/rates.ts
+    src/app/b.ts:1 -> src/lib/rates.ts
 Touched: 2 part(s) of the changed files
   src/lib/rates.ts: own code, outside every function (lib), used at:
     src/app/a.ts:1 (app)
