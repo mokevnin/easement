@@ -1,39 +1,39 @@
 # One toolchain for developers, git hooks and CI: `mise install`, then `mise run check`.
 [tools]
-rust = { version = "1.99.1", components = "rustfmt,clippy,rust-analyzer" }
+rust = { version = "1.100.0", components = "rustfmt,clippy,rust-analyzer" }
 "aqua:axodotdev/cargo-dist" = "0.34.0"
 node = "26"
-go = "1.27.3"
+go = "1.27.4"
 # The SCIP indexers easement runs (rust-analyzer is the Rust one) and what they build with;
 # the tests need them. scip-php and scip-dotnet are installed by composer and dotnet.
 "go:github.com/scip-code/scip-go/cmd/scip-go" = "0.2.9"
 # Keep the version in step with package.json, which CI installs it from.
-"npm:@sourcegraph/scip-typescript" = "0.6.1"
+"npm:@sourcegraph/scip-typescript" = "0.6.2"
 "npm:@sourcegraph/scip-python" = "0.6.8"
 java = "temurin-21"
-maven = "3.10.0"
-dotnet = "10.0.403"
-"github:sourcegraph/scip-java" = "0.13.2"
+maven = "3.10.1"
+dotnet = "11.0.100"
+"github:sourcegraph/scip-java" = "0.14.2"
 "github:sourcegraph/scip-ruby" = "scip-ruby-v0.5.1"
 # Reads an index an indexer wrote: `scip snapshot` prints each occurrence beside its source line.
 "github:scip-code/scip" = "0.10.0"
-pnpm = "12.18.0"
-hk = { version = "2.11.1", workflow = "release.yml" }
-pkl = "0.32.2"
-cargo-deny = "0.20.2"
-"github:bnjbvr/cargo-machete" = "0.9.2"
+pnpm = "12.21.0"
+hk = { version = "2.12.0", workflow = "release.yml" }
+pkl = "0.33.0"
+cargo-deny = "0.21.0"
+"github:bnjbvr/cargo-machete" = "0.10.1"
 # Runs the tests (`cargo nextest run`): a process per test, every test binary at once.
 "github:nextest-rs/nextest" = { version = "0.9.152", version_prefix = "cargo-nextest-" }
 # Reviews the snapshots of the tests (`cargo insta review`).
 cargo-insta = "1.49.0"
-jactionlint = { version = "2.4.0", workflow = "release.yaml" }
+jactionlint = { version = "2.6.0", workflow = "release.yaml" }
 # Used by jactionlint to check the run: scripts of workflows.
 shellcheck = "0.11.0"
 # Finds security issues in the GitHub workflows: template injection, leaked credentials, broad permissions.
 zizmor = "1.32.0"
-betterleaks = "1.10.0"
-typos = "1.52.0"
-rumdl = "0.3.2"
+betterleaks = "1.10.1"
+typos = "1.52.2"
+rumdl = "0.3.4"
 lychee = "0.24.2"
 
 # Matt Pocock's agent skills: a tagged release of mattpocock/skills, which `mise run skills` copies
@@ -131,8 +131,10 @@ description = "Bump the npm dev tools (not the SCIP indexers)"
 run = "pnpm dlx npm-check-updates -u --reject '@sourcegraph/*' && pnpm install"
 
 [tasks."update:cargo"]
-description = "Bump Cargo.lock within the semver ranges of Cargo.toml"
-run = "cargo update"
+description = "Bump Cargo.toml to the newest releases, breaking ones included, then Cargo.lock"
+# cargo-edit has no release binaries: run here only, so that CI, which installs every tool of
+# [tools], does not build it.
+run = ["mise exec cargo:cargo-edit@0.13.14 -- cargo upgrade --incompatible", "cargo update"]
 
 # --no-global: a bare `mise upgrade` also upgrades every tool of ~/.config/mise/config.toml.
 # --bump rewrites the pins of this file, including the two SCIP indexers: copy a moved one into
