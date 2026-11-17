@@ -1,7 +1,7 @@
 //! What easement knows of each language, told by the extensions of its files:
 //! data, and hooks for what a rule needs done differently, whose code sits in
-//! `lang/<language>.rs`. Adding a language is one entry here, plus an indexer in
-//! `indexer::INDEXERS` or an adapter in this module. The rules ask this table,
+//! `lang/<language>.rs`. Adding a language is one entry here, its indexer or its
+//! adapter among it, which `indexer.rs` runs or `lang/<language>.rs` builds. The rules ask this table,
 //! never an extension or a language by name; `easement.yml` holds them to it.
 
 use std::collections::BTreeSet;
@@ -113,6 +113,80 @@ pub enum Spelled {
 /// Builds the adapter of a language whose source is read by a tree-sitter
 /// adapter, not by an indexer.
 pub type AdapterBuilder = fn(&Path, &[PathBuf]) -> anyhow::Result<Box<dyn Adapter>>;
+
+/// What reads the files of a language: the SCIP indexer that writes their index,
+/// or the tree-sitter adapter that reads their imports. A language has exactly one.
+#[derive(Debug)]
+pub enum Reader {
+    Indexer(Indexer),
+    Adapter(AdapterBuilder),
+}
+
+/// The SCIP indexer of a language: how to run it and what its index depends on.
+/// `indexer.rs` runs it; the code of its hooks sits in `lang/<language>.rs`.
+#[derive(Debug)]
+pub struct Indexer {
+    pub binary: &'static str,
+    /// Files that mark a directory the indexer runs in.
+    pub markers: &'static [&'static str],
+    /// Run only in the outermost marked directories: a Cargo workspace holds its members.
+    pub outermost: bool,
+    /// Run at the project root when no marker is found (Python projects often have none).
+    pub fallback_root: bool,
+    /// Arguments that write the index to the given file.
+    pub args: fn(&Path) -> Vec<String>,
+    pub install: &'static str,
+    /// The mise tool that installs the indexer, for the `[tools]` of a `mise.toml`.
+    pub mise: Option<&'static str>,
+    /// Why it cannot run on Windows, with the upstream cause; `None` when it can.
+    /// There easement does not start it: its files are uncovered with this reason.
+    /// Removed by hand once the pinned indexer runs there (the Windows CI run shows it).
+    pub not_on_windows: Option<&'static str>,
+    /// For an indexer that has no output option: the file it writes in its working directory.
+    pub writes_in_cwd: Option<&'static str>,
+    /// The argument that makes it print its version, for `doctor`; `None` for an
+    /// indexer that takes any argument for a request to index (scip-php).
+    pub version_flag: Option<&'static str>,
+    /// What has to be in place before the indexer runs: (project root, directory, shown name).
+    pub needs: fn(&Path, &Path, &str) -> anyhow::Result<()>,
+    /// Which project files under the index directory the cache key reads (the `/`-separated
+    /// path): what the indexer could see. Another language's sources, docs and assets are left
+    /// out, so a change to them reuses the index. When in doubt, a file is in.
+    pub inputs: fn(&Language, &str) -> bool,
+    /// Which inherited environment variables change what the indexer writes
+    /// (`GOFLAGS`, `PYTHONPATH`); their values are in the cache key.
+    pub env: fn(&str) -> bool,
+    /// What to tell whoever runs it when a failed run says something known.
+    pub hints: &'static [Hint],
+}
+
+/// A known cause of a failed run of an indexer, told by what the run printed.
+#[derive(Debug)]
+pub struct Hint {
+    /// Text the output of the failed run contains.
+    pub output: &'static str,
+    /// What it means and how to fix it, said after the output.
+    pub hint: &'static str,
+}
+
+/// Nothing has to be in place before the indexer runs.
+pub fn nothing_needed(_: &Path, _: &Path, _: &str) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// Every file the project owns: for an indexer whose build reads files of its own choosing
+/// (Maven, Gradle, Cargo, MSBuild, Bundler, Composer, Python's environment). The directories
+/// its toolchain fills with code not the project's own are left out: build output (`target`)
+/// is made from the files keyed, and an install (`vendor`) from a lock file.
+pub fn every_own_file(language: &Language, path: &str) -> bool {
+    !language.is_foreign(path)
+}
+
+/// Whether `name` starts with one of `prefixes`: how the `env` of an indexer
+/// names a family of variables (`MAVEN_`, `DOTNET_`).
+pub fn starts_with_any(name: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| name.starts_with(prefix))
+}
 
 /// A setting of an indexer, as the policy writes it: `tags: [race]`.
 /// The value of a variable in the environment an indexer runs in.
@@ -237,9 +311,9 @@ pub struct Language {
     /// package, or its dependency is read from its text or is an evidence gap.
     /// `None` when easement cannot list them, and nothing is cross-checked.
     pub written_imports: Option<WrittenImports>,
-    /// The adapter that reads its files, when no indexer reads them: `None`
-    /// for a language an indexer covers.
-    pub adapter: Option<AdapterBuilder>,
+    /// What reads its files: its indexer, or the adapter that reads them when no
+    /// indexer does.
+    pub reader: Reader,
     /// Directories its toolchain fills with code that is not the project's own,
     /// wherever they lie under its files: third-party installs (`vendor`),
     /// fixtures the toolchain ignores (`testdata`), build output (`target`). Its
@@ -296,7 +370,22 @@ pub static GO: Language = Language {
         }],
         spelled: None,
     }),
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-go",
+        markers: &["go.mod"],
+        outermost: false,
+        fallback_root: false,
+        args: |out| vec!["--output".into(), out.display().to_string()],
+        install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
+        mise: Some("go:github.com/scip-code/scip-go/cmd/scip-go"),
+        not_on_windows: None,
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: super::go::inputs,
+        env: super::go::env,
+        hints: &[],
+    }),
     foreign_dirs: &["vendor", "testdata"],
     third_party: &[],
     part_names: &[],
@@ -341,7 +430,29 @@ pub static TYPESCRIPT: Language = Language {
         explained: super::typescript::EXPLAINED,
         spelled: Some(super::typescript::spelled),
     }),
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-typescript",
+        markers: &["tsconfig.json"],
+        outermost: false,
+        fallback_root: false,
+        args: |out| {
+            vec![
+                "index".into(),
+                "--no-progress-bar".into(),
+                "--output".into(),
+                out.display().to_string(),
+            ]
+        },
+        install: "mise use -g npm:@sourcegraph/scip-typescript",
+        mise: Some("npm:@sourcegraph/scip-typescript"),
+        not_on_windows: None,
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: super::typescript::needs,
+        inputs: super::typescript::inputs,
+        env: |_| false,
+        hints: &[],
+    }),
     foreign_dirs: &[],
     third_party: &["node_modules"],
     part_names: &[],
@@ -378,7 +489,41 @@ pub static PYTHON: Language = Language {
         explained: super::python::EXPLAINED,
         spelled: Some(super::python::spelled),
     }),
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-python",
+        markers: &[
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "requirements.txt",
+        ],
+        outermost: false,
+        fallback_root: true,
+        args: |out| {
+            vec![
+                "index".into(),
+                ".".into(),
+                "--quiet".into(),
+                "--project-name".into(),
+                "project".into(),
+                "--project-version".into(),
+                "0".into(),
+                "--output".into(),
+                out.display().to_string(),
+            ]
+        },
+        install: "mise use -g npm:@sourcegraph/scip-python",
+        mise: Some("npm:@sourcegraph/scip-python"),
+        not_on_windows: Some(
+            "scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224)",
+        ),
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: every_own_file,
+        env: super::python::env,
+        hints: &[],
+    }),
     foreign_dirs: &[],
     third_party: &[],
     part_names: &[],
@@ -413,7 +558,27 @@ pub static JAVA: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-java",
+        markers: &["pom.xml", "build.gradle", "build.gradle.kts"],
+        outermost: true,
+        fallback_root: false,
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "mise use -g github:sourcegraph/scip-java",
+        mise: Some("github:sourcegraph/scip-java"),
+        not_on_windows: Some(
+            "the scip-java release ships a POSIX launcher only, which Windows cannot run",
+        ),
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: every_own_file,
+        env: super::java::env,
+        hints: &[Hint {
+            output: "LAUNCHER_ARGS[@]: unbound variable",
+            hint: "scip-java's wrapper needs bash 4.4 or newer; the bash of macOS is 3.2, put a newer one first on the PATH (`brew install bash`)",
+        }],
+    }),
     foreign_dirs: &["target", "build"],
     third_party: &[],
     part_names: &[],
@@ -448,7 +613,7 @@ pub static KOTLIN: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: Some(super::kotlin::adapter),
+    reader: Reader::Adapter(super::kotlin::adapter),
     foreign_dirs: &[],
     third_party: &[],
     part_names: &[],
@@ -481,7 +646,22 @@ pub static CSHARP: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-dotnet",
+        markers: &["*.csproj", "*.sln", "*.slnx"],
+        outermost: true,
+        fallback_root: false,
+        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
+        install: "dotnet tool install --global scip-dotnet",
+        mise: None,
+        not_on_windows: None,
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: every_own_file,
+        env: super::csharp::env,
+        hints: &[],
+    }),
     foreign_dirs: &["bin", "obj"],
     third_party: &[],
     part_names: &[],
@@ -513,7 +693,24 @@ pub static PHP: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-php",
+        markers: &["composer.json"],
+        outermost: false,
+        fallback_root: false,
+        args: |_| Vec::new(),
+        install: "composer global require davidrjenni/scip-php",
+        mise: None,
+        not_on_windows: Some(
+            "scip-php leaves every file out of its index there (https://github.com/davidrjenni/scip-php/issues/814)",
+        ),
+        writes_in_cwd: Some("index.scip"),
+        version_flag: None,
+        needs: super::php::needs,
+        inputs: every_own_file,
+        env: |_| false,
+        hints: &[],
+    }),
     foreign_dirs: &["vendor"],
     third_party: &[],
     part_names: &[],
@@ -545,7 +742,7 @@ pub static SWIFT: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: Some(super::swift::adapter),
+    reader: Reader::Adapter(super::swift::adapter),
     foreign_dirs: &[],
     third_party: &[],
     part_names: &[],
@@ -577,7 +774,32 @@ pub static RUBY: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "scip-ruby",
+        markers: &["Gemfile", "*.gemspec"],
+        outermost: true,
+        fallback_root: false,
+        args: |out| {
+            vec![
+                "--gem-metadata".into(),
+                "project@0".into(),
+                "--index-file".into(),
+                out.display().to_string(),
+                ".".into(),
+            ]
+        },
+        install: "mise use -g github:sourcegraph/scip-ruby",
+        mise: Some("github:sourcegraph/scip-ruby"),
+        not_on_windows: Some("scip-ruby has no Windows release"),
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: every_own_file,
+        // scip-ruby reads no variable that changes the index; Bundler's are read
+        // by the gem's wrapper, which easement does not run.
+        env: |_| false,
+        hints: &[],
+    }),
     foreign_dirs: &["vendor"],
     third_party: &[],
     part_names: &[],
@@ -627,7 +849,29 @@ pub static RUST: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    adapter: None,
+    reader: Reader::Indexer(Indexer {
+        binary: "rust-analyzer",
+        markers: &["Cargo.toml"],
+        outermost: true,
+        fallback_root: false,
+        args: |out| {
+            vec![
+                "scip".into(),
+                ".".into(),
+                "--output".into(),
+                out.display().to_string(),
+            ]
+        },
+        install: "rustup component add rust-analyzer",
+        mise: None,
+        not_on_windows: None,
+        writes_in_cwd: None,
+        version_flag: Some("--version"),
+        needs: nothing_needed,
+        inputs: every_own_file,
+        env: super::rust::env,
+        hints: &[],
+    }),
     foreign_dirs: &[],
     third_party: &[],
     part_names: &["cfg(test)"],
@@ -659,6 +903,22 @@ pub fn of(file: &str) -> Option<&'static Language> {
 }
 
 impl Language {
+    /// Its indexer, when an indexer reads its files.
+    pub fn indexer(&self) -> Option<&Indexer> {
+        match &self.reader {
+            Reader::Indexer(indexer) => Some(indexer),
+            Reader::Adapter(_) => None,
+        }
+    }
+
+    /// Its adapter, when a tree-sitter adapter reads its files instead of an indexer.
+    pub fn adapter(&self) -> Option<AdapterBuilder> {
+        match self.reader {
+            Reader::Adapter(build) => Some(build),
+            Reader::Indexer(_) => None,
+        }
+    }
+
     /// What its module paths drop from the end of a file name: each declaration
     /// suffix, then each extension, all with their dot (`.d.ts` before `.ts`).
     fn module_suffixes(&self) -> impl Iterator<Item = String> + '_ {
@@ -1072,13 +1332,23 @@ mod tests {
         }
     }
 
+    /// The cache key of an indexer whose build reads any file reads every file the
+    /// project owns, not what its toolchain installs or builds.
+    #[test]
+    fn every_own_file_leaves_out_the_code_a_toolchain_fills_in() {
+        assert!(every_own_file(&GO, "internal/a.go"));
+        assert!(every_own_file(&GO, "README.md"));
+        assert!(!every_own_file(&GO, "vendor/example.com/x/x.go"));
+        assert!(!every_own_file(&JAVA, "target/classes/A.class"));
+    }
+
     /// A language whose files an adapter reads may declare a name in several
     /// files; `unused` judges only the files of the languages an indexer
     /// covers, so it never sees those candidates.
     #[test]
     fn a_language_an_adapter_reads_is_not_judged_by_unused() {
         for language in LANGUAGES {
-            if language.adapter.is_some() {
+            if language.adapter().is_some() {
                 assert!(
                     language.unused.is_empty(),
                     "`unused` judges the {} files, whose imports an adapter reads",
@@ -1100,11 +1370,7 @@ mod tests {
         ];
         let mut table = String::new();
         for file in files {
-            let covered: Vec<&str> = crate::indexer::INDEXERS
-                .iter()
-                .filter(|l| l.covers(file))
-                .map(|l| l.name())
-                .collect();
+            let covered = crate::indexer::covering(file);
             let adapters: Vec<&str> = crate::lang::adapters(
                 std::path::Path::new("/nonexistent"),
                 &["A.kt", "a.swift"].map(std::path::PathBuf::from),

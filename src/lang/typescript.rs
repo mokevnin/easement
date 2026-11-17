@@ -2,12 +2,13 @@
 //! relative specifier, and the uses of a file that an index may not report.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
 use tree_sitter::Node;
 
-use super::registry::{Explained, Spelled, TYPESCRIPT, UnindexedUse, UnrelatedSpan};
+use super::registry::{Explained, Language, Spelled, TYPESCRIPT, UnindexedUse, UnrelatedSpan};
 use super::{Cause, Form, Import};
 use crate::relpath::{self, parent};
 
@@ -229,9 +230,114 @@ pub fn spelled(specifier: &str) -> Spelled {
     }
 }
 
+/// scip-typescript reads what the TypeScript compiler does: the sources and declarations, every
+/// JSON file (a `tsconfig.json` and what it extends, a `package.json`, a JSON module an import
+/// names) and the lock files that decide which dependency is installed.
+pub fn inputs(language: &Language, path: &str) -> bool {
+    let name = relpath::file_name(path);
+    language.extensions.contains(&relpath::extension(name))
+        || name.ends_with(".json")
+        || name.ends_with(".json5")
+        || matches!(
+            name,
+            "pnpm-lock.yaml" | "pnpm-workspace.yaml" | "yarn.lock" | "bun.lock" | "bun.lockb"
+        )
+}
+
+/// Without `node_modules` the TypeScript indexer cannot see third-party
+/// modules, so external dependencies would silently disappear from the check.
+pub fn needs(root: &Path, dir: &Path, shown: &str) -> anyhow::Result<()> {
+    let manifest = dir.join("package.json");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        return Ok(());
+    };
+    let declares = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .is_some_and(|json| {
+            ["dependencies", "devDependencies"].iter().any(|key| {
+                json.get(key)
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|o| !o.is_empty())
+            })
+        });
+    if !declares {
+        return Ok(());
+    }
+    let mut at: Option<PathBuf> = Some(dir.to_path_buf());
+    while let Some(current) = at {
+        if current.join("node_modules").is_dir() {
+            return Ok(());
+        }
+        at = (current != root)
+            .then(|| current.parent().map(Path::to_path_buf))
+            .flatten();
+    }
+    anyhow::bail!(
+        "dependencies are not installed in {shown}: run `npm install` (or pnpm, yarn) first; `easement doctor` lists everything else that is missing"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cache_key_reads_only_what_scip_typescript_does() {
+        for path in [
+            "src/a.tsx",
+            "types/x.d.ts",
+            "lib/a.mjs",
+            "tsconfig.json",
+            "tsconfig.app.json",
+            "package.json",
+            "locales/en.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+        ] {
+            assert!(inputs(&TYPESCRIPT, path), "{path}");
+        }
+        for path in ["main.go", "go.mod", "README.md", "style.css", "logo.svg"] {
+            assert!(!inputs(&TYPESCRIPT, path), "{path}");
+        }
+    }
+
+    #[test]
+    fn missing_node_modules_is_an_error_only_when_dependencies_are_declared() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        needs(root, root, ".").unwrap();
+        std::fs::write(root.join("package.json"), r#"{"name":"x"}"#).unwrap();
+        needs(root, root, ".").unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"dependencies":{"lodash":"1"}}"#,
+        )
+        .unwrap();
+        let err = needs(root, root, ".").unwrap_err();
+        assert!(err.to_string().contains("not installed"));
+        assert!(err.to_string().contains("easement doctor"));
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        needs(root, root, ".").unwrap();
+    }
+
+    /// A workspace installs its packages' dependencies above them, up to the root of
+    /// the project; a `node_modules` above the root is no install of the project's.
+    #[test]
+    fn node_modules_counts_up_to_the_root_of_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("app");
+        let package = root.join("packages/web");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"dependencies":{"lodash":"1"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        assert!(needs(&root, &package, "packages/web").is_err());
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        needs(&root, &package, "packages/web").unwrap();
+    }
 
     /// `(line, specifier, form)` of each import `file`, holding `text`, writes.
     fn written(file: &str, text: &str) -> Vec<(usize, String, Form)> {

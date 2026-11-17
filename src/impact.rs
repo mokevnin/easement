@@ -207,7 +207,7 @@ pub fn touched(
     }
     for (name, (language, files)) in whole {
         // A language read without an index records no use of anything.
-        let uses = match language.adapter {
+        let uses = match language.adapter() {
             Some(_) => format!("and {name} is read without an index, so no use of them is named"),
             None => "and a use of any of their definitions is named".to_string(),
         };

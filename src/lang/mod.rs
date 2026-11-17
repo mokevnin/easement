@@ -4,9 +4,12 @@ use anyhow::Result;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 
+pub mod csharp;
 pub mod go;
+pub mod java;
 pub mod kotlin;
 pub mod parts;
+pub mod php;
 pub mod python;
 pub mod registry;
 pub mod rust;
@@ -450,7 +453,7 @@ pub trait Adapter {
 pub fn adapters(root: &Path, files: &[PathBuf]) -> Result<Vec<Box<dyn Adapter>>> {
     let mut adapters: Vec<Box<dyn Adapter>> = Vec::new();
     for &language in &registry::LANGUAGES {
-        let Some(build) = language.adapter else {
+        let Some(build) = language.adapter() else {
             continue;
         };
         if !files.iter().any(|f| registry::is(f, language)) {

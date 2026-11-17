@@ -176,10 +176,29 @@ pub fn spelled(specifier: &str) -> Spelled {
     Spelled::Paths(vec![format!("{path}.py"), format!("{path}/__init__.py")])
 }
 
+/// pyright asks the `python3` on the path for its search paths, and scip-python
+/// runs `pip` for the installed packages: `PYTHONPATH` changes what an import
+/// resolves to. `PYTHONHASHSEED` is left out: tox sets a new one every run. So
+/// is `VIRTUAL_ENV`, which alone does not change the index and names the
+/// checkout when the environment lives in it, as uv and Poetry put it.
+pub fn env(name: &str) -> bool {
+    (name.starts_with("PYTHON") && name != "PYTHONHASHSEED") || name.starts_with("PIP_")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lang::Form;
+
+    #[test]
+    fn the_variables_of_python_and_pip_are_keyed_but_the_hash_seed() {
+        for name in ["PYTHONPATH", "PIP_USER"] {
+            assert!(env(name), "{name}");
+        }
+        for name in ["VIRTUAL_ENV", "PYTHONHASHSEED"] {
+            assert!(!env(name), "{name}");
+        }
+    }
 
     /// `(line, specifier, form, recorded_on)` of each import `text` writes.
     fn written(text: &str) -> Vec<(usize, String, Form, Option<String>)> {
