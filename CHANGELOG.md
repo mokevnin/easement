@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/mokevnin/easement/compare/v0.7.0...v0.8.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* `stats.suppressed` is gone from the JSON report; count the `excused` of `suppressions` instead.
+
+### Features
+
+* **impact:** name the callers of the definitions a change touched ([1f3477d](https://github.com/mokevnin/easement/commit/1f3477da7f1740229a25dfcd35b0d3c72e43f581)), closes [#192](https://github.com/mokevnin/easement/issues/192)
+* list the inline suppressions a run honours ([a6705a1](https://github.com/mokevnin/easement/commit/a6705a19338d209a6ed1aaf7a2fe5e85c2c81307)), closes [#190](https://github.com/mokevnin/easement/issues/190)
+
+
+### Bug Fixes
+
+* **deps:** keep .NET on 10, the runtime scip-dotnet runs on ([60450bc](https://github.com/mokevnin/easement/commit/60450bc423a89417fa37c2a746362ab6a5984ae0))
+* **impact:** lines deleted outside every definition touch the file's own code ([2f80f0c](https://github.com/mokevnin/easement/commit/2f80f0c0064dd3fab4a0937f72637eedb8e9d968)), closes [#192](https://github.com/mokevnin/easement/issues/192)
+* **report:** give an excused violation the SARIF level of its rule ([d1faafe](https://github.com/mokevnin/easement/commit/d1faafeb61694ddc745e2a6c24b91f67d8992f7b)), closes [#190](https://github.com/mokevnin/easement/issues/190)
+* **report:** title the suppressions of a run judged in full as the project's ([b2d1abb](https://github.com/mokevnin/easement/commit/b2d1abbb6473addcda94d71e8852a294c0e55367)), closes [#190](https://github.com/mokevnin/easement/issues/190)
+
 ## [0.7.0](https://github.com/mokevnin/easement/compare/v0.6.6...v0.7.0) (2026-11-17)
 
 
