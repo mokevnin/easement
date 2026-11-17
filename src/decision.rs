@@ -795,8 +795,7 @@ mod tests {
                 .flatten()
                 .filter_map(|entry| entry.path().to_str().and_then(crate::lang::registry::of))
                 .any(|language| {
-                    crate::check::Platform::current()
-                        .cannot_index(language.name)
+                    crate::indexer::cannot_index(crate::check::Platform::current(), language.name)
                         .is_some()
                         || (no_ruby && language.name == "ruby")
                 })

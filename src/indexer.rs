@@ -472,15 +472,13 @@ impl CacheUse {
     }
 }
 
-impl Platform {
-    /// Why the indexer of `language` (a registry name, `python`) cannot run on
-    /// this platform; `None` when it can, or when the language has no indexer.
-    pub fn cannot_index(self, language: &str) -> Option<&'static str> {
-        INDEXERS
-            .iter()
-            .find(|indexer| indexer.name() == language)
-            .and_then(|indexer| indexer.cannot_run_on(self))
-    }
+/// Why the indexer of `language` (a registry name, `python`) cannot run on
+/// `platform`; `None` when it can, or when the language has no indexer.
+pub fn cannot_index(platform: Platform, language: &str) -> Option<&'static str> {
+    INDEXERS
+        .iter()
+        .find(|indexer| indexer.name() == language)
+        .and_then(|indexer| indexer.cannot_run_on(platform))
 }
 
 /// The environment the indexers run in, which their cache key reads too: the
@@ -1153,7 +1151,9 @@ pub struct Diagnosis {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    pub install: &'static str,
+    /// How to install it; `None` where it cannot run, which no install changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mise: Option<&'static str>,
     /// What is missing around the indexer: dependencies that are not installed.
@@ -1179,19 +1179,28 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
         .iter()
         .filter(|language| files.iter().any(|f| language.covers(f)))
         .map(|language| {
-            let cannot_run = language.cannot_run(environment.platform);
+            // Where it cannot run, it is not started, not even for its version,
+            // and what it would need is beside the point.
+            if let Some(cannot_run) = language.cannot_run(environment.platform) {
+                return Diagnosis {
+                    language: language.name(),
+                    binary: language.binary,
+                    found: false,
+                    path: None,
+                    version: None,
+                    install: None,
+                    mise: None,
+                    problems: Vec::new(),
+                    cannot_run: Some(cannot_run),
+                };
+            }
             let binary = environment.which(language.binary, root);
             let version = binary
                 .as_deref()
                 .zip(language.version_flag)
                 .and_then(|(binary, flag)| version_of(binary, flag, environment));
-            // What the indexer needs is beside the point where it cannot run.
-            let roots = if cannot_run.is_some() {
-                Vec::new()
-            } else {
-                language.roots(files)
-            };
-            let problems = roots
+            let problems = language
+                .roots(files)
                 .iter()
                 .filter_map(|dir| {
                     let shown = if dir.is_empty() { "." } else { dir };
@@ -1206,10 +1215,10 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
                 found: binary.is_some(),
                 path: binary.map(|p| p.display().to_string()),
                 version,
-                install: language.install,
+                install: Some(language.install),
                 mise: language.mise,
                 problems,
-                cannot_run,
+                cannot_run: None,
             }
         })
         .collect()
@@ -1963,7 +1972,9 @@ mod tests {
         let fake = bin.join("scip-php");
         std::fs::write(&fake, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let environment = Environment::of_vars(BTreeMap::new()).with("PATH", bin.as_os_str());
+        let environment = Environment::of_vars(BTreeMap::new())
+            .with("PATH", bin.as_os_str())
+            .on(Platform::Unix);
         (tmp, root, environment)
     }
 

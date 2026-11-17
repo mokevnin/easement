@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use easement::commands::{self, CheckOptions, Checked, Outcome};
-use easement::{Cache, CacheUse, Environment, Indexing, Jobs, Platform};
+use easement::{Cache, CacheUse, Environment, Indexing, Jobs, Platform, cannot_index};
 
 use crate::common::test_cache_dir;
 
@@ -136,7 +136,7 @@ pub fn composer_install(root: &Path) {
 /// missing there. Anywhere else a missing indexer is still an error.
 pub fn cannot_index_here(languages: &[&str]) -> bool {
     languages.iter().any(|language| {
-        if let Some(reason) = Platform::current().cannot_index(language) {
+        if let Some(reason) = cannot_index(Platform::current(), language) {
             eprintln!("skipped: the {language} indexer cannot run here: {reason}");
             return true;
         }

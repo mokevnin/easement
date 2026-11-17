@@ -44,6 +44,8 @@ mod unused;
 pub use check::{Place, Platform};
 pub use config::{DEFAULT_CONFIG, schema_text};
 pub use graph::GraphFormat;
-pub use indexer::{CacheUse, Environment, Indexing, Jobs, NotCached, default_cache_dir};
+pub use indexer::{
+    CacheUse, Environment, Indexing, Jobs, NotCached, cannot_index, default_cache_dir,
+};
 pub use report::{Coverage, EvidenceGap, GapKind};
 pub use scan::Cache;

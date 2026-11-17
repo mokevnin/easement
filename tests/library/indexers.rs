@@ -178,6 +178,15 @@ fn on_windows_doctor_names_the_indexers_that_cannot_run_there() {
         report["languages"][1]["cannot_run"]["indexer"],
         "scip-python"
     );
+    // Nothing to install, and the indexer is not started, not even for its version.
+    for field in ["install", "mise", "version", "path"] {
+        assert_eq!(
+            report["languages"][1][field],
+            serde_json::Value::Null,
+            "{field}: {report}"
+        );
+    }
+    assert!(report["languages"][0]["install"].is_string(), "{report}");
 
     // Not even missing, the indexer is no install hint there.
     let (_tmp, root) = project(&[

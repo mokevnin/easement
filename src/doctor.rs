@@ -44,7 +44,9 @@ pub fn text(diagnoses: &[Diagnosis]) -> String {
         if !d.found {
             out.push_str(&format!(
                 "{}: {} not found; install it with `{}`\n",
-                d.language, d.binary, d.install
+                d.language,
+                d.binary,
+                d.install.unwrap_or_default()
             ));
         } else {
             let version = d.version.as_deref().unwrap_or("version unknown");
