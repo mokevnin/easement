@@ -12,7 +12,8 @@ go = "1.27.4"
 "npm:@sourcegraph/scip-python" = "0.6.8"
 java = "temurin-21"
 maven = "3.10.1"
-dotnet = "11.0.100"
+# scip-dotnet, the reason for .NET here, runs on the .NET 10 runtime only: stay on 10 until it moves.
+dotnet = "10.0.404"
 "github:sourcegraph/scip-java" = "0.14.2"
 "github:sourcegraph/scip-ruby" = "scip-ruby-v0.5.1"
 # Reads an index an indexer wrote: `scip snapshot` prints each occurrence beside its source line.
