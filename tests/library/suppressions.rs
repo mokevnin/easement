@@ -313,4 +313,9 @@ fn a_run_judged_in_full_lists_every_suppression() {
         )],
         "{report}"
     );
+    let said = text(&checked);
+    assert!(
+        said.contains("\nInline suppressions:\n  src/web/old.ts:1 [dependency]"),
+        "{said}"
+    );
 }

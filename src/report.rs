@@ -746,7 +746,8 @@ impl Report<'_> {
             section(&mut out, &body);
         }
         if !verdict.suppressions.is_empty() {
-            let title = if diff.is_some() {
+            // Judged in full, the list is the whole project's, not the change's.
+            let title = if diff.is_some_and(|d| !d.attribution.whole()) {
                 "Inline suppressions in this change:"
             } else {
                 "Inline suppressions:"
