@@ -5,7 +5,6 @@ edition = "2024"
 description = "Architecture quality gate for polyglot codebases"
 license = "MIT"
 repository = "https://github.com/mokevnin/easement"
-homepage = "https://github.com/mokevnin/easement"
 readme = "README.md"
 keywords = ["architecture", "linter", "dependencies", "quality-gate", "boundaries"]
 categories = ["command-line-utilities", "development-tools"]
