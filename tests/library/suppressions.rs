@@ -363,3 +363,76 @@ fn an_excused_violation_is_reported_as_its_rule_would_be() {
         .collect();
     assert_eq!(levels, ["warning", "warning"], "{sarif}");
 }
+
+/// A directive that names a rule easement cannot suppress excuses nothing: the
+/// violation it sits over is kept, so a typo beside a real rule cannot hide it
+/// behind an `unused-suppression` a policy only warns about.
+#[test]
+fn a_directive_naming_an_unknown_rule_excuses_nothing() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            &format!("{POLICY}warn: [unused-suppression]\n"),
+        ),
+        (
+            "src/web/page.ts",
+            "import { save } from \"../storage/db\"; // easement:disable-line dependency, typo -- x\nexport const page = save;\n",
+        ),
+        ("src/storage/db.ts", "export const save = 1;\n"),
+    ]);
+    let checked = check_with(&root, |_| {});
+    assert_eq!(checked.outcome(), Outcome::Failed, "{}", text(&checked));
+    let report = json(&checked);
+    assert_eq!(
+        by_rule(&report),
+        [("src/web/page.ts".to_string(), 1, "dependency".to_string())],
+        "{report}"
+    );
+    assert_eq!(
+        report["warnings"][0]["rule"], "unused-suppression",
+        "{report}"
+    );
+    assert!(report.get("suppressions").is_none(), "{report}");
+}
+
+/// Each rule a directive names answers for itself: one that excuses nothing on
+/// its line is an unused suppression, though another rule of the directive
+/// excused a violation there, which stays excused.
+#[test]
+fn a_rule_of_a_directive_that_excuses_nothing_is_unused() {
+    let (_tmp, root) = project(&[
+        ("easement.yml", POLICY),
+        (
+            "src/web/page.ts",
+            "import { save } from \"../storage/db\"; // easement:disable-line dependency, privacy -- drafts until #40\nexport const page = save;\n",
+        ),
+        ("src/storage/db.ts", "export const save = 1;\n"),
+    ]);
+    let checked = check_with(&root, |_| {});
+    assert_eq!(checked.outcome(), Outcome::Failed, "{}", text(&checked));
+    let report = json(&checked);
+    assert_eq!(
+        by_rule(&report),
+        [(
+            "src/web/page.ts".to_string(),
+            1,
+            "unused-suppression".to_string()
+        )],
+        "{report}"
+    );
+    // Removing the directive would un-excuse the dependency: drop the rule alone.
+    assert_eq!(
+        report["violations"][0]["message"],
+        "suppression of privacy matches no violation on line 1; drop privacy from the directive",
+        "{report}"
+    );
+    assert_eq!(
+        listed(&report),
+        [(
+            "src/web/page.ts".to_string(),
+            1,
+            vec![("dependency".to_string(), 1)]
+        )],
+        "{report}"
+    );
+}

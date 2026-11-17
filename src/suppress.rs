@@ -126,16 +126,18 @@ pub struct Applied {
 }
 
 /// Takes the suppressed violations out, each under the suppression that excused
-/// it. Suppressions without a reason, naming an unknown rule or matching nothing
-/// become violations themselves, so an exception is always explained and never
-/// outlives the code it excused.
+/// it. Suppressions without a reason or naming an unknown rule excuse nothing
+/// and, like one naming a rule that matches nothing, become violations
+/// themselves, so an exception is always explained and never outlives the code
+/// it excused.
 pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> Applied {
     let mut excused: Vec<Vec<Violation>> = vec![Vec::new(); suppressions.len()];
     let mut kept = Vec::new();
-    // The suppressions with a reason by the line they excuse, each list in order.
+    // The well-formed suppressions by the line they excuse, each list in order:
+    // one without a reason or naming a rule it cannot suppress excuses nothing.
     let mut at: HashMap<(&str, usize), Vec<usize>> = HashMap::new();
     for (i, s) in suppressions.iter().enumerate() {
-        if s.reason.is_some() {
+        if s.reason.is_some() && s.rules.iter().all(|r| RuleId::suppressible(r).is_some()) {
             at.entry((s.file.as_str(), s.target_line))
                 .or_default()
                 .push(i);
@@ -173,24 +175,40 @@ pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> Applie
                     ),
                 )
             }
-            Some(_) if excused.is_empty() => (
-                RuleId::UnusedSuppression,
-                format!(
-                    "suppression of {} matches no violation on line {}; remove it",
-                    s.rules.join(","),
-                    s.target_line
-                ),
-            ),
             Some(reason) => {
-                honoured.push(HonouredSuppression {
-                    file: s.file.clone(),
-                    line: s.line,
-                    target_line: s.target_line,
-                    rules: s.rules.clone(),
-                    reason: reason.clone(),
-                    excused: check::dedupe(excused),
-                });
-                continue;
+                // Each rule answers for itself: one that excused nothing is unused
+                // though another rule of the directive excused something.
+                let idle: Vec<&str> = s
+                    .rules
+                    .iter()
+                    .filter(|r| !excused.iter().any(|v| v.rule.as_str() == r.as_str()))
+                    .map(String::as_str)
+                    .collect();
+                let fix = if excused.is_empty() {
+                    "remove it".to_string()
+                } else {
+                    honoured.push(HonouredSuppression {
+                        file: s.file.clone(),
+                        line: s.line,
+                        target_line: s.target_line,
+                        rules: s.rules.clone(),
+                        reason: reason.clone(),
+                        excused: check::dedupe(excused),
+                    });
+                    // Removing the directive would un-excuse what it excused.
+                    format!("drop {} from the directive", idle.join(","))
+                };
+                if idle.is_empty() {
+                    continue;
+                }
+                (
+                    RuleId::UnusedSuppression,
+                    format!(
+                        "suppression of {} matches no violation on line {}; {fix}",
+                        idle.join(","),
+                        s.target_line
+                    ),
+                )
             }
         };
         kept.push(Violation {

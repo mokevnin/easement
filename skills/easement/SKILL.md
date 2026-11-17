@@ -39,7 +39,7 @@ A violation reads like `internal/handlers/books.go:6: handlers -> repository is 
 Two cases are cleanup, not exceptions:
 
 - **Stale baseline entries**: a violation recorded in the baseline is gone. Run `easement baseline` to drop them. It never writes new violations: it lists them and exits 1, so fix those as above. Legalizing new debt with `easement baseline --accept-new` needs a human.
-- **`unused-suppression`**: the excused import is gone, so delete the comment.
+- **`unused-suppression`**: a rule the comment names excuses nothing on its line (the import is gone, or the rule is misspelled), so drop that rule, or the comment when none is left.
 
 Warnings (rules in `warn`) do not fail the check, but they are debt the team tolerates for now: add no new ones, and fix the ones in code you change.
 
