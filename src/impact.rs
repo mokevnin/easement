@@ -97,8 +97,8 @@ pub struct Caller {
 /// What `changes` touched in each of the `changed` files, and the evidence gaps of
 /// that answer. A changed line touches the innermost method or function that holds
 /// it, else the file's own code; a point where lines were deleted touches the
-/// innermost one that holds the lines around it, else nothing: what the lines held
-/// is gone from the head index, an evidence gap. Callers are uses from `sources`, the
+/// innermost one that holds the lines around it, else the file's own code, and what
+/// the lines held may be gone from the head index, an evidence gap. Callers are uses from `sources`, the
 /// files whose dependencies the graph reads.
 pub fn touched(
     map: &ComponentMap,
@@ -154,12 +154,13 @@ pub fn touched(
                     }
                 }
                 for &line in deleted_after {
-                    match flow.holders(file, line, line + 1).as_slice() {
-                        [Node { scope: None, .. }] => {
-                            removed.insert(file.clone());
-                        }
-                        held => nodes.extend(held.iter().cloned()),
+                    let held = flow.holders(file, line, line + 1);
+                    // Outside every method: the own code lost them, and what they
+                    // held may be a definition the head index no longer has.
+                    if let [Node { scope: None, .. }] = held.as_slice() {
+                        removed.insert(file.clone());
                     }
+                    nodes.extend(held);
                 }
             }
         }

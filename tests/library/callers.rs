@@ -226,8 +226,9 @@ fn a_change_to_top_level_code_touches_the_files_own_code() {
     callers_within_dependents(&report);
 }
 
-/// The head index no longer has a definition the change deleted: it touches nothing,
-/// and an evidence gap says its former callers are not named.
+/// The head index no longer has a definition the change deleted: it is not touched,
+/// and an evidence gap says its former callers are not named. The lines it held lay
+/// outside every function the index has, in the file's own code.
 #[test]
 fn a_deleted_function_is_an_evidence_gap() {
     let (_tmp, root) = shapes();
@@ -237,7 +238,11 @@ fn a_deleted_function_is_an_evidence_gap() {
     )
     .unwrap();
     let report = impact_diff(&root);
-    assert_eq!(report["touched"], serde_json::json!([]), "{report}");
+    assert_eq!(
+        callers_by_entry(&report),
+        [("own_code".to_string(), Vec::<String>::new())],
+        "{report}"
+    );
     let gaps = report["evidence_gaps"].as_array().unwrap();
     assert_eq!(gaps.len(), 1, "{report}");
     assert_eq!(gaps[0]["kind"], "removed_definitions", "{report}");
@@ -249,6 +254,50 @@ fn a_deleted_function_is_an_evidence_gap() {
             .contains("former callers are not named"),
         "{report}"
     );
+}
+
+/// Lines deleted outside every function change the file's own code: it is touched,
+/// with the uses of its classes and constants as callers, and an evidence gap says
+/// that what the lines held may be gone.
+#[test]
+fn lines_deleted_outside_every_function_touch_the_files_own_code() {
+    let rates = "export const RATE = 2;\nexport const SPARE = 1;\n\nexport class Meter {}\n\nexport function scale(x: number): number {\n  return x * 2;\n}\n";
+    let (_tmp, root) = project(&[
+        ("easement.yml", POLICY),
+        ("src/lib/rates.ts", rates),
+        (
+            "src/app/a.ts",
+            "import { RATE } from \"../lib/rates\";\nexport const a = RATE;\n",
+        ),
+        (
+            "src/app/b.ts",
+            "import { scale } from \"../lib/rates\";\nexport const b = scale(1);\n",
+        ),
+        (
+            "src/app/c.ts",
+            "import { Meter } from \"../lib/rates\";\nexport const c = new Meter();\n",
+        ),
+    ]);
+    commit_all(&root);
+    fs::write(
+        root.join("src/lib/rates.ts"),
+        rates.replace("export const SPARE = 1;\n", ""),
+    )
+    .unwrap();
+    let report = impact_diff(&root);
+    assert_eq!(
+        callers_by_entry(&report),
+        [(
+            "own_code".to_string(),
+            vec!["src/app/a.ts".to_string(), "src/app/c.ts".to_string()]
+        )],
+        "{report}"
+    );
+    let gaps = report["evidence_gaps"].as_array().unwrap();
+    assert_eq!(gaps.len(), 1, "{report}");
+    assert_eq!(gaps[0]["kind"], "removed_definitions", "{report}");
+    assert_eq!(gaps[0]["files"], serde_json::json!(["src/lib/rates.ts"]));
+    callers_within_dependents(&report);
 }
 
 /// Kotlin's files are read by an adapter, which gives no definition ranges: a

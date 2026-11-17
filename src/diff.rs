@@ -474,7 +474,9 @@ mod tests {
         assert_eq!(changes.files().collect::<Vec<_>>(), ["src/top.ts"]);
     }
 
-    /// A hunk that only deletes lines changes none, but says where they were.
+    /// A hunk that only deletes lines changes none, but says where they were. A hunk
+    /// that adds lines too is a change, however many more it deletes: the head
+    /// alone cannot tell lines lost at a definition's edge from a definition lost.
     #[test]
     fn keeps_where_lines_were_deleted() {
         let diff = "\
@@ -485,7 +487,12 @@ mod tests {
 @@ -3 +2 @@
 -old
 +new
-@@ -10,2 +8,0 @@
+@@ -5,3 +4 @@
+-was
+-was
+-was
++is
+@@ -10,2 +6,0 @@
 -gone
 -gone
 ";
@@ -493,11 +500,11 @@ mod tests {
         assert_eq!(
             changes.touch("src/a.ts"),
             Some(Touch::Lines {
-                changed: &[(2, 2)],
-                deleted_after: &[0, 8],
+                changed: &[(2, 2), (4, 4)],
+                deleted_after: &[0, 6],
             })
         );
-        assert!(!changes.contains("src/a.ts", 8));
+        assert!(!changes.contains("src/a.ts", 6));
         assert_eq!(changes.touch("src/b.ts"), None);
     }
 
