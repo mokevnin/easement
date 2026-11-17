@@ -288,3 +288,29 @@ fn a_directive_that_excuses_nothing_fails_and_is_not_listed() {
     );
     assert!(report.get("suppressions").is_none(), "{report}");
 }
+
+/// Judged in full, the run lists every suppression, as it reports every violation.
+#[test]
+fn a_run_judged_in_full_lists_every_suppression() {
+    let (_tmp, root) = excused();
+    write(&root, "easement.yml", &format!("{POLICY}exclude: [docs]\n"));
+    let checked = check_with(&root, diff_main);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+    let report = json(&checked);
+    assert!(
+        report["diff"]["in_full"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("(`exclude`)"),
+        "{report}"
+    );
+    assert_eq!(
+        listed(&report),
+        [(
+            "src/web/old.ts".to_string(),
+            1,
+            vec![("dependency".to_string(), 2)]
+        )],
+        "{report}"
+    );
+}

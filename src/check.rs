@@ -341,7 +341,8 @@ impl Violation {
 
 /// An inline suppression that excused violations, with the violations it excused.
 #[derive(Debug, Clone, Serialize)]
-pub struct Honoured {
+pub struct HonouredSuppression {
+    /// The file the directive is in.
     pub file: String,
     /// Line of the directive.
     pub line: usize,
@@ -349,16 +350,19 @@ pub struct Honoured {
     pub target_line: usize,
     /// The rules the directive names.
     pub rules: Vec<String>,
+    /// Why, as the directive writes it after `--`.
     pub reason: String,
     /// The excused violations, as [`dedupe`] reports violations.
     pub excused: Vec<Violation>,
 }
 
-impl Honoured {
-    /// How many violations the suppressions excused, together.
-    pub fn count(suppressions: &[Honoured]) -> usize {
-        suppressions.iter().map(|s| s.excused.len()).sum()
-    }
+/// Each violation the suppressions excused, with the suppression that excused it.
+pub fn excused(
+    suppressions: &[HonouredSuppression],
+) -> impl Iterator<Item = (&HonouredSuppression, &Violation)> {
+    suppressions
+        .iter()
+        .flat_map(|s| s.excused.iter().map(move |v| (s, v)))
 }
 
 impl Key {

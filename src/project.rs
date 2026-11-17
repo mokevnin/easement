@@ -298,7 +298,7 @@ pub struct Judgment {
     pub violations: Vec<check::Violation>,
     /// The inline suppressions that excused violations, with them: the
     /// violations the policy produces besides `violations`.
-    pub suppressions: Vec<check::Honoured>,
+    pub suppressions: Vec<check::HonouredSuppression>,
     pub edges: Vec<check::Edge>,
     pub stats: check::Stats,
     pub map: ComponentMap,
@@ -312,14 +312,14 @@ impl Judgment {
     pub fn produced(&self) -> impl Iterator<Item = &check::Violation> {
         self.violations
             .iter()
-            .chain(self.suppressions.iter().flat_map(|s| &s.excused))
+            .chain(check::excused(&self.suppressions).map(|(_, v)| v))
     }
 }
 
 pub struct Analysis {
     pub violations: Vec<check::Violation>,
     /// As [`Judgment::suppressions`].
-    pub suppressions: Vec<check::Honoured>,
+    pub suppressions: Vec<check::HonouredSuppression>,
     /// Every source file no indexer read, `uncovered_ok` or not: the report
     /// leaves the accepted ones out, but nobody saw their imports, so what
     /// `suggest`, `impact`, `why` and `baseline` say about them stays careful.

@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::check::{Honoured, Key, Violation};
+use crate::check::{HonouredSuppression, Key, Violation};
 
 /// Whether a reported violation fails the check (`Error`) or is only said
 /// (`Warning`, a rule in `warn`).
@@ -100,7 +100,7 @@ pub struct Verdict {
     pub legalized: usize,
     /// The inline suppressions that excused what is judged, with what each
     /// excused: reported, never failing, and not counted as legalized.
-    pub suppressions: Vec<Honoured>,
+    pub suppressions: Vec<HonouredSuppression>,
 }
 
 impl Verdict {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::check::{self, Honoured, Place, RuleId, Violation};
+use crate::check::{self, HonouredSuppression, Place, RuleId, Violation};
 
 const NEXT_LINE: &str = "easement:disable-next-line";
 const SAME_LINE: &str = "easement:disable-line";
@@ -122,7 +122,7 @@ pub struct Applied {
     pub kept: Vec<Violation>,
     /// Each suppression that excused a violation, with what it excused, in the
     /// order of the suppressions.
-    pub honoured: Vec<Honoured>,
+    pub honoured: Vec<HonouredSuppression>,
 }
 
 /// Takes the suppressed violations out, each under the suppression that excused
@@ -182,7 +182,7 @@ pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> Applie
                 ),
             ),
             Some(reason) => {
-                honoured.push(Honoured {
+                honoured.push(HonouredSuppression {
                     file: s.file.clone(),
                     line: s.line,
                     target_line: s.target_line,

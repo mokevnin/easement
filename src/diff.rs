@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::check::{Honoured, Key, RuleId, Violation};
+use crate::check::{HonouredSuppression, Key, RuleId, Violation};
 use crate::lang::registry;
 use crate::policy::{Policy, PolicyInput};
 
@@ -193,7 +193,7 @@ impl Diff {
 
     /// Whether the suppression belongs to the change: a violation it excused
     /// would, or the change wrote its directive.
-    pub fn keeps_suppression(&self, suppression: &Honoured) -> bool {
+    pub fn keeps_suppression(&self, suppression: &HonouredSuppression) -> bool {
         self.changes.contains(&suppression.file, suppression.line)
             || suppression.excused.iter().any(|v| self.keeps(v))
     }

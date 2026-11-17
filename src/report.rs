@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 
 use crate::baseline::{Severity, Verdict};
 use crate::check::{
-    self, CannotRun, Honoured, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation,
+    self, CannotRun, HonouredSuppression, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged,
+    Violation,
 };
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
@@ -27,7 +28,7 @@ struct JsonReport<'a> {
     /// The inline suppressions that excused what was judged, each with the
     /// violations it excused.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    suppressions: &'a [Honoured],
+    suppressions: &'a [HonouredSuppression],
     legalized: usize,
     #[serde(flatten)]
     coverage: &'a Coverage,
@@ -814,7 +815,7 @@ impl Report<'_> {
         if !stats.limited_to.is_empty() {
             out.push_str(&format!(", limited to {}", stats.limited_to.join(", ")));
         }
-        let suppressed = Honoured::count(&verdict.suppressions);
+        let suppressed = check::excused(&verdict.suppressions).count();
         if suppressed > 0 {
             out.push_str(&format!(", {suppressed} suppressed"));
         }
@@ -836,7 +837,7 @@ impl Report<'_> {
 
 /// Each suppression under `title` as `file:line [rules] reason`, with the
 /// violations it excused under it.
-fn suppression_lines(title: &str, suppressions: &[Honoured], color: bool) -> String {
+fn suppression_lines(title: &str, suppressions: &[HonouredSuppression], color: bool) -> String {
     let mut out = format!("{title}\n");
     for s in suppressions {
         out.push_str(&format!(
@@ -855,7 +856,7 @@ fn suppression_lines(title: &str, suppressions: &[Honoured], color: bool) -> Str
 }
 
 /// What a suppression excused, in one line.
-fn suppression_message(s: &Honoured) -> String {
+fn suppression_message(s: &HonouredSuppression) -> String {
     let excused: Vec<&str> = s.excused.iter().map(|v| v.message.as_str()).collect();
     format!(
         "{} suppressed ({}): {}",
@@ -979,17 +980,11 @@ impl Report<'_> {
 
 /// SARIF 2.1.0 of a verdict, with what the run says of itself.
 fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
-    let excused = || {
-        verdict
-            .suppressions
-            .iter()
-            .flat_map(|s| s.excused.iter().map(move |v| (s, v)))
-    };
     let mut ids: Vec<&str> = verdict
         .new
         .iter()
         .chain(&verdict.warnings)
-        .chain(excused().map(|(_, v)| v))
+        .chain(check::excused(&verdict.suppressions).map(|(_, v)| v))
         .map(|v| v.rule.as_str())
         .collect();
     if !verdict.stale.is_empty() {
@@ -1022,7 +1017,7 @@ fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
         })
         .collect();
     // An excused violation is a result Code Scanning shows as suppressed.
-    results.extend(excused().map(|(s, v)| {
+    results.extend(check::excused(&verdict.suppressions).map(|(s, v)| {
         sarif::Result::builder()
             .rule_id(v.rule.as_str())
             .level(ResultLevel::Error)
