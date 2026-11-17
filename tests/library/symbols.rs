@@ -315,6 +315,104 @@ fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
     }
 }
 
+/// A `forbid_symbol` qualifier may be the end of the module path, cut where the
+/// language cuts its module names, in every language as in Go: `client::Client.query`
+/// names what `app::db::client::Client.query` does, `client.Client.query` what
+/// `app.db.client.Client.query` does (ADR 0009).
+#[test]
+fn forbid_symbol_names_a_module_by_the_end_of_its_path_in_each_language() {
+    let policy = |db: &str, web: &str, banned: &str| {
+        format!(
+            "version: 1\ncomponents:\n  db: {{ in: {db} }}\n  web: {{ in: {web} }}\nrules:\n  web: {{ may_depend_on: [db], forbid_symbol: [\"{banned}\"] }}\n"
+        )
+    };
+    let go = project(&[
+        ("go.mod", "module example.com/app\n\ngo 1.25\n"),
+        (
+            "internal/db/client/client.go",
+            "package client\n\ntype Client struct{}\n\nfunc (c *Client) Query() int { return 1 }\n\nfunc (c *Client) Ping() int { return 0 }\n\nfunc New() *Client { return &Client{} }\n",
+        ),
+        (
+            "internal/web/web.go",
+            "package web\n\nimport \"example.com/app/internal/db/client\"\n\nfunc Run() int {\n\tc := client.New()\n\treturn c.Query() + c.Ping()\n}\n",
+        ),
+        (
+            "easement.yml",
+            &policy("internal/db", "internal/web", "db/client.Client.Query"),
+        ),
+    ]);
+    let py = project(&[
+        ("app/__init__.py", ""),
+        ("app/db/__init__.py", ""),
+        ("app/web/__init__.py", ""),
+        (
+            "app/db/client.py",
+            "class Client:\n    def query(self) -> int:\n        return 1\n\n    def ping(self) -> int:\n        return 0\n",
+        ),
+        (
+            "app/web/web.py",
+            "from app.db.client import Client\n\n\ndef run() -> int:\n    c = Client()\n    return c.query() + c.ping()\n",
+        ),
+        (
+            "easement.yml",
+            &policy("app/db", "app/web", "client.Client.query"),
+        ),
+    ]);
+    let rust = project(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("src/lib.rs", "pub mod db;\npub mod web;\n"),
+        ("src/db/mod.rs", "pub mod client;\n"),
+        (
+            "src/db/client.rs",
+            "pub struct Client;\n\nimpl Client {\n    pub fn query(&self) -> usize {\n        1\n    }\n\n    pub fn ping(&self) -> usize {\n        0\n    }\n}\n",
+        ),
+        (
+            "src/web/mod.rs",
+            "use crate::db::client::Client;\n\npub fn run() -> usize {\n    let c = Client;\n    c.query() + c.ping()\n}\n",
+        ),
+        (
+            "easement.yml",
+            &policy("src/db", "src/web", "client::Client.query"),
+        ),
+    ]);
+    for ((_tmp, root), language, (file, line, banned)) in [
+        (
+            go,
+            "go",
+            ("internal/web/web.go", 7, "db/client.Client.Query"),
+        ),
+        (py, "python", ("app/web/web.py", 6, "client.Client.query")),
+        (rust, "rust", ("src/web/mod.rs", 5, "client::Client.query")),
+    ] {
+        if cannot_index_here(&[language]) {
+            continue;
+        }
+        let checked = check(&root);
+        let report = json(&checked);
+        let found: Vec<(String, u64, String)> = report["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v["file"].as_str().unwrap().to_string(),
+                    v["line"].as_u64().unwrap(),
+                    v["message"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [(file.to_string(), line, format!("web must not use {banned}"))],
+            "{language}: {report}"
+        );
+        assert_eq!(checked.outcome(), Outcome::Failed, "{language}: {report}");
+    }
+}
+
 /// A TypeScript project whose `app` uses `Foo`, declared in `src/types/types.d.ts`,
 /// and whose policy bans `banned` to `app`.
 fn declared_type_project(banned: &str) -> (TempDir, PathBuf) {

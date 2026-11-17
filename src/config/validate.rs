@@ -333,7 +333,7 @@ impl Config {
                 && !symbol.contains('.')
             {
                 bail!(
-                    "{at}: `symbol` `{symbol}` has no qualifier, so no `forbid_symbol` name can match it; write it as `forbid_symbol` does, `package.Name` or `import/path.Name`"
+                    "{at}: `symbol` `{symbol}` has no qualifier, so no `forbid_symbol` name can match it; write it as `forbid_symbol` does, `module.Name`"
                 )
             }
             let Some(rule) = example.rule else {

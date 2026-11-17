@@ -586,17 +586,16 @@ pub fn may_name_the_same(a: &str, b: &str) -> bool {
     }
 }
 
-/// Whether `pattern` (`pkg.Name` or `import/path.Name`) names the symbol
-/// `name` used through the import `specifier`.
+/// Whether `pattern` (`path.Name`, its qualifier the module path or its end:
+/// `tags.DeleteIn`, `client::Client.query`) names the symbol `name` used through
+/// the import `specifier`. The end is cut at the separators of every language, as
+/// [`never_firing`] has no file to tell one by: both must agree, or a ban could
+/// match there and never fire here.
 fn names_symbol(pattern: &str, specifier: &str, name: &str) -> bool {
     let Some((qualifier, wanted)) = pattern.rsplit_once('.') else {
         return false;
     };
-    wanted == name
-        && (qualifier == specifier
-            || specifier
-                .strip_suffix(qualifier)
-                .is_some_and(|rest| rest.ends_with('/')))
+    wanted == name && registry::ends_with_module(specifier, qualifier)
 }
 
 #[cfg(test)]
