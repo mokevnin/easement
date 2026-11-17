@@ -14,6 +14,8 @@ pub(super) enum Kind {
     Namespace,
     /// A class, interface or other type: `Name#`.
     Type,
+    /// A type parameter `[T]` or a parameter `(p)`.
+    Parameter,
     Other,
 }
 
@@ -92,7 +94,7 @@ pub(super) fn scan(text: &str) -> Option<Vec<(String, Kind, usize)>> {
                 return None;
             }
             at = end + 1;
-            found.push((name, Kind::Other, at));
+            found.push((name, Kind::Parameter, at));
             continue;
         }
         let (name, end) = identifier(&chars, at)?;
@@ -347,6 +349,21 @@ pub(super) fn modules(symbol: &str, parsed: &Parsed) -> Name {
         "rust-analyzer" => {
             // `crate/` is the root of the crate, around its modules (`domain/order/`).
             path.retain(|name| name != "crate");
+            // An `impl` block names no type of its own: `impl#[Block]size()` (and
+            // `impl#[Block][Display]fmt()` for a trait) is `size` of `Block`.
+            if let [(block, Kind::Type), (of, Kind::Parameter), rest @ ..] =
+                &parsed.descriptors[modules..]
+                && block == "impl"
+            {
+                inner = std::iter::once(of)
+                    .chain(
+                        rest.iter()
+                            .skip_while(|(_, kind)| *kind == Kind::Parameter)
+                            .map(|(name, _)| name),
+                    )
+                    .cloned()
+                    .collect();
+            }
             reading.enclosing = true;
             Qualifier::Spelled(parsed.external_module())
         }
@@ -660,6 +677,27 @@ mod tests {
         assert_eq!(
             cut(join, 3),
             "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc slice/impl#[`[T]`]"
+        );
+    }
+
+    #[test]
+    fn a_rust_method_of_an_impl_block_is_a_member_of_its_type() {
+        let called = |symbol: &str| {
+            let called = read(symbol).unwrap().called.unwrap();
+            (called.name, called.member.map(|member| member.name))
+        };
+        let size = || ("Block".to_string(), Some("size".to_string()));
+        assert_eq!(
+            called("rust-analyzer cargo blob 0.1.0 Block#size()."),
+            size()
+        );
+        assert_eq!(
+            called("rust-analyzer cargo blob 0.1.0 impl#[Block]size()."),
+            size()
+        );
+        assert_eq!(
+            called("rust-analyzer cargo blob 0.1.0 store/impl#[Block][Display]fmt()."),
+            ("Block".to_string(), Some("fmt".to_string()))
         );
     }
 

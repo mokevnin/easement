@@ -355,7 +355,7 @@ fn a_csharp_attribute_is_a_dependency_on_its_class_and_a_member_on_a_value_is_no
 }
 
 /// A Cargo workspace of the case of #104: `chunk` re-exports `blob::Block`.
-fn rust_three(gw: &str) -> (TempDir, PathBuf) {
+pub(crate) fn rust_three(gw: &str) -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().to_path_buf();
     let manifest = |name: &str, deps: &str| {

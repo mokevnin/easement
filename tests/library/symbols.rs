@@ -11,7 +11,7 @@ use easement::commands::{self, Outcome};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project};
-use crate::languages::{csharp_three, java_three, judged};
+use crate::languages::{csharp_three, java_three, judged, rust_three};
 use crate::run::{
     cannot_index_here, check, check_in, check_with, composer_install, config, error, json,
     leaves_out, pinned, text, try_check_with,
@@ -87,6 +87,21 @@ fn a_java_file_that_reaches_public_symbols_through_a_constructor_or_a_member_is_
         ]),
         "{report}"
     );
+}
+
+/// A method is used through its type in Rust as in every language: `Block::size` is
+/// a use of `Block`, which `public_symbols` lists, not of the `impl` that holds it.
+#[test]
+fn a_rust_method_called_through_its_type_is_a_use_of_the_type() {
+    let (_tmp, root) =
+        rust_three("pub fn run() -> usize {\n    chunk::Block::size(&chunk::make())\n}\n");
+    fs::write(
+        root.join("easement.yml"),
+        "version: 1\ncomponents:\n  blob: { in: blob, public_symbols: [Block] }\n  chunk: { in: chunk }\n  gw: { in: gw }\nrules:\n  gw: { may_depend_on: [chunk, blob] }\n  chunk: { may_depend_on: [blob] }\n",
+    )
+    .unwrap();
+    let (found, report) = judged(&root);
+    assert_eq!(found, [], "{report}");
 }
 
 /// C# uses of names are not verified yet, so a file that reaches a `public_symbols`
