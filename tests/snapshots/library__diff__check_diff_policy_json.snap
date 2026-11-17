@@ -27,7 +27,6 @@ expression: report
     "files": 2,
     "indexed": 1,
     "internal_deps": 1,
-    "suppressed": 0,
     "unmapped_files": 0
   },
   "violations": [

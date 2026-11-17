@@ -339,6 +339,28 @@ impl Violation {
     }
 }
 
+/// An inline suppression that excused violations, with the violations it excused.
+#[derive(Debug, Clone, Serialize)]
+pub struct Honoured {
+    pub file: String,
+    /// Line of the directive.
+    pub line: usize,
+    /// Line whose violations it excuses.
+    pub target_line: usize,
+    /// The rules the directive names.
+    pub rules: Vec<String>,
+    pub reason: String,
+    /// The excused violations, as [`dedupe`] reports violations.
+    pub excused: Vec<Violation>,
+}
+
+impl Honoured {
+    /// How many violations the suppressions excused, together.
+    pub fn count(suppressions: &[Honoured]) -> usize {
+        suppressions.iter().map(|s| s.excused.len()).sum()
+    }
+}
+
 impl Key {
     /// The key without the file a violation happens to be reported at, where
     /// the rule is about something else: a cycle, a limit and a reach are
@@ -488,7 +510,6 @@ pub struct Stats {
     pub internal_deps: usize,
     pub external_deps: usize,
     pub unmapped_files: usize,
-    pub suppressed: usize,
     /// Indexers that ran, and indexes taken from the cache instead.
     #[serde(skip_serializing_if = "is_zero")]
     pub indexed: usize,

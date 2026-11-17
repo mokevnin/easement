@@ -354,7 +354,14 @@ fn external_violations_can_be_suppressed() {
     )
     .unwrap();
     let said = report_of(&root, Outcome::Failed);
-    assert!(!said.contains("moment"), "{said}");
+    // It is no violation: it is listed only under the directive that excused it.
+    let (violations, suppressions) = said.split_once("Inline suppressions:\n").unwrap();
+    assert!(!violations.contains("moment"), "{said}");
+    assert!(
+        suppressions.starts_with("  src/web/page.ts:3 [external] legacy locale\n"),
+        "{said}"
+    );
+    assert!(suppressions.contains("moment"), "{said}");
     assert!(said.contains("1 suppressed"), "{said}");
 }
 

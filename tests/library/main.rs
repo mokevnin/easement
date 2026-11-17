@@ -37,6 +37,7 @@ mod rules;
 mod sets;
 mod sizes;
 mod suggest;
+mod suppressions;
 mod surfaces;
 mod symbols;
 mod unused;

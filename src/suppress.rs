@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::check::{Place, RuleId, Violation};
+use crate::check::{self, Honoured, Place, RuleId, Violation};
 
 const NEXT_LINE: &str = "easement:disable-next-line";
 const SAME_LINE: &str = "easement:disable-line";
@@ -114,13 +114,24 @@ fn closing(text: &str, quote: char) -> Option<usize> {
     None
 }
 
-/// Removes suppressed violations. Suppressions without a reason, naming an
-/// unknown rule or matching nothing become violations themselves, so an
-/// exception is always explained and never outlives the code it excused.
-pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> (Vec<Violation>, usize) {
-    let mut used = vec![false; suppressions.len()];
+/// What applying the suppressions leaves.
+#[derive(Debug)]
+pub struct Applied {
+    /// The violations no suppression excused, and the suppressions that are
+    /// violations themselves.
+    pub kept: Vec<Violation>,
+    /// Each suppression that excused a violation, with what it excused, in the
+    /// order of the suppressions.
+    pub honoured: Vec<Honoured>,
+}
+
+/// Takes the suppressed violations out, each under the suppression that excused
+/// it. Suppressions without a reason, naming an unknown rule or matching nothing
+/// become violations themselves, so an exception is always explained and never
+/// outlives the code it excused.
+pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> Applied {
+    let mut excused: Vec<Vec<Violation>> = vec![Vec::new(); suppressions.len()];
     let mut kept = Vec::new();
-    let mut suppressed = 0;
     // The suppressions with a reason by the line they excuse, each list in order.
     let mut at: HashMap<(&str, usize), Vec<usize>> = HashMap::new();
     for (i, s) in suppressions.iter().enumerate() {
@@ -137,55 +148,62 @@ pub fn apply(violations: Vec<Violation>, suppressions: &[Suppression]) -> (Vec<V
                 .find(|&i| suppressions[i].rules.iter().any(|r| r == v.rule.as_str()))
         });
         match hit {
-            Some(i) => {
-                used[i] = true;
-                suppressed += 1;
-            }
+            Some(i) => excused[i].push(v),
             None => kept.push(v),
         }
     }
-    for (s, used) in suppressions.iter().zip(used) {
-        let problem = if s.reason.is_none() {
-            Some((
+    let mut honoured = Vec::new();
+    for (s, excused) in suppressions.iter().zip(excused) {
+        let (rule, message) = match &s.reason {
+            None => (
                 RuleId::SuppressionReason,
                 format!(
                     "suppression of {} needs a reason after `--`",
                     s.rules.join(",")
                 ),
-            ))
-        } else if let Some(bad) = s.rules.iter().find(|r| RuleId::suppressible(r).is_none()) {
-            Some((
-                RuleId::UnusedSuppression,
-                format!(
-                    "`{bad}` is not a rule that can be suppressed (use {})",
-                    RuleId::SUPPRESSIBLE.map(RuleId::as_str).join(", ")
-                ),
-            ))
-        } else if !used {
-            Some((
+            ),
+            Some(_)
+                if let Some(bad) = s.rules.iter().find(|r| RuleId::suppressible(r).is_none()) =>
+            {
+                (
+                    RuleId::UnusedSuppression,
+                    format!(
+                        "`{bad}` is not a rule that can be suppressed (use {})",
+                        RuleId::SUPPRESSIBLE.map(RuleId::as_str).join(", ")
+                    ),
+                )
+            }
+            Some(_) if excused.is_empty() => (
                 RuleId::UnusedSuppression,
                 format!(
                     "suppression of {} matches no violation on line {}; remove it",
                     s.rules.join(","),
                     s.target_line
                 ),
-            ))
-        } else {
-            None
+            ),
+            Some(reason) => {
+                honoured.push(Honoured {
+                    file: s.file.clone(),
+                    line: s.line,
+                    target_line: s.target_line,
+                    rules: s.rules.clone(),
+                    reason: reason.clone(),
+                    excused: check::dedupe(excused),
+                });
+                continue;
+            }
         };
-        if let Some((rule, message)) = problem {
-            kept.push(Violation {
-                file: s.file.clone(),
-                line: s.line,
-                message,
-                // The comment line is the identity: there is no import to key it by.
-                target: format!("line {}", s.line),
-                evidence: vec![Place::new(s.file.clone(), s.line)],
-                ..Violation::of(rule)
-            });
-        }
+        kept.push(Violation {
+            file: s.file.clone(),
+            line: s.line,
+            message,
+            // The comment line is the identity: there is no import to key it by.
+            target: format!("line {}", s.line),
+            evidence: vec![Place::new(s.file.clone(), s.line)],
+            ..Violation::of(rule)
+        });
     }
-    (kept, suppressed)
+    Applied { kept, honoured }
 }
 
 #[cfg(test)]
@@ -210,6 +228,47 @@ mod tests {
         assert_eq!(got[2].reason, None);
         assert_eq!(got[3].rules, ["privacy"]);
         assert_eq!(got[3].reason.as_deref(), Some("why"));
+    }
+
+    /// Each suppression that excused something is returned with what it excused;
+    /// the others are violations, and what no suppression names is kept.
+    #[test]
+    fn a_suppression_keeps_what_it_excused() {
+        let src = concat!(
+            "// easement:disable-next-line dependency -- legacy\n",
+            "import x from './x';\n",
+            "// easement:disable-next-line dependency\n",
+            "import y from './y';\n",
+        );
+        let at = |line, target: &str| Violation {
+            file: "a.ts".into(),
+            line,
+            target: target.into(),
+            ..Violation::of(RuleId::Dependency)
+        };
+        let Applied { kept, honoured } = apply(
+            vec![at(2, "x"), at(2, "z"), at(4, "y"), at(5, "w")],
+            &parse("a.ts", src),
+        );
+        assert_eq!(honoured.len(), 1);
+        let excused: Vec<&str> = honoured[0]
+            .excused
+            .iter()
+            .map(|v| v.target.as_str())
+            .collect();
+        assert_eq!(
+            (honoured[0].line, honoured[0].reason.as_str(), excused),
+            (1, "legacy", vec!["x", "z"])
+        );
+        let kept: Vec<(usize, RuleId)> = kept.iter().map(|v| (v.line, v.rule)).collect();
+        assert_eq!(
+            kept,
+            [
+                (4, RuleId::Dependency),
+                (5, RuleId::Dependency),
+                (3, RuleId::SuppressionReason)
+            ]
+        );
     }
 
     #[test]

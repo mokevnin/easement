@@ -1,0 +1,41 @@
+---
+source: tests/library/suppressions.rs
+expression: results
+---
+[
+  {
+    "level": "error",
+    "locations": [
+      {
+        "physicalLocation": {
+          "artifactLocation": {
+            "uri": "src/web/page.ts"
+          },
+          "region": {
+            "startLine": 2
+          }
+        }
+      }
+    ],
+    "message": {
+      "text": "web -> storage is not allowed (written as src/storage/db.ts)"
+    },
+    "ruleId": "dependency",
+    "suppressions": [
+      {
+        "justification": "the page saves drafts until #40",
+        "kind": "inSource",
+        "location": {
+          "physicalLocation": {
+            "artifactLocation": {
+              "uri": "src/web/page.ts"
+            },
+            "region": {
+              "startLine": 1
+            }
+          }
+        }
+      }
+    ]
+  }
+]

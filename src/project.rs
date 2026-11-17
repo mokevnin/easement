@@ -106,7 +106,10 @@ impl Project {
         let undeclared =
             manifests::undeclared(config, &map, &self.root, &scan.deps, &scan.all_files);
         violations.extend(undeclared.violations);
-        let (mut violations, suppressed) = suppress::apply(violations, &scan.suppressions);
+        let suppress::Applied {
+            kept: mut violations,
+            mut honoured,
+        } = suppress::apply(violations, &scan.suppressions);
         let config_file = self.config_file()?;
         violations.extend(matching::unmatched(
             policy,
@@ -162,12 +165,15 @@ impl Project {
         })?;
         violations.extend(unused.violations);
         chains::attribute(policy, &map, &scan.deps, &mut violations);
-        stats.suppressed = suppressed;
+        for suppression in &mut honoured {
+            chains::attribute(policy, &map, &scan.deps, &mut suppression.excused);
+        }
         stats.unused_partial = unused.reasons;
         stats.frameworks = unused.frameworks;
         stats.manifests_partial = undeclared.reasons;
         Ok(Judgment {
             violations,
+            suppressions: honoured,
             edges,
             stats,
             map,
@@ -194,6 +200,7 @@ impl Project {
     fn analysis_of(&self, judgment: Judgment, scan: scan::Scan) -> Result<Analysis> {
         let Judgment {
             violations,
+            suppressions,
             edges,
             mut stats,
             map,
@@ -249,6 +256,7 @@ impl Project {
             accepted,
             unindexed: scan.uncovered,
             violations,
+            suppressions,
             all_files: scan.all_files,
             edges,
             deps: scan.deps,
@@ -288,6 +296,9 @@ impl Project {
 /// What a policy says of a scan.
 pub struct Judgment {
     pub violations: Vec<check::Violation>,
+    /// The inline suppressions that excused violations, with them: the
+    /// violations the policy produces besides `violations`.
+    pub suppressions: Vec<check::Honoured>,
     pub edges: Vec<check::Edge>,
     pub stats: check::Stats,
     pub map: ComponentMap,
@@ -296,8 +307,19 @@ pub struct Judgment {
     pub unread_diagram: Option<String>,
 }
 
+impl Judgment {
+    /// Every violation the policy produces, excused by a suppression or not.
+    pub fn produced(&self) -> impl Iterator<Item = &check::Violation> {
+        self.violations
+            .iter()
+            .chain(self.suppressions.iter().flat_map(|s| &s.excused))
+    }
+}
+
 pub struct Analysis {
     pub violations: Vec<check::Violation>,
+    /// As [`Judgment::suppressions`].
+    pub suppressions: Vec<check::Honoured>,
     /// Every source file no indexer read, `uncovered_ok` or not: the report
     /// leaves the accepted ones out, but nobody saw their imports, so what
     /// `suggest`, `impact`, `why` and `baseline` say about them stays careful.

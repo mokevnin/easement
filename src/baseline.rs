@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::check::{Key, Violation};
+use crate::check::{Honoured, Key, Violation};
 
 /// Whether a reported violation fails the check (`Error`) or is only said
 /// (`Warning`, a rule in `warn`).
@@ -98,6 +98,9 @@ pub struct Verdict {
     /// Baseline entries that no longer occur: the debt was paid, the baseline must shrink.
     pub stale: Vec<Key>,
     pub legalized: usize,
+    /// The inline suppressions that excused what is judged, with what each
+    /// excused: reported, never failing, and not counted as legalized.
+    pub suppressions: Vec<Honoured>,
 }
 
 impl Verdict {
@@ -117,6 +120,7 @@ impl Verdict {
                 owners: Default::default(),
                 stale: Vec::new(),
                 legalized: 0,
+                suppressions: Vec::new(),
             };
         };
         let stale = baseline.violations.difference(current).cloned().collect();
@@ -129,6 +133,7 @@ impl Verdict {
             owners: Default::default(),
             stale,
             legalized: legal.len(),
+            suppressions: Vec::new(),
         }
     }
 
@@ -156,6 +161,8 @@ impl Verdict {
         for list in [&mut self.new, &mut self.warnings] {
             list.sort_by(|a, b| (&a.file, a.line, a.rule).cmp(&(&b.file, b.line, b.rule)));
         }
+        self.suppressions
+            .sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
     }
 
     pub fn passed(&self) -> bool {

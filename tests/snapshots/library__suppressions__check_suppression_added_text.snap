@@ -1,0 +1,12 @@
+---
+source: tests/library/suppressions.rs
+expression: said
+---
+Checking lines changed since main (merge-base [merge-base])
+
+
+Inline suppressions in this change:
+  src/web/page.ts:1 [dependency] the page saves drafts until #40
+    src/web/page.ts:2: web -> storage is not allowed (written as src/storage/db.ts) [dependency]
+
+easement passed: 0 violation(s), 0 stale, 0 legalized; 3 files, 2 internal deps, 1 suppressed

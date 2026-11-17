@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::baseline::{Severity, Verdict};
 use crate::check::{
-    self, CannotRun, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation,
+    self, CannotRun, Honoured, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged, Violation,
 };
 use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
@@ -24,6 +24,10 @@ struct JsonReport<'a> {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     owners: &'a BTreeMap<String, String>,
     stale: &'a [Key],
+    /// The inline suppressions that excused what was judged, each with the
+    /// violations it excused.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    suppressions: &'a [Honoured],
     legalized: usize,
     #[serde(flatten)]
     coverage: &'a Coverage,
@@ -658,6 +662,7 @@ impl Report<'_> {
             warnings: &verdict.warnings,
             owners: &verdict.owners,
             stale: &verdict.stale,
+            suppressions: &verdict.suppressions,
             legalized: verdict.legalized,
             coverage,
             frameworks: &stats.frameworks,
@@ -739,6 +744,17 @@ impl Report<'_> {
             }
             section(&mut out, &body);
         }
+        if !verdict.suppressions.is_empty() {
+            let title = if diff.is_some() {
+                "Inline suppressions in this change:"
+            } else {
+                "Inline suppressions:"
+            };
+            section(
+                &mut out,
+                &suppression_lines(title, &verdict.suppressions, color),
+            );
+        }
         if !stats.new_dependencies.is_empty() {
             let mut body = String::from("New dependencies between components in this change:\n");
             for d in &stats.new_dependencies {
@@ -798,8 +814,9 @@ impl Report<'_> {
         if !stats.limited_to.is_empty() {
             out.push_str(&format!(", limited to {}", stats.limited_to.join(", ")));
         }
-        if stats.suppressed > 0 {
-            out.push_str(&format!(", {} suppressed", stats.suppressed));
+        let suppressed = Honoured::count(&verdict.suppressions);
+        if suppressed > 0 {
+            out.push_str(&format!(", {suppressed} suppressed"));
         }
         if !stats.uncovered.is_empty() {
             out.push_str(&format!(
@@ -815,6 +832,37 @@ impl Report<'_> {
         }
         out
     }
+}
+
+/// Each suppression under `title` as `file:line [rules] reason`, with the
+/// violations it excused under it.
+fn suppression_lines(title: &str, suppressions: &[Honoured], color: bool) -> String {
+    let mut out = format!("{title}\n");
+    for s in suppressions {
+        out.push_str(&format!(
+            "  {} [{}] {}\n",
+            paint(color, BOLD, &format!("{}:{}", s.file, s.line)),
+            s.rules.join(", "),
+            s.reason
+        ));
+        for v in &s.excused {
+            for line in violation_lines(v, None, DIM, color).lines() {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+    }
+    out
+}
+
+/// What a suppression excused, in one line.
+fn suppression_message(s: &Honoured) -> String {
+    let excused: Vec<&str> = s.excused.iter().map(|v| v.message.as_str()).collect();
+    format!(
+        "{} suppressed ({}): {}",
+        s.rules.join(", "),
+        s.reason,
+        excused.join("; ")
+    )
 }
 
 /// Appends a section of the text report, a blank line before it unless it is the first.
@@ -931,10 +979,17 @@ impl Report<'_> {
 
 /// SARIF 2.1.0 of a verdict, with what the run says of itself.
 fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
+    let excused = || {
+        verdict
+            .suppressions
+            .iter()
+            .flat_map(|s| s.excused.iter().map(move |v| (s, v)))
+    };
     let mut ids: Vec<&str> = verdict
         .new
         .iter()
         .chain(&verdict.warnings)
+        .chain(excused().map(|(_, v)| v))
         .map(|v| v.rule.as_str())
         .collect();
     if !verdict.stale.is_empty() {
@@ -966,6 +1021,22 @@ fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
                 .build()
         })
         .collect();
+    // An excused violation is a result Code Scanning shows as suppressed.
+    results.extend(excused().map(|(s, v)| {
+        sarif::Result::builder()
+            .rule_id(v.rule.as_str())
+            .level(ResultLevel::Error)
+            .message(sarif_message(message_with_reason(v)))
+            .locations(vec![sarif_location(&v.file, Some(v.line))])
+            .suppressions(vec![
+                sarif::Suppression::builder()
+                    .kind(serde_json::Value::from("inSource"))
+                    .justification(s.reason.clone())
+                    .location(sarif_location(&s.file, Some(s.line)))
+                    .build(),
+            ])
+            .build()
+    }));
     results.extend(verdict.stale.iter().map(|k| {
         sarif::Result::builder()
             .rule_id(STALE)
@@ -1098,6 +1169,15 @@ impl Report<'_> {
                 "::error title={}::{}\n",
                 escape_property(&format!("easement {STALE}")),
                 escape_command(&stale_message(k))
+            ));
+        }
+        for s in &verdict.suppressions {
+            out.push_str(&format!(
+                "::notice file={},line={},title={}::{}\n",
+                escape_property(&s.file),
+                s.line,
+                escape_property("easement suppression"),
+                escape_command(&suppression_message(s))
             ));
         }
         for note in spared.notes() {
@@ -1409,6 +1489,7 @@ mod tests {
                 to: String::new(),
             }],
             legalized: 0,
+            suppressions: vec![],
         }
     }
 
@@ -1467,6 +1548,7 @@ mod tests {
                 owners: BTreeMap::new(),
                 stale: vec![],
                 legalized: 0,
+                suppressions: vec![],
             },
             &[],
             &[],
@@ -1494,6 +1576,7 @@ mod tests {
                 owners: BTreeMap::new(),
                 stale: vec![],
                 legalized: 0,
+                suppressions: vec![],
             },
             &[],
             &[awkward.to_string()],
@@ -1649,6 +1732,7 @@ hi</system-out>
             owners: BTreeMap::new(),
             stale: vec![],
             legalized: 0,
+            suppressions: vec![],
         };
         let stats = Stats {
             uncovered: vec!["tools/gen.go".into()],
@@ -1709,6 +1793,7 @@ hi</system-out>
             owners: BTreeMap::new(),
             stale: vec![],
             legalized: 0,
+            suppressions: vec![],
         };
         let report = |require_evidence| Report {
             verdict: &clean,

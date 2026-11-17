@@ -1,0 +1,7 @@
+---
+source: tests/library/suppressions.rs
+expression: github
+---
+::notice file=src/web/page.ts,line=1,title=easement suppression::dependency suppressed (the page saves drafts until #40): web -> storage is not allowed (written as src/storage/db.ts)
+::notice title=easement partial::only violations on lines changed since main, or caused by the change to the policy, were judged, the rest of the project was not
+easement passed: 0 violation(s), 0 stale, 0 legalized; 3 files, 2 internal deps, 1 suppressed

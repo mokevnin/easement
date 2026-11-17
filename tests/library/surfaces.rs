@@ -42,9 +42,28 @@ fn public_api_cycles_reasons_and_suppressions() {
             .map(|(f, l, r)| (f.to_string(), *l, r.to_string()))
             .collect::<Vec<_>>()
     );
-    // Line 3 of the page depends on `billing` twice, both suppressed: on the index it
-    // imports, and on the file that defines the `charge` the index re-exports.
-    assert_eq!(report["stats"]["suppressed"], 2);
+    // Line 3 of the page depends on `billing` twice, both excused by the directive
+    // above it: on the index it imports, and on the file that defines the `charge`
+    // the index re-exports.
+    let suppressions = report["suppressions"].as_array().unwrap();
+    assert_eq!(suppressions.len(), 1, "{report}");
+    assert_eq!(
+        (&suppressions[0]["file"], &suppressions[0]["line"]),
+        (&"src/ui/page.ts".into(), &2.into()),
+        "{report}"
+    );
+    let excused: Vec<&str> = suppressions[0]["excused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["target"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        excused,
+        ["src/billing/index.ts", "src/billing/internal/charge.ts"],
+        "{report}"
+    );
+    assert!(report["stats"].get("suppressed").is_none(), "{report}");
     let violations = report["violations"].as_array().unwrap();
     assert_eq!(
         violations[0]["message"],

@@ -132,3 +132,7 @@ _Avoid_: ignored violation, suppressed violation
 **Suppression**:
 An exception written at one source line, with its reason, for one rule.
 _Avoid_: ignore, legalization
+
+**Excused violation**:
+A violation an inline suppression takes out of the verdict; it is reported under the suppression, never fails and is not debt in the baseline.
+_Avoid_: legalized violation, ignored violation, fixed violation

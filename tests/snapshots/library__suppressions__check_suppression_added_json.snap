@@ -1,0 +1,61 @@
+---
+source: tests/library/suppressions.rs
+expression: report
+---
+{
+  "accepted_gaps": [],
+  "diff": {
+    "base": "main",
+    "in_full": [],
+    "merge_base": "[merge-base]",
+    "policy_changed": []
+  },
+  "evidence_gaps": [],
+  "legalized": 0,
+  "narrowed": [
+    {
+      "kind": "diff",
+      "limited_to": "main"
+    }
+  ],
+  "passed": true,
+  "stale": [],
+  "stats": {
+    "external_deps": 0,
+    "files": 3,
+    "indexed": 1,
+    "internal_deps": 2,
+    "unmapped_files": 0
+  },
+  "suppressions": [
+    {
+      "excused": [
+        {
+          "evidence": [
+            {
+              "file": "src/web/page.ts",
+              "line": 2
+            }
+          ],
+          "file": "src/web/page.ts",
+          "from": "web",
+          "line": 2,
+          "message": "web -> storage is not allowed (written as src/storage/db.ts)",
+          "rule": "dependency",
+          "specifier": "src/storage/db.ts",
+          "target": "src/storage/db.ts",
+          "to": "storage"
+        }
+      ],
+      "file": "src/web/page.ts",
+      "line": 1,
+      "reason": "the page saves drafts until #40",
+      "rules": [
+        "dependency"
+      ],
+      "target_line": 2
+    }
+  ],
+  "violations": [],
+  "warnings": []
+}

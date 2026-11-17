@@ -143,7 +143,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
             // The policy at the merge-base, judged on the code scanned now.
             let attribution =
                 diff::Attribution::of(&project.policy, &project.root, &changes, |policy| {
-                    Ok(project.judge(policy, &scan)?.violations)
+                    Ok(project.judge(policy, &scan)?.produced().cloned().collect())
                 });
             Ok(diff::Diff {
                 changes,
@@ -153,6 +153,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         .transpose()?;
     let Analysis {
         mut violations,
+        suppressions,
         mut stats,
         map,
         edges,
@@ -176,12 +177,14 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
     let current = violations.iter().map(check::Violation::key).collect();
     // Cycles and limits come from the whole project, so a violation belongs to
     // the scope when any file behind it does.
-    let violations: Vec<_> = violations
+    let in_scope = |v: &check::Violation| {
+        v.rule.is_config_rule() || v.evidence.iter().any(|at| scope.contains(&map, &at.file))
+    };
+    let violations: Vec<_> = violations.into_iter().filter(in_scope).collect();
+    // A suppression, when anything it excused is.
+    let suppressions = suppressions
         .into_iter()
-        .filter(|v| {
-            v.rule.is_config_rule() || v.evidence.iter().any(|at| scope.contains(&map, &at.file))
-        })
-        .collect();
+        .filter(|s| s.excused.iter().any(in_scope));
     let mut drift = None;
     if let Some(diff) = &diff {
         stats.new_dependencies =
@@ -197,9 +200,12 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
             })
         });
     }
-    let judged = match &diff {
-        Some(diff) => violations.into_iter().filter(|v| diff.keeps(v)).collect(),
-        None => violations,
+    let (judged, suppressions) = match &diff {
+        Some(diff) => (
+            violations.into_iter().filter(|v| diff.keeps(v)).collect(),
+            suppressions.filter(|s| diff.keeps_suppression(s)).collect(),
+        ),
+        None => (violations, suppressions.collect()),
     };
     let baseline = if options.no_baseline {
         None
@@ -211,6 +217,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         .partition(|v| project.config().warns(v.rule));
     let mut verdict = Verdict::judge(judged, warnings, &current, baseline.as_ref());
     verdict.owners = project.config().owners();
+    verdict.suppressions = suppressions;
     // A file no indexer read shows none of its debt, which is not paid for
     // that: `baseline` keeps its entries, so they are not stale (the evidence
     // gaps name the file).

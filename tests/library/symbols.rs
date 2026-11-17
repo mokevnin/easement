@@ -160,8 +160,11 @@ fn symbols_are_checked_through_imports() {
     ] {
         assert!(report.contains(said), "{said}: {report}");
     }
-    // Scoped and Tx are public; the Raw on line 10 is suppressed.
-    assert!(!report.contains("books.go:10"), "{report}");
+    // Scoped and Tx are public; the Raw on line 10 is excused, listed only
+    // under the directive.
+    let (violations, suppressions) = report.split_once("Inline suppressions:\n").unwrap();
+    assert!(!violations.contains("books.go:10"), "{report}");
+    assert!(suppressions.contains("books.go:10"), "{report}");
     assert!(report.contains("3 violation(s)"), "{report}");
 }
 

@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::check::{Key, RuleId, Violation};
+use crate::check::{Honoured, Key, RuleId, Violation};
 use crate::lang::registry;
 use crate::policy::{Policy, PolicyInput};
 
@@ -190,6 +190,13 @@ impl Diff {
                 .is_some_and(|base| !base.contains(&violation.key()))
             || (attribution.manifests_in_full() && reads_a_manifest(violation))
     }
+
+    /// Whether the suppression belongs to the change: a violation it excused
+    /// would, or the change wrote its directive.
+    pub fn keeps_suppression(&self, suppression: &Honoured) -> bool {
+        self.changes.contains(&suppression.file, suppression.line)
+            || suppression.excused.iter().any(|v| self.keeps(v))
+    }
 }
 
 /// What a diff run judges besides the changed lines, and why.
@@ -219,7 +226,9 @@ const MANIFEST_KEYS: [&str; 2] = ["manifests", "packages"];
 impl Attribution {
     /// What `head`, the policy of the working tree, is held responsible for
     /// against the policy at the merge-base of `changes`. `judge` gives the
-    /// violations a policy produces over the code this run scanned.
+    /// violations a policy produces over the code this run scanned, those an
+    /// inline suppression excuses among them: a violation the base policy
+    /// produced is no effect of the change to the policy, excused or not.
     pub fn of(
         head: &Policy,
         root: &Path,
