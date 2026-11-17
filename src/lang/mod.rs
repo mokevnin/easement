@@ -57,17 +57,16 @@ pub enum Form {
     /// An import for its side effects alone (`import "./polyfill"`): the index
     /// records it only when its target is a module, with an `import` or `export`.
     SideEffect,
-    /// A `require()` call where the compiler may not know `require`, and so records
-    /// nothing of it.
-    Require,
     /// An import whose target is computed at run time (`` import(`./${name}`) ``,
     /// `import.meta.glob`): the text names no one target, and the index records none.
     Computed,
-    /// A call that imports the module its literal argument names
-    /// (`importlib.import_module("a.b")`), which the index does not record. The
-    /// module is read in the call's own terms (a package it is given), so its
-    /// text names no file.
-    ImportCall,
+    /// An import call: a call that imports the module its literal argument names,
+    /// which the index may not record (`require("./x")` where the compiler does not
+    /// know `require`, `importlib.import_module("a.b")`). `as_import` says whether
+    /// the argument is read as the language reads the specifier of an import
+    /// (`require`'s), or in the call's own terms (a package it is given), so that
+    /// its text names no file.
+    ImportCall { as_import: bool },
 }
 
 /// Why the dependency of an import a file writes is not in the graph: the index
@@ -80,11 +79,9 @@ pub enum Cause {
     Wildcard,
     /// The index holds nothing of an import for its side effects alone ([`Form::SideEffect`]).
     SideEffect,
-    /// The index holds nothing of a `require()` call ([`Form::Require`]).
-    Require,
     /// Its target is computed at run time ([`Form::Computed`]).
     Computed,
-    /// The index holds nothing of a call that imports a module ([`Form::ImportCall`]).
+    /// The index holds nothing of an import call ([`Form::ImportCall`]).
     ImportCall,
 }
 

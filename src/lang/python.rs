@@ -101,7 +101,7 @@ fn imports_at(node: Node, text: &str) -> Vec<Import> {
                 return Vec::new();
             };
             vec![match literal(argument, text) {
-                Some(module) => Import::at(argument, module, Form::ImportCall),
+                Some(module) => Import::at(argument, module, Form::ImportCall { as_import: false }),
                 None => Import::at(argument, source(argument), Form::Computed),
             }]
         }
@@ -268,14 +268,14 @@ i = other.load("not.this")
             written(text),
             expected(&[
                 (1, "importlib", Form::Static, None),
-                (2, "pkg.a", Form::ImportCall, None),
-                (3, "pkg.b", Form::ImportCall, None),
-                (4, "pkg.c", Form::ImportCall, None),
+                (2, "pkg.a", Form::ImportCall { as_import: false }, None),
+                (3, "pkg.b", Form::ImportCall { as_import: false }, None),
+                (4, "pkg.c", Form::ImportCall { as_import: false }, None),
                 (5, "name", Form::Computed, None),
                 (6, "f\"pkg.{name}\"", Form::Computed, None),
                 (7, "\"pkg.\" + name", Form::Computed, None),
-                (8, "pkg.g", Form::ImportCall, None),
-                (9, "pkg.h", Form::ImportCall, None),
+                (8, "pkg.g", Form::ImportCall { as_import: false }, None),
+                (9, "pkg.h", Form::ImportCall { as_import: false }, None),
             ])
         );
     }

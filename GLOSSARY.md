@@ -82,6 +82,10 @@ _Avoid_: resolved module (a module reference that leads nowhere resolves nothing
 An import a file writes that the index takes to no source target and whose text names none either, or names more than one file it may mean (both `x.py` and `x/__init__.py`): its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
 _Avoid_: missing import, broken import (the code may build)
 
+**Import call**:
+A call that imports the module its literal argument names, such as `require("./x")` or `importlib.import_module("a.b")`, which an index may not record: the compiler records `require()` only where it knows `require`, and scip-python records no such call. One the index does not record is an unresolved import of its own cause. Its argument is read as an import's specifier where the language reads it so (`require`), and never where the call reads it in its own terms (`import_module` against the package it is given).
+_Avoid_: require (one language's name for it), dynamic import (its target may be computed, which is another cause)
+
 **Implementation**:
 A type's declared relation to a type it implements or extends, directly or through its ancestors. It is no dependency: the relation holds whether or not the code writes the supertype's name.
 _Avoid_: inheritance edge, subtype dependency, structural match (a Go type that satisfies an interface declares nothing)

@@ -427,7 +427,6 @@ fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
                 lang::Cause::SideEffect => {
                     format!("the index holds nothing of {n} import(s) for side effects alone")
                 }
-                lang::Cause::Require => format!("the index holds no `require()` of {n} import(s)"),
                 lang::Cause::Computed => {
                     format!("the target of {n} import(s) is computed at run time")
                 }

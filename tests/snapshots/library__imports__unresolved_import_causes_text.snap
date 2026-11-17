@@ -13,13 +13,13 @@ Evidence gaps (a pass says nothing about this code):
   the index holds nothing of 1 import(s) for side effects alone, so the dependencies they write were not checked (the compiler records one only when its file is a module, with an `import` or `export`; a file that does not exist leaves nothing either): src/app/main.ts:7 (`../lib/polyfill`)
     to close: make each file imported a module with `export {}`, or fix its path
     src/app/main.ts:7 (`../lib/polyfill`)
-  the index holds no `require()` of 1 import(s), so the dependencies they write were not checked (the compiler records `require()` only where it knows `require`: in JavaScript, or with `@types/node`): src/app/main.ts:14 (`../lib/util`)
-    to close: write `import`, or `import x = require()`, instead of `require()`
-    src/app/main.ts:14 (`../lib/util`)
   the target of 3 import(s) is computed at run time, so the dependencies they write were not checked (a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file): src/app/main.ts:16 (``../lib/${name}``), src/app/main.ts:17 (`"../lib/" + name`), src/app/main.ts:18 (`../lib/*.ts`)
     to close: write each target as a literal path, or review those dependencies by hand
     src/app/main.ts:16 (``../lib/${name}``)
     src/app/main.ts:17 (`"../lib/" + name`)
     src/app/main.ts:18 (`../lib/*.ts`)
+  the index holds no module of 1 call(s) that import one, so the dependencies they write were not checked (the compiler records `require()` only where it knows `require`: in JavaScript, or with `@types/node`): src/app/main.ts:14 (`../lib/util`)
+    to close: write `import`, or `import x = require()`, instead of `require()`
+    src/app/main.ts:14 (`../lib/util`)
 
 easement failed: 8 violation(s), 0 stale, 0 legalized; 6 files, 7 internal deps

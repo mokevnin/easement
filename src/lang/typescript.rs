@@ -73,7 +73,7 @@ pub const EXPLAINED: &[Explained] = &[
         close: Some("make each file imported a module with `export {}`, or fix its path"),
     },
     Explained {
-        cause: Cause::Require,
+        cause: Cause::ImportCall,
         because: "the compiler records `require()` only where it knows `require`: in JavaScript, or with `@types/node`",
         close: Some("write `import`, or `import x = require()`, instead of `require()`"),
     },
@@ -93,13 +93,13 @@ pub const EXPLAINED: &[Explained] = &[
 /// A file whose extension may hold JSX is read with the TSX grammar, the others
 /// with TypeScript's, where `<T>x` is a cast. The compiler knows `require` in a
 /// JavaScript file, so the index records it there; in a TypeScript file only
-/// with `@types/node`, so there it is [`Form::Require`].
+/// with `@types/node`, so there it is an import call ([`Form::ImportCall`]).
 pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
     let extension = relpath::extension(file);
     let tree = super::tree(&grammar(file), text);
     let require = match extension {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
-        _ => Form::Require,
+        _ => Form::ImportCall { as_import: true },
     };
     let mut imports: Vec<Import> = super::preorder(tree.root_node())
         .filter_map(|node| import_at(node, text, require))
@@ -293,7 +293,7 @@ export const q = 1;
                 (12, "./star", s),
                 (13, "./g", s),
                 (14, "./x", s),
-                (15, "./y", Form::Require),
+                (15, "./y", Form::ImportCall { as_import: true }),
                 (16, "./z", s),
                 (17, "./tpl", s),
                 (19, "`./${name}`", Form::Computed),
