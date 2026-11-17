@@ -9,6 +9,7 @@ pub mod kotlin;
 pub mod parts;
 pub mod python;
 pub mod registry;
+pub mod rust;
 pub mod swift;
 pub mod typescript;
 

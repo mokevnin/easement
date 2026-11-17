@@ -2565,7 +2565,7 @@ mod tests {
     fn a_use_in_a_cfg_test_part_is_a_dependency_of_that_part_apart_from_the_file() {
         let testkit = "rust-analyzer cargo testkit 0.1.0 crate/";
         let mut document = doc("src/blob_db.rs", &[], &[(1, testkit), (9, testkit)]);
-        document.parts = crate::lang::parts::rust(
+        document.parts = crate::lang::rust::parts(
             "src/blob_db.rs",
             "pub fn open() {}\n\n#[cfg(test)]\nmod tests {\n    fn a() {}\n    fn b() {}\n    fn c() {}\n    fn d() {}\n    fn e() {}\n}\n",
         )
@@ -2585,7 +2585,7 @@ mod tests {
     fn a_symbol_used_in_a_cfg_test_part_leaves_the_part() {
         let tablet = "rust-analyzer cargo testkit 0.1.0 tablet().";
         let mut document = doc("src/blob_db.rs", &[], &[(1, tablet), (9, tablet)]);
-        document.parts = crate::lang::parts::rust(
+        document.parts = crate::lang::rust::parts(
             "src/blob_db.rs",
             "pub fn open() {}\n\n#[cfg(test)]\nmod tests {\n    fn a() {}\n    fn b() {}\n    fn c() {}\n    fn d() {}\n    fn e() {}\n}\n",
         )

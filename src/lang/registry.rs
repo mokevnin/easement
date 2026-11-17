@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use super::parts::{self, Found};
+use super::parts::Found;
 use super::{Adapter, Cause, Import};
 use crate::relpath;
 use crate::stdlib;
@@ -621,7 +621,7 @@ pub static RUST: Language = Language {
     relations: Relations::None {
         because: "the rust index declares no implementations",
     },
-    parts: Some(parts::rust),
+    parts: Some(super::rust::parts),
     runs_on_import: None,
     uses_unimported: &[],
     program: None,
