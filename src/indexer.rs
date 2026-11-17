@@ -1546,11 +1546,32 @@ mod tests {
     #[test]
     fn after_a_failure_the_groups_behind_it_do_not_start() {
         let started = AtomicUsize::new(0);
-        // The first group still runs to its end: it comes before the failure.
-        let groups = [(30, Ok(())), (0, Err("second")), (0, Ok(())), (0, Ok(()))];
-        let results = in_parallel(&groups, 2, |(ms, result)| {
+        // Set by the second group just before it fails.
+        let failing = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+        // The first group still runs to its end: it comes before the failure. It
+        // holds its worker until well after the failure, so that the other worker
+        // is the one that meets the groups behind it. No sleep stands between the
+        // failure and the moment it is recorded (Windows can sleep a whole tick).
+        let groups = [Ok(()), Err("second"), Ok(()), Ok(())];
+        let indexed: Vec<(usize, Result<(), &str>)> = groups.into_iter().enumerate().collect();
+        let results = in_parallel(&indexed, 2, |(i, result)| {
             started.fetch_add(1, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(*ms));
+            let (flag, signal) = &failing;
+            match i {
+                0 => {
+                    let guard = flag.lock().unwrap();
+                    let (_failed, timeout) = signal
+                        .wait_timeout_while(guard, Duration::from_secs(10), |failed| !*failed)
+                        .unwrap();
+                    assert!(!timeout.timed_out(), "the groups did not run at once");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                1 => {
+                    *flag.lock().unwrap() = true;
+                    signal.notify_all();
+                }
+                _ => {}
+            }
             *result
         });
         assert_eq!(results, Err("second"));
