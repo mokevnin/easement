@@ -249,4 +249,39 @@ mod tests {
         assert_eq!(places(method("inner().")), [("b.ts".to_string(), 4)]);
         assert_eq!(places(Node::file("a.ts")), [("a.ts".to_string(), 15)]);
     }
+
+    /// A file whose index gives no ranges is used through anything it defines, from
+    /// the other files only.
+    #[test]
+    fn a_file_is_used_from_the_other_files() {
+        let used = |file: &str, line: usize, to: Node| Use {
+            file: file.to_string(),
+            line,
+            to,
+        };
+        let flow = Flow {
+            uses: vec![
+                used("b.cs", 4, Node::file("a.cs")),
+                used(
+                    "b.cs",
+                    2,
+                    Node {
+                        file: "a.cs".to_string(),
+                        scope: Some("Run().".to_string()),
+                    },
+                ),
+                used("b.cs", 2, Node::file("a.cs")),
+                // From itself, and to another file: neither.
+                used("a.cs", 7, Node::file("a.cs")),
+                used("c.cs", 1, Node::file("b.cs")),
+            ],
+            ..Flow::default()
+        };
+        let places: Vec<(String, usize)> = flow
+            .file_callers("a.cs")
+            .into_iter()
+            .map(|found| (found.file.clone(), found.line))
+            .collect();
+        assert_eq!(places, [("b.cs".to_string(), 2), ("b.cs".to_string(), 4)]);
+    }
 }
