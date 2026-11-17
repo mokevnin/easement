@@ -1729,24 +1729,6 @@ pub(crate) fn flow(documents: &[Document]) -> Flow {
     Indexed::of(&names).flow()
 }
 
-/// A definition as its symbol spells it, past the package and the modules around it:
-/// the names of its other descriptors joined by `.` (`Order.total`); the symbol
-/// itself when it cannot be read.
-fn shown_name(symbol: &str) -> String {
-    split(symbol)
-        .map(|parsed| {
-            parsed
-                .descriptors
-                .iter()
-                .filter(|(_, kind)| *kind != Kind::Namespace)
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(".")
-        })
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| symbol.to_string())
-}
-
 /// The method of `scoped` that `symbol` is or is defined in, the innermost: a
 /// parameter or a local an indexer names globally (`scale().(x)`) is part of its method.
 fn within_scope<'a>(symbol: &'a str, scoped: &HashSet<&str>) -> Option<&'a str> {
@@ -1774,7 +1756,7 @@ impl Indexed<'_> {
             for scope in &document.scopes {
                 scoped.insert(&scope.symbol);
                 flow.names
-                    .insert(scope.symbol.clone(), shown_name(&scope.symbol));
+                    .insert(scope.symbol.clone(), symbol::shown_name(&scope.symbol));
             }
             if !document.scopes.is_empty() {
                 flow.scopes

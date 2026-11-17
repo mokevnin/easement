@@ -506,6 +506,17 @@ impl Parsed<'_> {
             .join(separator)
     }
 
+    /// The descriptors past the namespace joined by `.`: the name of a definition
+    /// within its module (`Order.total`). Empty for a module itself.
+    pub(super) fn within_namespace(&self) -> String {
+        self.descriptors
+            .iter()
+            .filter(|(_, kind)| *kind != Kind::Namespace)
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
     /// The package that owns the symbol, with the scheme: what tells the
     /// project's own symbols from those of its dependencies.
     pub(super) fn owner(&self) -> String {
@@ -560,6 +571,16 @@ impl Parsed<'_> {
             }
         }
     }
+}
+
+/// A definition as its symbol spells it, past the package and the modules around it
+/// ([`Parsed::within_namespace`]); the symbol itself when it cannot be read or names
+/// a module.
+pub(super) fn shown_name(symbol: &str) -> String {
+    split(symbol)
+        .map(|parsed| parsed.within_namespace())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| symbol.to_string())
 }
 
 #[cfg(test)]
@@ -644,6 +665,22 @@ mod tests {
 
     /// A space in a field of the header is written twice, so the descriptors start
     /// after the fourth single space, and `cut` keeps the header as it is written.
+    #[test]
+    fn a_definition_is_shown_past_its_package_and_modules() {
+        assert_eq!(
+            shown_name("scip-typescript npm app 1.0.0 src/`rates.ts`/Order#total()."),
+            "Order.total"
+        );
+        assert_eq!(
+            shown_name("scip-go gomod example.com/app . `example.com/app/lib`/Area()."),
+            "Area"
+        );
+        // A module, or what cannot be read, is shown as the index spells it.
+        let module = "scip-typescript npm app 1.0.0 src/`rates.ts`/";
+        assert_eq!(shown_name(module), module);
+        assert_eq!(shown_name("local 0"), "local 0");
+    }
+
     #[test]
     fn a_doubled_space_is_a_space_within_a_field() {
         let symbol = "scip-dotnet nuget My  Lib 1.0  beta Shop/Order#Total().";
