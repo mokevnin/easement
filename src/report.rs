@@ -1,5 +1,6 @@
 use anstyle::{AnsiColor, Style};
-use quick_junit::{NonSuccessKind, TestCase, TestCaseStatus, TestSuite};
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use serde::Serialize;
 use serde_sarif::sarif::{self, ResultLevel};
 use std::collections::BTreeMap;
@@ -1163,22 +1164,36 @@ impl Report<'_> {
     }
 }
 
+/// A test case of the JUnit report: a pass, or a failure of a kind.
+struct Case {
+    name: String,
+    classname: String,
+    failure: Option<Failure>,
+}
+
+struct Failure {
+    kind: String,
+    message: String,
+    body: String,
+}
+
 /// A failed test case of `kind`: its message, and the text of the failure.
-fn failed(kind: &str, name: String, message: String, body: String) -> TestCase {
-    let mut status = TestCaseStatus::non_success(NonSuccessKind::Failure);
-    status
-        .set_message(message)
-        .set_type(kind)
-        .set_description(body);
-    let mut case = TestCase::new(name, status);
-    case.set_classname(format!("easement.{kind}"));
-    case
+fn failed(kind: &str, name: String, message: String, body: String) -> Case {
+    Case {
+        name,
+        classname: format!("easement.{kind}"),
+        failure: Some(Failure {
+            kind: kind.to_string(),
+            message,
+            body,
+        }),
+    }
 }
 
 /// JUnit XML of a verdict: one failed test case per violation and per gap in
 /// `gaps` (message, how to close it), with `out` as what the run says of itself.
 fn junit(verdict: &Verdict, gaps: &[(String, String)], out_lines: &[String]) -> String {
-    let mut cases: Vec<TestCase> = Vec::new();
+    let mut cases: Vec<Case> = Vec::new();
     for v in &verdict.new {
         let mut body = v.message.clone();
         if let Some(because) = &v.because {
@@ -1209,18 +1224,86 @@ fn junit(verdict: &Verdict, gaps: &[(String, String)], out_lines: &[String]) -> 
         ));
     }
     if cases.is_empty() {
-        let mut passed = TestCase::new("architecture", TestCaseStatus::success());
-        passed.set_classname("easement");
-        cases.push(passed);
+        cases.push(Case {
+            name: "architecture".to_string(),
+            classname: "easement".to_string(),
+            failure: None,
+        });
     }
-    let mut suite = TestSuite::new("easement");
-    suite.add_test_cases(cases);
-    if !out_lines.is_empty() {
-        suite.set_system_out(out_lines.join("\n"));
+    let out = (!out_lines.is_empty()).then(|| out_lines.join("\n"));
+    let mut xml = Writer::new_with_indent(Vec::new(), b' ', 4);
+    write_junit(&mut xml, &cases, out.as_deref()).expect("XML is written to memory");
+    String::from_utf8(xml.into_inner()).expect("XML is written from strings")
+}
+
+/// The suite of `cases` in one report, then `out` as its standard output.
+fn write_junit(
+    xml: &mut Writer<Vec<u8>>,
+    cases: &[Case],
+    out: Option<&str>,
+) -> std::io::Result<()> {
+    let tests = cases.len().to_string();
+    let failures = cases
+        .iter()
+        .filter(|case| case.failure.is_some())
+        .count()
+        .to_string();
+    xml.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    let mut suites = BytesStart::new("testsuites");
+    suites.extend_attributes([
+        ("name", "easement"),
+        ("tests", &tests),
+        ("skipped", "0"),
+        ("failures", &failures),
+        ("errors", "0"),
+    ]);
+    xml.write_event(Event::Start(suites))?;
+    let mut suite = BytesStart::new("testsuite");
+    suite.extend_attributes([
+        ("name", "easement"),
+        ("tests", &tests),
+        ("skipped", "0"),
+        ("errors", "0"),
+        ("failures", &failures),
+    ]);
+    xml.write_event(Event::Start(suite))?;
+    for case in cases {
+        let mut tag = BytesStart::new("testcase");
+        tag.extend_attributes([
+            ("name", xml_text(&case.name).as_str()),
+            ("classname", xml_text(&case.classname).as_str()),
+        ]);
+        let Some(failure) = &case.failure else {
+            xml.write_event(Event::Empty(tag))?;
+            continue;
+        };
+        xml.write_event(Event::Start(tag))?;
+        let mut tag = BytesStart::new("failure");
+        tag.extend_attributes([
+            ("message", xml_text(&failure.message).as_str()),
+            ("type", xml_text(&failure.kind).as_str()),
+        ]);
+        xml.write_event(Event::Start(tag))?;
+        xml.write_event(Event::Text(BytesText::new(&xml_text(&failure.body))))?;
+        xml.write_event(Event::End(BytesEnd::new("failure")))?;
+        xml.write_event(Event::End(BytesEnd::new("testcase")))?;
     }
-    let mut report = quick_junit::Report::new("easement");
-    report.add_test_suite(suite);
-    report.to_string().expect("report serializes")
+    if let Some(out) = out {
+        xml.write_event(Event::Start(BytesStart::new("system-out")))?;
+        xml.write_event(Event::Text(BytesText::new(&xml_text(out))))?;
+        xml.write_event(Event::End(BytesEnd::new("system-out")))?;
+    }
+    xml.write_event(Event::End(BytesEnd::new("testsuite")))?;
+    xml.write_event(Event::End(BytesEnd::new("testsuites")))?;
+    // The report ends with a newline.
+    xml.write_indent()
+}
+
+/// `text` as XML can hold it: control characters but the newline are dropped.
+fn xml_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| *c == '\n' || !c.is_control())
+        .collect()
 }
 
 const STALE: &str = "stale-baseline";
@@ -1390,6 +1473,48 @@ mod tests {
         );
         assert!(clean.contains("tests=\"1\" skipped=\"0\" errors=\"0\" failures=\"0\""));
         assert!(clean.contains("<testcase name=\"architecture\" classname=\"easement\"/>"));
+    }
+
+    /// Control characters but the newline are dropped, as XML cannot hold most of
+    /// them, and the rest is escaped in attributes and in text alike; in an
+    /// attribute the newline is a reference, which a reader keeps a newline.
+    #[test]
+    fn junit_escapes_what_xml_reserves_and_drops_what_it_cannot_hold() {
+        let awkward = "a & b < c > d \"e\" 'f'\tg\nh\u{1}i";
+        let xml = junit(
+            &Verdict {
+                new: vec![Violation {
+                    file: "src/a.ts".into(),
+                    line: 3,
+                    message: awkward.into(),
+                    because: Some(awkward.into()),
+                    ..Violation::of(RuleId::Dependency)
+                }],
+                warnings: vec![],
+                owners: BTreeMap::new(),
+                stale: vec![],
+                legalized: 0,
+            },
+            &[],
+            &[awkward.to_string()],
+        );
+        assert_eq!(
+            xml,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<testsuites name=\"easement\" tests=\"1\" skipped=\"0\" failures=\"1\" errors=\"0\">
+    <testsuite name=\"easement\" tests=\"1\" skipped=\"0\" errors=\"0\" failures=\"1\">
+        <testcase name=\"src/a.ts:3\" classname=\"easement.dependency\">
+            <failure message=\"a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;g&#10;hi\" type=\"dependency\">a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;g
+hi
+because: a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;g
+hi</failure>
+        </testcase>
+        <system-out>a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;g
+hi</system-out>
+    </testsuite>
+</testsuites>
+"
+        );
     }
 
     #[test]

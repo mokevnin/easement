@@ -1,0 +1,29 @@
+---
+source: tests/library/formats.rs
+expression: junit
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="easement" tests="6" skipped="0" failures="6" errors="0">
+    <testsuite name="easement" tests="6" skipped="0" errors="0" failures="6">
+        <testcase name="src/core/run.ts:1" classname="easement.metric">
+            <failure message="core depends on 3 components, more than max_fan_out 1: data, shared, web" type="metric">core depends on 3 components, more than max_fan_out 1: data, shared, web</failure>
+        </testcase>
+        <testcase name="src/core/run.ts:2" classname="easement.dependency">
+            <failure message="core -&gt; web is not allowed (written as src/web/page.ts)" type="dependency">core -&gt; web is not allowed (written as src/web/page.ts)</failure>
+        </testcase>
+        <testcase name="src/core/run.ts:5" classname="easement.external">
+            <failure message="core -&gt; external axios is not in may_use_external" type="external">core -&gt; external axios is not in may_use_external</failure>
+        </testcase>
+        <testcase name="src/stray.ts:1" classname="easement.orphan">
+            <failure message="file belongs to no component (strict mode)" type="orphan">file belongs to no component (strict mode)</failure>
+        </testcase>
+        <testcase name="src/web/page.ts:2" classname="easement.dependency">
+            <failure message="web -&gt; data is forbidden (written as src/data/db.ts)" type="dependency">web -&gt; data is forbidden (written as src/data/db.ts)
+because: pages go through core</failure>
+        </testcase>
+        <testcase name="src/web/page.ts:3" classname="easement.external">
+            <failure message="web -&gt; external moment/locale/ru is forbidden" type="external">web -&gt; external moment/locale/ru is forbidden
+because: pages go through core</failure>
+        </testcase>
+    </testsuite>
+</testsuites>
