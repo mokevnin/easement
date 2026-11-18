@@ -49,7 +49,9 @@ pub struct Config {
     #[serde(default)]
     pub rules: BTreeMap<String, Rule>,
     /// Names that no checked file may use, components and files that belong to none alike,
-    /// as `package.Name` or `import/path.Name`, a member after its type (`ent.Client.Query`).
+    /// as `module.Name`: the module by its path or by the end of it, cut where its language
+    /// cuts module names (`example.com/app/tags.DeleteIn` or `tags.DeleteIn`,
+    /// `client::Client`), a member after its type (`ent.Client.Query`).
     /// A component's own `forbid_symbol` adds to it. An item may carry its own reason,
     /// `allow`: the components that may use the name all the same, and `allow_in`: the
     /// paths whose files may.
@@ -700,8 +702,9 @@ pub struct Rule {
     // Read with `allow` so that loading refuses it by name; editors are not offered it.
     #[schemars(with = "Vec<Listed>")]
     pub forbid_external: Vec<ForbiddenName>,
-    /// Names this component must not use, as `package.Name` or `import/path.Name`
-    /// (`ent.Client`), a member after its type (`ent.Client.Query`). In a language whose uses
+    /// Names this component must not use, as `module.Name`: the module by its path or by
+    /// the end of it, cut where its language cuts module names (`ent.Client`,
+    /// `client::Client`), a member after its type (`ent.Client.Query`). In a language whose uses
     /// of names easement does not read, the report has a `symbols` evidence gap instead. An
     /// item may carry its own reason.
     #[serde(default)]

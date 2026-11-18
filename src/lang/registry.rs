@@ -887,6 +887,19 @@ pub fn nests(parent: &str, name: &str) -> bool {
     parents(every_module_separator(), name).any(|above| above == parent)
 }
 
+/// Whether the module `name` ends with `tail`, cut at a separator of some
+/// language: `tags` ends `example.com/app/tags`, `client` ends `app::db::client`
+/// and `app.db.client`, `Domain` ends `App\Domain`, and each module ends itself;
+/// `ent` does not end `client` nor `content`.
+pub fn ends_with_module(name: &str, tail: &str) -> bool {
+    name.strip_suffix(tail).is_some_and(|rest| {
+        rest.is_empty()
+            || every_module_separator()
+                .iter()
+                .any(|separator| rest.ends_with(separator))
+    })
+}
+
 /// The parents of the module `name`, outermost first, cut at a separator of
 /// any language: what a module is read as when no file says which language
 /// writes it (`lodash` of `lodash/fp`, `okhttp3` of `okhttp3.Client`).
@@ -1025,6 +1038,28 @@ mod tests {
             ("App", "Ap"),
         ] {
             assert!(!nests(parent, name), "{parent} does not nest {name}");
+        }
+    }
+
+    #[test]
+    fn a_module_ends_with_what_follows_a_separator_of_any_language() {
+        for (name, tail) in [
+            ("example.com/app/tags", "tags"),
+            ("app::db::client", "client"),
+            ("app::db::client", "db::client"),
+            ("app.db.client", "client"),
+            ("App\\Domain", "Domain"),
+            ("tags", "tags"),
+        ] {
+            assert!(ends_with_module(name, tail), "{tail} ends {name}");
+        }
+        for (name, tail) in [
+            ("app::db::content", "ent"),
+            ("app.db.client", "ient"),
+            ("tags", "example.com/app/tags"),
+            ("app::db", "app"),
+        ] {
+            assert!(!ends_with_module(name, tail), "{tail} does not end {name}");
         }
     }
 
