@@ -86,6 +86,21 @@ impl LanguageIndexer {
         self.reads(file) && !self.language.declares(file)
     }
 
+    /// Whether it may read `file`, which the walk leaves out: one of its inputs that
+    /// is a file of its language, a marker or a manifest of its kind. Not every input:
+    /// for an indexer that reads every own file, a cache a tool keeps there (a test
+    /// runner's) would miss the cache on every run.
+    fn may_read_unwalked(&self, file: &str) -> bool {
+        let name = relpath::file_name(file);
+        (self.indexer.inputs)(self.language, file)
+            && (self.reads(file)
+                || self.has_marker(name)
+                || self
+                    .language
+                    .manifest
+                    .is_some_and(|manifest| manifest.file_name == name))
+    }
+
     /// A marker is a file name, or `*.ext` for any file with that extension.
     fn has_marker(&self, name: &str) -> bool {
         self.indexer
@@ -316,7 +331,7 @@ pub fn run(
     settings: &registry::IndexerSettings,
 ) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
-    let keyed = keyed(files, excluded);
+    let keyed = keyed(root, files, excluded);
     let wanted = indexers().flat_map(|language| files.iter().filter(move |f| language.covers(f)));
     let platform = indexing.environment.platform;
     let groups = groups(files, platform);
@@ -464,16 +479,17 @@ pub fn default_cache_dir(environment: &Environment) -> Option<PathBuf> {
 /// a root may build with another (`go.work`, a `replace`, a project reference), plus
 /// the files that sit directly in the directories above `dir`
 /// (`tsconfig.base.json`, `go.work`, a root `package.json`), which the project
-/// files extend. Nothing about the checkout (its path, the modification times)
-/// is in the key, so a worktree of the same code reuses the index. Dependencies
-/// outside the project are not covered; `--no-cache` is for when they change
-/// without a lock file.
+/// files extend, and the files the walk leaves out that the indexer may still
+/// read ([`LanguageIndexer::may_read_unwalked`]). Nothing about the checkout (its
+/// path, the modification times) is in the key, so a worktree of the same code
+/// reuses the index. Dependencies outside the project are not covered;
+/// `--no-cache` is for when they change without a lock file.
 fn fingerprint(
     language: &LanguageIndexer,
     binary: &Path,
     root: &Path,
     dir: &str,
-    files: &[String],
+    keyed: &Keyed,
     env: &[(String, String)],
     environment: &Environment,
 ) -> Key {
@@ -495,9 +511,16 @@ fn fingerprint(
         let parent = relpath::parent(f);
         parent.len() < dir.len() && relpath::is_under(dir, parent)
     };
-    let mut seen: Vec<(&str, Option<u64>)> = files
+    let walked = keyed
+        .files
         .iter()
-        .filter(|f| (language.indexer.inputs)(language.language, f) || above(f))
+        .filter(|f| (language.indexer.inputs)(language.language, f) || above(f));
+    let unwalked = keyed
+        .unwalked
+        .iter()
+        .filter(|f| language.may_read_unwalked(f));
+    let mut seen: Vec<(&str, Option<u64>)> = walked
+        .chain(unwalked)
         .map(|f| {
             // An unreadable file is a different state from every readable one.
             let content = std::fs::read(root.join(f))
@@ -693,7 +716,7 @@ fn slot(
     binary: &Path,
     root: &Path,
     dir: &str,
-    files: &[String],
+    keyed: &Keyed,
     env: &[(&str, String)],
     environment: &Environment,
 ) -> Slot {
@@ -702,7 +725,7 @@ fn slot(
         binary,
         root,
         dir,
-        files,
+        keyed,
         &key_env(language, environment.vars(), env),
         environment,
     );
@@ -781,7 +804,7 @@ pub fn probe(
     settings: &registry::IndexerSettings,
 ) -> Vec<Probe> {
     let environment = &indexing.environment;
-    let keyed = keyed(files, excluded);
+    let keyed = keyed(root, files, excluded);
     let names: Vec<String> = indexing
         .cache_dir
         .as_deref()
@@ -916,10 +939,34 @@ fn version_of(binary: &Path, flag: &str, environment: &Environment) -> Option<St
     })
 }
 
-/// The files whose content keys an index: the project files, and the excluded
-/// ones, which the index resolves imports of.
-fn keyed(files: &[String], excluded: &[String]) -> Vec<String> {
-    files.iter().chain(excluded).cloned().collect()
+/// The files whose content keys an index.
+struct Keyed {
+    /// The project files, and the excluded ones, which the index resolves imports of.
+    files: Vec<String>,
+    /// The files under the root that the walk leaves out (`.gitignore` hides them)
+    /// but an indexer may still read: generated code an import names, a config a
+    /// `tsconfig.json` extends. Neither git's own directory nor what a toolchain fills
+    /// with code not the project's own (`node_modules`, `target`) is walked for them.
+    unwalked: Vec<String>,
+}
+
+fn keyed(root: &Path, files: &[String], excluded: &[String]) -> Keyed {
+    let files: Vec<String> = files.iter().chain(excluded).cloned().collect();
+    let walked: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder.standard_filters(false).filter_entry(|entry| {
+        let name = entry.file_name().to_str();
+        !(name == Some(".git") || name.is_some_and(registry::is_toolchain_dir))
+    });
+    let mut unwalked: Vec<String> = builder
+        .build()
+        .flatten()
+        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+        .filter_map(|entry| Some(relpath::slash(&relpath::relative(root, entry.path())?)))
+        .filter(|file| !walked.contains(file.as_str()))
+        .collect();
+    unwalked.sort();
+    Keyed { files, unwalked }
 }
 
 /// The variables easement sets for a run of the indexer, from the policy's `settings`.
@@ -944,7 +991,7 @@ fn index_dir(
     language: &LanguageIndexer,
     root: &Path,
     dir: &str,
-    files: &[String],
+    keyed: &Keyed,
     indexing: &Indexing,
     settings: &registry::IndexerSettings,
 ) -> Result<(Vec<Document>, bool)> {
@@ -968,7 +1015,7 @@ fn index_dir(
         .as_deref()
         .filter(|_| indexing.cache != CacheUse::Off)
         .map(|cache_dir| {
-            let slot = slot(language, &binary, root, dir, files, &env, environment);
+            let slot = slot(language, &binary, root, dir, keyed, &env, environment);
             (cache_dir.join(slot.name), slot.prefix)
         });
     if let Some((path, _)) = &cached
@@ -1329,6 +1376,36 @@ mod tests {
         assert_ne!(before.1, indexer_identity(&binary).1);
     }
 
+    /// A file the walk leaves out keys an index when the indexer may read it as code
+    /// or as its project file; what a tool keeps there, or an environment holds, does not.
+    #[test]
+    fn an_unwalked_file_keys_an_index_when_it_is_code_or_a_project_file() {
+        let typescript = indexer("typescript");
+        for file in [
+            "src/gen/api.ts",
+            ".svelte-kit/tsconfig.json",
+            "gen/package.json",
+        ] {
+            assert!(typescript.may_read_unwalked(file), "{file}");
+        }
+        for file in [
+            "dist/stats.json",
+            "coverage/index.html",
+            "src/gen/notes.txt",
+        ] {
+            assert!(!typescript.may_read_unwalked(file), "{file}");
+        }
+        let python = indexer("python");
+        assert!(python.may_read_unwalked("src/gen/api_pb2.py"));
+        for file in [
+            ".pytest_cache/v/cache/lastfailed",
+            ".venv/lib/python3.12/site-packages/x.py",
+            "app.log",
+        ] {
+            assert!(!python.may_read_unwalked(file), "{file}");
+        }
+    }
+
     #[test]
     fn cache_keys_hash_with_blake3_which_no_build_of_easement_changes() {
         // The BLAKE3 test vector: the hash of `abc` begins 64 37 b3 ac 38 46 51 33.
@@ -1528,7 +1605,11 @@ mod tests {
         std::fs::write(&binary, "binary").unwrap();
         let go = indexer("go");
         let environment = Environment::of_vars(BTreeMap::new());
-        let key = || fingerprint(&go, &binary, root, "a", &files, &[], &environment);
+        let keyed = Keyed {
+            files: files.clone(),
+            unwalked: Vec::new(),
+        };
+        let key = || fingerprint(&go, &binary, root, "a", &keyed, &[], &environment);
         let before = key();
         std::fs::write(root.join("b/y.go"), "2").unwrap();
         assert_ne!(key(), before);
@@ -1582,8 +1663,11 @@ mod tests {
             environment,
             jobs: Jobs::default(),
         };
-        let files = vec!["a.php".to_string()];
-        let failed = index_dir(&php(), &root, "", &files, &indexing, &Default::default());
+        let keyed = Keyed {
+            files: vec!["a.php".to_string()],
+            unwalked: Vec::new(),
+        };
+        let failed = index_dir(&php(), &root, "", &keyed, &indexing, &Default::default());
         assert!(failed.is_err());
         assert!(!root.join("index.scip").exists());
     }
