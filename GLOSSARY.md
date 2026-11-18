@@ -66,6 +66,10 @@ _Avoid_: entry point (a program's start), target (the file that defines the name
 A file that declares the external dependencies of a package, such as `package.json`, `go.mod` or `Cargo.toml`: the `manifests` rule checks the imports of the files under it against what it declares, and `packages` judges each dependency it declares as one of the file. Its kind is an entry of the registry, told by the name of the file.
 _Avoid_: lockfile (it pins versions, it declares nothing), project file (a `.csproj` or `pom.xml` is read by an indexer, not here)
 
+**Installed package**:
+The package a name is of when the path of its symbol runs into a directory where the language's toolchain installs third-party code, such as `node_modules/<pkg>/`: the package under the innermost one (`hono`, `@scope/pkg`, the one pnpm's store links), whatever package the index credits the name to. Every other name is of the package the index credits it to, which is the project's own when a file of the project defines a name of it.
+_Avoid_: unnamed package (the index may credit such a name to the project or to no named package, but its path names it)
+
 **Framework**:
 A dependency of a package that loads files of the package by convention, which no import names, such as SvelteKit's routes or Next.js's pages. It is a row of the table of the kind of manifest that lists it, and holds below that manifest's directory only, not in a package nested in it. `unused` takes the files it loads as entries, unless a config file may move them.
 _Avoid_: plugin, convention (a convention is what the framework loads)
@@ -79,7 +83,7 @@ A declaration that stands for every module its pattern matches and names none, s
 _Avoid_: ambient module (one declared by its whole name, `"virtual:x"`, is a module of its file), shim (the file that holds the declaration), declaration file (a `.d.ts` file)
 
 **Source target**:
-Where the index must take an import a file writes for it to count as resolved: a file of the project, checked or excluded, or an external package. A wildcard declaration is none, nor is a module of the project's own package that no indexed file defines.
+Where the index must take an import a file writes for it to count as resolved: a file of the project, checked or excluded, or an external package. A wildcard declaration is none, nor is a module of the project's own package that no indexed file defines, nor a file the walk leaves out (one `.gitignore` hides), which the index may still resolve the import to.
 _Avoid_: resolved module (a module reference that leads nowhere resolves nothing)
 
 **Unresolved import**:
