@@ -8,11 +8,11 @@ use serde::Serialize;
 use crate::check::RuleId;
 use crate::components::ComponentMap;
 use crate::config::{
-    Accepted, Ban, Component, Config, ForbiddenName, Listed, NoCycles, Reach, Rule, TESTS,
+    Accepted, Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Reach, Rule, TESTS,
 };
 use crate::decision::{self, ClauseId, Grant, Refusal};
 use crate::policy::{InputKind, Policy, Provenance, Site};
-use crate::symbols::{Granted, Item, bindings, own_ban};
+use crate::symbols::{Granted, Item, bindings, own_symbol_spelling};
 
 /// The decision on every dependency of one component on another, before
 /// the paths of a dependency are known.
@@ -203,14 +203,14 @@ fn named(items: &[Listed]) -> Vec<Named> {
         .collect()
 }
 
-/// The items of the own list `ban` forbids in the rule of `component`, each with
+/// The items the own list `forbid` holds in the rule of `component`, each with
 /// where the rule writes it.
-fn forbidden(policy: &Policy, component: &str, ban: Ban) -> Vec<Named> {
+fn forbidden(policy: &Policy, component: &str, forbid: Forbid) -> Vec<Named> {
     let config = &policy.config;
     config
         .rules
         .get(component)
-        .map_or(&[][..], |rule| rule.own_bans(ban))
+        .map_or(&[][..], |rule| rule.own_forbidden(forbid))
         .iter()
         .enumerate()
         .map(|(i, item)| Named {
@@ -219,7 +219,7 @@ fn forbidden(policy: &Policy, component: &str, ban: Ban) -> Vec<Named> {
             provenance: Some(policy.provenance(&Site::of_rule(
                 config,
                 component,
-                &format!(".{}[{i}]", ban.key()),
+                &format!(".{}[{i}]", forbid.key()),
             ))),
         })
         .collect()
@@ -289,7 +289,7 @@ impl RuleView {
         } = config.rules.get(name)?;
         Some(Self {
             may_use_external: may_use_external.as_deref().map(named),
-            forbid_external: forbidden(policy, name, Ban::External),
+            forbid_external: forbidden(policy, name, Forbid::External),
             must_depend_on: named(must_depend_on),
             must_use_external: named(must_use_external),
             requires_file: named(requires_file),
@@ -531,7 +531,7 @@ impl FileSymbols {
             return found;
         }
         let config = &policy.config;
-        let key = Ban::Symbol.key();
+        let key = Forbid::Symbol.key();
         let owner = map.component_of(rel);
         let mut seen = std::collections::BTreeSet::new();
         for binding in bindings(config, map, owner, rel, |_| true) {
@@ -555,7 +555,9 @@ impl FileSymbols {
                 }
                 (Item::Top(item), Some(Granted::AllowIn { at, pattern })) => {
                     // The component's own list still forbids it: it is given below.
-                    if owner.is_none_or(|component| own_ban(config, component, &name).is_none()) {
+                    if owner.is_none_or(|component| {
+                        own_symbol_spelling(config, component, &name).is_none()
+                    }) {
                         found.allowed.push(AllowedSymbol {
                             name,
                             allow: None,
@@ -964,16 +966,16 @@ impl ResolvedPolicy {
                 .collect();
             out.push_str(&format!("layers: {}\n", rows.join(" > ")));
         }
-        for (key, bans) in [
+        for (key, items) in [
             ("forbid_symbol", &self.forbid_symbol),
             ("forbid_external", &self.forbid_external),
         ] {
-            for ban in bans {
-                let who: Vec<String> = ban.allow.iter().chain(&ban.allow_in).cloned().collect();
+            for item in items {
+                let who: Vec<String> = item.allow.iter().chain(&item.allow_in).cloned().collect();
                 out.push_str(&format!(
                     "{key}: {}{}\n",
-                    ban.name,
-                    who_may_and_why(&who, ban.because.as_deref())
+                    item.name,
+                    who_may_and_why(&who, item.because.as_deref())
                 ));
             }
         }
@@ -1105,7 +1107,7 @@ fn component_entry(
         provenance: policy.provenance(&component_site(config, name)),
         rule: RuleView::of(policy, name).map(|view| RuleEntry {
             view,
-            forbid_symbol: forbidden(policy, name, Ban::Symbol),
+            forbid_symbol: forbidden(policy, name, Forbid::Symbol),
         }),
         grants,
         prohibitions,

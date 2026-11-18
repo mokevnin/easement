@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::check::RuleId;
 use crate::components::ComponentMap;
-use crate::config::{Ban, TESTS};
+use crate::config::{Forbid, TESTS};
 use crate::decision::{self, Clause, ClauseId, Decision, Grant, Outside};
 use crate::lang::registry;
 use crate::policy::{Policy, Provenance, Site};
@@ -161,12 +161,12 @@ pub struct Explanation {
     /// component owns it, or none: each with what lets the path use the module all
     /// the same, if anything does.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub forbid_external: Vec<ExternalBan>,
+    pub forbid_external: Vec<ForbiddenExternal>,
 }
 
 /// An item of the top-level `forbid_external` as it binds one path.
 #[derive(Debug, Serialize)]
-pub struct ExternalBan {
+pub struct ForbiddenExternal {
     /// The module, as written.
     pub name: String,
     /// The component of the path that `allow` lets use the module.
@@ -190,7 +190,7 @@ pub struct ExternalBan {
 }
 
 /// How each item of the top-level `forbid_external` binds `rel`.
-fn external_bans(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<ExternalBan> {
+fn forbidden_externals(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<ForbiddenExternal> {
     let config = &policy.config;
     let owner = map.component_of(rel);
     config
@@ -201,7 +201,7 @@ fn external_bans(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<External
             let allow = owner
                 .filter(|component| listed.allows(component))
                 .map(str::to_string);
-            let allow_in = map.granted_in(Ban::External, item, rel);
+            let allow_in = map.granted_in(Forbid::External, item, rel);
             let field = match (&allow, allow_in) {
                 (Some(_), _) => format!("forbid_external[{item}].allow"),
                 (None, Some((at, _))) => format!("forbid_external[{item}].allow_in[{at}]"),
@@ -211,7 +211,7 @@ fn external_bans(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<External
             // `may_use_external`, which has to cover the module.
             let own = owner.is_some_and(|component| {
                 let module = listed.name();
-                crate::components::own_external_ban(config, component, module).is_some()
+                crate::components::own_external_spelling(config, component, module).is_some()
                     || config
                         .rules
                         .get(component)
@@ -222,14 +222,14 @@ fn external_bans(policy: &Policy, map: &ComponentMap, rel: &str) -> Vec<External
                                 .any(|l| ComponentMap::covers_module(l.name(), module))
                         })
             });
-            ExternalBan {
+            ForbiddenExternal {
                 name: listed.name().to_string(),
                 allowed: (allow.is_some() || allow_in.is_some()) && !own,
                 allow,
                 allow_in: allow_in.map(|(_, pattern)| pattern.to_string()),
                 only: listed.who_may(),
                 because: listed.because().map(str::to_string),
-                provenance: policy.provenance(&Site::in_key(Ban::External.key(), field)),
+                provenance: policy.provenance(&Site::in_key(Forbid::External.key(), field)),
             }
         })
         .collect()
@@ -271,7 +271,7 @@ pub fn explain(policy: &Policy, map: &ComponentMap, rel: &str) -> Explanation {
         ownership,
         symbols: FileSymbols::of(policy, map, rel, grants),
         component,
-        forbid_external: external_bans(policy, map, rel),
+        forbid_external: forbidden_externals(policy, map, rel),
     }
 }
 
@@ -404,26 +404,26 @@ fn symbol_and_external_lines(explanation: &Explanation, out: &mut String) {
     for line in explanation.symbols.lines() {
         out.push_str(&format!("  {line}\n"));
     }
-    for ban in &explanation.forbid_external {
-        let because = ban
+    for item in &explanation.forbid_external {
+        let because = item
             .because
             .as_deref()
             .map(|b| format!(": {b}"))
             .unwrap_or_default();
-        let granted = match (&ban.allow, &ban.allow_in) {
+        let granted = match (&item.allow, &item.allow_in) {
             (Some(component), _) => Some(format!("allow `{component}`")),
             (None, Some(pattern)) => Some(format!("allow_in `{pattern}`")),
             (None, None) => None,
         };
         let line = match granted {
-            Some(granted) if ban.allowed => format!(
+            Some(granted) if item.allowed => format!(
                 "may use, although forbid_external forbids it: {} ({granted}{because})",
-                ban.name
+                item.name
             ),
             _ => format!(
                 "forbid_external forbids: {}{}",
-                ban.name,
-                resolved::who_may_and_why(&ban.only, ban.because.as_deref())
+                item.name,
+                resolved::who_may_and_why(&item.only, item.because.as_deref())
             ),
         };
         out.push_str(&format!("  {line}\n"));

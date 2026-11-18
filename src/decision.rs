@@ -593,7 +593,7 @@ impl Decision<'_> {
             Err(Clause::External {
                 item: Some(item), ..
             }) => {
-                let key = crate::config::Ban::External.key();
+                let key = crate::config::Forbid::External.key();
                 Some(Site::in_key(key, format!("{key}[{item}]")))
             }
             Err(Clause::ExcludedTarget | Clause::External { item: None, .. }) => None,

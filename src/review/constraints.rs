@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::Sides;
-use crate::config::{Ban, Component, Config, ForbiddenName, Listed, NoCycles, Rule};
+use crate::config::{Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Rule};
 use crate::diagram;
 use crate::policy::{Policy, Provenance, Site};
 
@@ -299,28 +299,28 @@ impl Diff<'_> {
     }
 
     /// The components that the `allow` of an item of the top-level list of
-    /// `ban` in the head policy, or of the merge-base item of the same name,
+    /// `forbid` in the head policy, or of the merge-base item of the same name,
     /// lets use it now and not then (loosened), or then and not now
     /// (tightened): one entry each way. A component is judged on every list
     /// that forbids it, so one let in that its own rule used to forbid is
     /// listed here, and one whose own rule still forbids it is not. Then the
     /// same for the patterns of `allow_in`, told apart as written, of an item
     /// both policies have: a new item is tightened as a whole.
-    fn allow(&mut self, ban: Ban) {
+    fn allow(&mut self, forbid: Forbid) {
         let (base, head) = (&self.sides.base.config, &self.sides.head.config);
-        let key = ban.key();
+        let key = forbid.key();
         let kept: Vec<&str> = self.sides.kept().collect();
-        for (index, item) in head.top_bans(ban).iter().enumerate() {
+        for (index, item) in head.top_forbidden(forbid).iter().enumerate() {
             let name = item.name();
-            let old = top_level_item(base, ban, name);
+            let old = top_level_item(base, forbid, name);
             let (mut let_in, mut shut_out) = (Vec::new(), Vec::new());
             for &component in &kept {
                 if !item.allows(component) && !old.is_some_and(|old| old.allows(component)) {
                     continue;
                 }
                 match (
-                    forbids(base, ban, component, name),
-                    forbids(head, ban, component, name),
+                    forbids(base, forbid, component, name),
+                    forbids(head, forbid, component, name),
                 ) {
                     (true, false) => let_in.push(component.to_string()),
                     (false, true) => shut_out.push(component.to_string()),
@@ -542,15 +542,15 @@ impl Diff<'_> {
             manifests,
         } = head;
         let none = (None, None);
-        for ban in Ban::ALL {
+        for forbid in Forbid::ALL {
             self.items(
                 At::Top,
-                ban.key(),
-                &Items::forbidden(base.top_bans(ban), None),
-                &Items::forbidden(head.top_bans(ban), None),
+                forbid.key(),
+                &Items::forbidden(base.top_forbidden(forbid), None),
+                &Items::forbidden(head.top_forbidden(forbid), None),
                 Direction::Tightened,
             );
-            self.allow(ban);
+            self.allow(forbid);
         }
         self.no_cycles(&base.no_cycles, no_cycles);
         self.flag(
@@ -708,25 +708,25 @@ impl Diff<'_> {
         // top level forbids the component, or lets it use through `allow`, is
         // judged there, so an item that only moves between the two is none.
         let (base, head) = (&self.sides.base.config, &self.sides.head.config);
-        for (ban, before, after) in [
-            (Ban::Symbol, &then.forbid_symbol, forbid_symbol),
-            (Ban::External, &then.forbid_external, forbid_external),
+        for (forbid, before, after) in [
+            (Forbid::Symbol, &then.forbid_symbol, forbid_symbol),
+            (Forbid::External, &then.forbid_external, forbid_external),
         ] {
             self.items_that(
                 at,
-                ban.key(),
+                forbid.key(),
                 &Items::forbidden(before, reasons.0),
                 &Items::forbidden(after, reasons.1),
                 Direction::Tightened,
                 |forbidden, edit| {
-                    let at_top = |config| top_level_item(config, ban, forbidden);
+                    let at_top = |config| top_level_item(config, forbid, forbidden);
                     match edit {
                         Edit::Added => {
-                            !forbids(base, ban, name, forbidden)
+                            !forbids(base, forbid, name, forbidden)
                                 && !at_top(head).is_some_and(|item| !item.allows(name))
                         }
                         Edit::Removed => {
-                            !forbids(head, ban, name, forbidden)
+                            !forbids(head, forbid, name, forbidden)
                                 && !at_top(base).is_some_and(|item| !item.allows(name))
                                 && !at_top(head).is_some_and(|item| item.allows(name))
                         }
@@ -910,22 +910,25 @@ fn shown(value: Option<&Value>) -> String {
 }
 
 /// Whether `config` forbids `component` the name or module spelled `name` in
-/// the lists of `ban`: its own rule lists it, or a top-level item does and
+/// the lists of `forbid`: its own rule lists it, or a top-level item does and
 /// leaves the component out of `allow`. One spelled otherwise is another item,
 /// even when it names the same, so a respelling stays listed both ways.
-fn forbids(config: &Config, ban: Ban, component: &str, name: &str) -> bool {
-    config
-        .rules
-        .get(component)
-        .is_some_and(|rule| rule.own_bans(ban).iter().any(|own| own.name() == name))
-        || top_level_item(config, ban, name).is_some_and(|item| !item.allows(component))
+fn forbids(config: &Config, forbid: Forbid, component: &str, name: &str) -> bool {
+    config.rules.get(component).is_some_and(|rule| {
+        rule.own_forbidden(forbid)
+            .iter()
+            .any(|own| own.name() == name)
+    }) || top_level_item(config, forbid, name).is_some_and(|item| !item.allows(component))
 }
 
-/// The item of the top-level list of `ban` spelled `name`. Two items of one
+/// The item of the top-level list of `forbid` spelled `name`. Two items of one
 /// spelling forbid alike: the policy refuses a second one when either has
 /// `allow`.
-fn top_level_item<'a>(config: &'a Config, ban: Ban, name: &str) -> Option<&'a ForbiddenName> {
-    config.top_bans(ban).iter().find(|item| item.name() == name)
+fn top_level_item<'a>(config: &'a Config, forbid: Forbid, name: &str) -> Option<&'a ForbiddenName> {
+    config
+        .top_forbidden(forbid)
+        .iter()
+        .find(|item| item.name() == name)
 }
 
 /// Where an arrow is drawn: the diagram of `policy`, under `diagram`.

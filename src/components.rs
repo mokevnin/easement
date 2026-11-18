@@ -3,7 +3,7 @@ use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 
 use crate::config::STD;
-use crate::config::{Ban, Config, ForbiddenName, TESTS};
+use crate::config::{Config, Forbid, ForbiddenName, TESTS};
 use crate::lang::registry::is_std;
 use crate::lang::{Unit, registry};
 
@@ -43,7 +43,7 @@ pub struct ComponentMap {
     forbidden_externals: Vec<ForbiddenExternal>,
     /// By top-level list, the `allow_in` patterns of each item, as written and
     /// compiled, in the order of the items.
-    path_grants: std::collections::BTreeMap<Ban, Vec<Vec<(String, ModuleMatcher)>>>,
+    path_grants: std::collections::BTreeMap<Forbid, Vec<Vec<(String, ModuleMatcher)>>>,
     /// Path -> (part, the index in `entries` of the entry that owns it) for every
     /// lookup made so far: the entries never change, so an answer stays true for
     /// the life of the map. Scoped threads share the map, hence the lock.
@@ -204,7 +204,7 @@ fn module_matchers(component: &str, pattern: &str) -> Result<ModuleMatcher> {
 /// How the own `forbid_external` of `component` writes a pattern that covers
 /// `module`, when it has one: empty when spelled alike, else `` as `own` ``,
 /// to follow `forbids` in an error.
-pub fn own_external_ban(config: &Config, component: &str, module: &str) -> Option<String> {
+pub fn own_external_spelling(config: &Config, component: &str, module: &str) -> Option<String> {
     let own = config
         .rules
         .get(component)?
@@ -389,9 +389,9 @@ impl ComponentMap {
             }
         }
         let mut path_grants = std::collections::BTreeMap::new();
-        for ban in Ban::ALL {
+        for forbid in Forbid::ALL {
             let grants = config
-                .top_bans(ban)
+                .top_forbidden(forbid)
                 .iter()
                 .enumerate()
                 .map(|(i, item)| {
@@ -399,13 +399,13 @@ impl ComponentMap {
                         .unwrap_or_default()
                         .iter()
                         .map(|pattern| {
-                            let place = format!("{}[{i}].allow_in", ban.key());
+                            let place = format!("{}[{i}].allow_in", forbid.key());
                             Ok((pattern.clone(), module_matchers(&place, pattern)?))
                         })
                         .collect::<Result<Vec<_>>>()
                 })
                 .collect::<Result<Vec<_>>>()?;
-            path_grants.insert(ban, grants);
+            path_grants.insert(forbid, grants);
         }
         let forbidden_externals = config
             .forbid_external
@@ -475,12 +475,12 @@ impl ComponentMap {
     }
 
     /// The `allow_in` pattern of the item at `item` of the top-level list of
-    /// `ban` that lets `rel_path` use what it forbids, the first one written,
+    /// `forbid` that lets `rel_path` use what it forbids, the first one written,
     /// with its index in the list; the component that owns the file does not
     /// matter.
-    pub fn granted_in(&self, ban: Ban, item: usize, rel_path: &str) -> Option<(usize, &str)> {
+    pub fn granted_in(&self, forbid: Forbid, item: usize, rel_path: &str) -> Option<(usize, &str)> {
         self.path_grants
-            .get(&ban)?
+            .get(&forbid)?
             .get(item)?
             .iter()
             .enumerate()
@@ -490,16 +490,16 @@ impl ComponentMap {
 
     /// Every `allow_in` pattern, with its top-level list and the index of its
     /// item, that matches none of `files`, in the order of the config.
-    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(Ban, usize, &str)> {
+    pub fn unmatched_grants(&self, files: &[String]) -> Vec<(Forbid, usize, &str)> {
         self.path_grants
             .iter()
-            .flat_map(|(ban, items)| {
+            .flat_map(|(forbid, items)| {
                 items.iter().enumerate().flat_map(move |(item, patterns)| {
-                    patterns.iter().map(move |grant| (*ban, item, grant))
+                    patterns.iter().map(move |grant| (*forbid, item, grant))
                 })
             })
             .filter(|(_, _, (_, matcher))| !files.iter().any(|f| matcher.is_match(f)))
-            .map(|(ban, item, (pattern, _))| (ban, item, pattern.as_str()))
+            .map(|(forbid, item, (pattern, _))| (forbid, item, pattern.as_str()))
             .collect()
     }
 
@@ -629,7 +629,7 @@ impl ComponentMap {
         for (item, forbidden) in self.forbidden_externals.iter().enumerate() {
             if !forbidden.names(file, specifier)
                 || component.is_some_and(|c| forbidden.allow.iter().any(|a| a == c))
-                || self.granted_in(Ban::External, item, file).is_some()
+                || self.granted_in(Forbid::External, item, file).is_some()
             {
                 continue;
             }

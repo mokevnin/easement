@@ -305,23 +305,23 @@ pub enum TestsMode {
 /// The component that `tests: auto` creates.
 pub const TESTS: &str = "tests";
 
-/// What a list that forbids bans: the names code uses (`forbid_symbol`) or the
+/// What a forbidding list covers: the names code uses (`forbid_symbol`) or the
 /// external modules it imports (`forbid_external`). At the top level, an item
 /// of either may let components or paths use it all the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Ban {
+pub enum Forbid {
     Symbol,
     External,
 }
 
-impl Ban {
-    pub const ALL: [Ban; 2] = [Ban::Symbol, Ban::External];
+impl Forbid {
+    pub const ALL: [Forbid; 2] = [Forbid::Symbol, Forbid::External];
 
     /// The key of the list, at the top level and in a rule alike.
     pub fn key(self) -> &'static str {
         match self {
-            Ban::Symbol => "forbid_symbol",
-            Ban::External => "forbid_external",
+            Forbid::Symbol => "forbid_symbol",
+            Forbid::External => "forbid_external",
         }
     }
 }
@@ -757,21 +757,21 @@ pub struct Rule {
 }
 
 impl Rule {
-    /// The list of the rule that forbids what `ban` bans.
-    pub fn own_bans(&self, ban: Ban) -> &[ForbiddenName] {
-        match ban {
-            Ban::Symbol => &self.forbid_symbol,
-            Ban::External => &self.forbid_external,
+    /// The list of the rule that `forbid` keys.
+    pub fn own_forbidden(&self, forbid: Forbid) -> &[ForbiddenName] {
+        match forbid {
+            Forbid::Symbol => &self.forbid_symbol,
+            Forbid::External => &self.forbid_external,
         }
     }
 }
 
 impl Config {
-    /// The top-level list that forbids what `ban` bans.
-    pub fn top_bans(&self, ban: Ban) -> &[ForbiddenName] {
-        match ban {
-            Ban::Symbol => &self.forbid_symbol,
-            Ban::External => &self.forbid_external,
+    /// The top-level list that `forbid` keys.
+    pub fn top_forbidden(&self, forbid: Forbid) -> &[ForbiddenName] {
+        match forbid {
+            Forbid::Symbol => &self.forbid_symbol,
+            Forbid::External => &self.forbid_external,
         }
     }
 

@@ -310,47 +310,47 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
     };
     add(
         GapKind::Unused,
-        &stats.unused_partial,
+        &stats.unused_gaps,
         "the files it took as used may be dead: review them by hand, or have an indexer read them",
     );
     add(
         GapKind::Manifests,
-        &stats.manifests_partial,
+        &stats.manifests_gaps,
         "fix or add the manifest the message names, or review those dependencies by hand",
     );
     add(
         GapKind::Parts,
-        &stats.parts_partial,
+        &stats.parts_gaps,
         "fix what the message names, or review that code by hand",
     );
     add(
         GapKind::Packages,
-        &stats.packages_partial,
+        &stats.packages_gaps,
         "fix the manifest the message names, or review those dependencies by hand",
     );
     add(
         GapKind::Declarations,
-        &stats.declarations_partial,
+        &stats.declarations_gaps,
         "give the name one home: keep it in one component, or rename it so that it is unique",
     );
     add(
         GapKind::UnresolvedImports,
-        &stats.imports_partial,
+        &stats.imports_gaps,
         "build the code and fix what the compiler reports, then check again",
     );
     add(
         GapKind::UnknownScheme,
-        &stats.schemes_partial,
+        &stats.schemes_gaps,
         "the indexer wrote a scheme easement does not read: check its version with `easement doctor`, run one this easement reads, or report the scheme to easement",
     );
     add(
         GapKind::Symbols,
-        &stats.symbols_partial,
+        &stats.symbols_gaps,
         "do what the message says, or review those uses by hand",
     );
     add(
         GapKind::Implementation,
-        &stats.implementations_partial,
+        &stats.implementations_gaps,
         "review those types by hand, or move them into a component `allow_implementers` lists",
     );
     if !stats.naming_unseen.is_empty() {
@@ -1426,10 +1426,10 @@ mod tests {
     fn a_graph_answer_passes_the_gaps_that_hide_dependencies() {
         let stats = Stats {
             uncovered: vec!["a.go".to_string()],
-            parts_partial: vec![Unjudged::new(
+            parts_gaps: vec![Unjudged::new(
                 "a `mod` file is not in the project".to_string(),
             )],
-            symbols_partial: vec![Unjudged::new("`forbid_symbol` over kotlin".to_string())],
+            symbols_gaps: vec![Unjudged::new("`forbid_symbol` over kotlin".to_string())],
             std_unknown: vec!["rb".to_string()],
             ..Stats::default()
         };
@@ -1921,7 +1921,7 @@ hi</system-out>
     #[test]
     fn a_scheme_no_entry_reads_is_a_gap_that_hides_dependencies() {
         let stats = Stats {
-            schemes_partial: vec![
+            schemes_gaps: vec![
                 Unjudged::new("1 files hold symbols of the scheme `scip-nowhere`".to_string())
                     .in_files(["src/a.ts".to_string()]),
             ],

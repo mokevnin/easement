@@ -537,32 +537,32 @@ pub struct Stats {
     pub naming_unseen: Vec<String>,
     /// Why `manifests` left some imports unchecked.
     #[serde(skip)]
-    pub manifests_partial: Vec<Unjudged>,
+    pub manifests_gaps: Vec<Unjudged>,
     /// Test code that `tests: auto` could not take out of the file it sits in.
     #[serde(skip)]
-    pub parts_partial: Vec<Unjudged>,
+    pub parts_gaps: Vec<Unjudged>,
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
     #[serde(skip)]
-    pub packages_partial: Vec<Unjudged>,
+    pub packages_gaps: Vec<Unjudged>,
     /// Names declared in more than one place, so an import of one was taken for
     /// the copy in the importing file's component, otherwise the first by path.
     #[serde(skip)]
-    pub declarations_partial: Vec<Unjudged>,
+    pub declarations_gaps: Vec<Unjudged>,
     /// Imports a file writes that the indexer did not resolve.
     #[serde(skip)]
-    pub imports_partial: Vec<Unjudged>,
+    pub imports_gaps: Vec<Unjudged>,
     /// Files whose symbols carry a scheme no entry declares, so none was read.
     #[serde(skip)]
-    pub schemes_partial: Vec<Unjudged>,
+    pub schemes_gaps: Vec<Unjudged>,
     /// Why `forbid_symbol` left some uses of names unchecked.
     #[serde(skip)]
-    pub symbols_partial: Vec<Unjudged>,
+    pub symbols_gaps: Vec<Unjudged>,
     /// Why `implementation` left some types unchecked.
     #[serde(skip)]
-    pub implementations_partial: Vec<Unjudged>,
+    pub implementations_gaps: Vec<Unjudged>,
     /// Why `unused` took some files as used without judging them.
     #[serde(skip)]
-    pub unused_partial: Vec<Unjudged>,
+    pub unused_gaps: Vec<Unjudged>,
     /// The frameworks `unused` found in packages, whose conventional files it
     /// took as entries.
     #[serde(skip)]
@@ -622,7 +622,7 @@ pub struct SymbolRef {
     pub target: Option<Target>,
 }
 
-/// An import between two different components.
+/// A dependency of one component on another, at the line that writes it.
 #[derive(Debug, Clone)]
 pub struct Edge {
     pub from: String,
