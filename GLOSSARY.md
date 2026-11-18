@@ -120,7 +120,7 @@ A proposed dependency, or a proposed use of a name, kept in the policy together 
 _Avoid_: contract test, policy test, contract
 
 **Policy delta**:
-The dependency decisions that differ between two policies over the same code.
+The violations that fail under one of two policies and not under the other, over the same code: of every rule, not only dependency decisions.
 _Avoid_: config diff
 
 ## Trust in a verdict
@@ -134,7 +134,7 @@ Code or facts the check could not read or could not judge, so a clean verdict sa
 _Avoid_: partial, unread reason, missing coverage
 
 **Accepted gap**:
-An evidence gap the policy declares deliberate; it is still reported and never counts as read.
+An evidence gap the policy declares deliberate; it is still reported and never counts as read. It lets a verdict pass, but an answer about the dependency graph still counts it as an evidence gap, since nobody saw its dependencies.
 _Avoid_: ignored file, covered file
 
 **Legalized violation**:
@@ -142,7 +142,7 @@ A violation recorded in the baseline as accepted debt until it is fixed.
 _Avoid_: ignored violation, suppressed violation
 
 **Suppression**:
-An exception written at one source line, with its reason, for one rule.
+An exception written at one source line, with its reason, for the rules it names.
 _Avoid_: ignore, legalization
 
 **Excused violation**:
