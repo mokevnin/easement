@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::check::{self, HonouredSuppression, Place, RuleId, Violation};
+use crate::lang::registry::{self, Comments};
 
 const NEXT_LINE: &str = "easement:disable-next-line";
 const SAME_LINE: &str = "easement:disable-line";
@@ -23,16 +24,14 @@ pub struct Suppression {
     pub reason: Option<String>,
 }
 
-/// What opens a comment in the languages easement reads.
-const OPENERS: [&str; 4] = ["//", "/*", "#", "<!--"];
-
 /// A suppression is a comment that begins with the directive. Text in a string
 /// literal or later in a comment (an example in a doc comment) is not one.
 pub fn parse(file: &str, source: &str) -> Vec<Suppression> {
+    let comments = registry::comments_of(file);
     let mut found = Vec::new();
     for (i, text) in source.lines().enumerate() {
         let line = i + 1;
-        let Some(comment) = directive(text) else {
+        let Some(comment) = directive(text, comments) else {
             continue;
         };
         let (rest, target_line) = if let Some(rest) = comment.strip_prefix(NEXT_LINE) {
@@ -43,10 +42,10 @@ pub fn parse(file: &str, source: &str) -> Vec<Suppression> {
             continue;
         };
         // Drop a closing block comment: `/* easement:disable-line dependency -- why */`.
-        let rest = rest
-            .trim()
-            .trim_end_matches("*/")
-            .trim_end_matches("-->")
+        let rest = comments
+            .block
+            .iter()
+            .fold(rest.trim(), |rest, (_, close)| rest.trim_end_matches(close))
             .trim();
         let (rules, reason) = match rest.split_once("--") {
             Some((rules, reason)) => (rules, Some(reason.trim())),
@@ -67,10 +66,12 @@ pub fn parse(file: &str, source: &str) -> Vec<Suppression> {
     found
 }
 
-/// The text of the first comment on the line, from its first word, when it
-/// starts with `easement:`. A line inside a block comment (` * …`) is a comment.
-fn directive(text: &str) -> Option<&str> {
-    if let Some(rest) = text.trim_start().strip_prefix('*')
+/// The text of the first comment on the line, as `comments` open one, from its
+/// first word, when it starts with `easement:`. A line inside a `/* */` block
+/// comment (` * …`) is a comment.
+fn directive<'a>(text: &'a str, comments: &Comments) -> Option<&'a str> {
+    if comments.block.iter().any(|(open, _)| *open == "/*")
+        && let Some(rest) = text.trim_start().strip_prefix('*')
         && let Some(found) = word(rest)
     {
         return Some(found);
@@ -86,8 +87,19 @@ fn directive(text: &str) -> Option<&str> {
             at += 1 + end + 1;
             continue;
         }
-        if let Some(opener) = OPENERS.iter().find(|o| rest.starts_with(**o)) {
+        let opener = comments
+            .line
+            .iter()
+            .chain(comments.block.iter().map(|(open, _)| open))
+            .find(|o| rest.starts_with(**o));
+        if let Some(opener) = opener {
             return word(&rest[opener.len()..]);
+        }
+        // A raw string between `#"` and `"#`, with as many `#` on each side
+        // (Rust's `r#"…"#`, Swift's `#"…"#`), where `#` opens no comment.
+        if let Some(end) = raw_string(rest) {
+            at += end;
+            continue;
         }
         at += c.len_utf8();
     }
@@ -98,6 +110,18 @@ fn directive(text: &str) -> Option<&str> {
 fn word(rest: &str) -> Option<&str> {
     let rest = rest.trim_start_matches(['/', '*', '!']).trim_start();
     rest.starts_with("easement:").then_some(rest)
+}
+
+/// The length of the raw string `text` starts with, `#"…"#` with one or more
+/// `#` on each side, when it closes on this line.
+fn raw_string(text: &str) -> Option<usize> {
+    let hashes = text.len() - text.trim_start_matches('#').len();
+    let body = text[hashes..].strip_prefix('"')?;
+    let close = format!("\"{}", &text[..hashes]);
+    (hashes > 0)
+        .then(|| body.find(&close))
+        .flatten()
+        .map(|end| hashes + 1 + end + close.len())
 }
 
 /// The byte offset of the unescaped `quote` that closes a string.
@@ -234,7 +258,7 @@ mod tests {
         let src = concat!(
             "// easement:disable-next-line dependency -- legacy export\n",
             "import x from './x'; // easement:disable-line dependency, privacy -- generated\n",
-            "# easement:disable-next-line privacy\n",
+            "/* easement:disable-next-line privacy */\n",
             "/* easement:disable-line privacy -- why */\n",
         );
         let got = parse("a.ts", src);
@@ -311,5 +335,84 @@ mod tests {
         ] {
             assert_eq!(found(line), 0, "{line}");
         }
+    }
+
+    /// A directive opens a comment as the file's language writes one; a file of
+    /// no language takes what any language writes.
+    /// A raw string runs from its `#`s and quote to the quote and as many `#`s that
+    /// close it; a plain string, or one that does not close on the line, is none.
+    #[test]
+    fn a_raw_string_runs_to_the_quote_and_hashes_that_close_it() {
+        assert_eq!(raw_string(r##"#"a"# x"##), Some(5));
+        assert_eq!(raw_string(r###"##"a"#b"## x"###), Some(10));
+        assert_eq!(raw_string(r#""a" x"#), None);
+        assert_eq!(raw_string(r##"#"a"##), None);
+    }
+
+    #[test]
+    fn a_directive_is_written_in_a_comment_of_the_files_language() {
+        let found = |file: &str, line: &str| parse(file, line).len();
+        for (file, line, count) in [
+            ("a.py", "# easement:disable-line dependency -- why", 1),
+            (
+                "a.py",
+                "x = a // b  # easement:disable-line dependency -- why",
+                1,
+            ),
+            ("a.py", "// easement:disable-line dependency -- why", 0),
+            ("a.ts", "# easement:disable-line dependency -- why", 0),
+            ("a.rb", "# easement:disable-line dependency -- why", 1),
+            ("a.php", "# easement:disable-line dependency -- why", 1),
+            (
+                "a.php",
+                "<!-- easement:disable-line dependency -- why -->",
+                1,
+            ),
+            (
+                "a.go",
+                "<!-- easement:disable-line dependency -- why -->",
+                0,
+            ),
+            (
+                "a.go",
+                " * easement:disable-next-line dependency -- in a block",
+                1,
+            ),
+            (
+                "a.py",
+                " * easement:disable-next-line dependency -- not a comment",
+                0,
+            ),
+            ("a", "<!-- easement:disable-line dependency -- why -->", 1),
+            (
+                "a.rs",
+                r##"let s = r#"// easement:disable-next-line dependency -- in a raw string"#;"##,
+                0,
+            ),
+            (
+                "a.rs",
+                r###"let s = r##"say "#" // easement:disable-line dependency -- in it"##;"###,
+                0,
+            ),
+            (
+                "a.rs",
+                r##"let s = r#"a " // easement:disable-line dependency -- in it"#;"##,
+                0,
+            ),
+            (
+                "a.swift",
+                r##"let s = #"// easement:disable-line dependency -- in a raw string"#"##,
+                0,
+            ),
+            (
+                "a.rs",
+                r##"let s = r#"raw"#; // easement:disable-line dependency -- after it"##,
+                1,
+            ),
+        ] {
+            assert_eq!(found(file, line), count, "{file}: {line}");
+        }
+        let php = parse("a.php", "<!-- easement:disable-line dependency -- why -->");
+        assert_eq!(php[0].reason.as_deref(), Some("why"));
     }
 }
