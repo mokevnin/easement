@@ -5,20 +5,33 @@ use std::collections::BTreeSet;
 
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 
-use super::{Declared, Declares, Framework, Setting, Source, line_at};
+use super::{Declared, Declares, Framework, Listed, Setting, Source, line_at, path_source};
 use crate::lang::parts::{Kind, Part};
+use crate::lang::registry::ManifestFile;
 use crate::lang::{Form, typescript};
+
+/// The table whose dependencies only the package's tests and tools need.
+const DEV: &str = "devDependencies";
+
+/// The parts a dependency of a `package.json` can belong to, as `part:` names them.
+pub(crate) const PART_NAMES: &[&str] = &[DEV];
 
 const SECTIONS: [&str; 4] = [
     "dependencies",
-    "devDependencies",
+    DEV,
     "peerDependencies",
     "optionalDependencies",
 ];
 
 /// The dependencies a `package.json` declares, with the line of each; `None` if it is
 /// no JSON.
-pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
+pub(crate) fn declared(file: &ManifestFile) -> Option<Listed> {
+    listed(file.path, file.text).map(Listed::from)
+}
+
+/// The dependencies the `package.json` at `manifest`, holding `text`, declares: a
+/// path is resolved against its directory.
+fn listed(manifest: &str, text: &str) -> Option<Vec<Declared>> {
     let strict = ParseOptions {
         allow_comments: false,
         allow_loose_object_property_names: false,
@@ -52,9 +65,9 @@ pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
                 continue;
             };
             let dependency_name = dependency.name.as_str();
-            let (package, source) = self::dependency(dependency_name, &version.value);
+            let (package, source) = self::dependency(manifest, dependency_name, &version.value);
             found.push(Declared {
-                part: (name == "devDependencies").then(|| Part {
+                part: (name == DEV).then(|| Part {
                     name: name.clone(),
                     kind: Some(Kind::Test),
                 }),
@@ -70,10 +83,11 @@ pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
     Some(found)
 }
 
-/// The package a dependency is and where it comes from, by what its version says: a
-/// path (`file:`, `link:`, `workspace:../x`), an alias (`npm:real@1`, `workspace:real@*`)
-/// or a range of the package that goes by its name.
-fn dependency(name: &str, version: &str) -> (String, Source) {
+/// The package a dependency of the `package.json` at `manifest` is and where it comes
+/// from, by what its version says: a path (`file:`, `link:`, `workspace:../x`), an
+/// alias (`npm:real@1`, `workspace:real@*`) or a range of the package that goes by its
+/// name.
+fn dependency(manifest: &str, name: &str, version: &str) -> (String, Source) {
     let alias = |text: &str| match text.rfind('@') {
         Some(at) if at > 0 => text[..at].to_string(),
         _ => name.to_string(),
@@ -82,11 +96,11 @@ fn dependency(name: &str, version: &str) -> (String, Source) {
         .strip_prefix("file:")
         .or_else(|| version.strip_prefix("link:"))
     {
-        return (name.to_string(), Source::Path(path.to_string()));
+        return (name.to_string(), path_source(manifest, path));
     }
     if let Some(rest) = version.strip_prefix("workspace:") {
         return if rest.starts_with('.') {
-            (name.to_string(), Source::Path(rest.to_string()))
+            (name.to_string(), path_source(manifest, rest))
         } else {
             (alias(rest), Source::Package)
         };
@@ -102,14 +116,14 @@ fn dependency(name: &str, version: &str) -> (String, Source) {
 }
 
 /// The name of the package a `package.json` declares.
-pub(super) fn name(text: &str) -> Option<String> {
+pub(crate) fn name(text: &str) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(text).ok()?;
     json["name"].as_str().map(str::to_string)
 }
 
 /// The files of the project a `package.json` in `dir` names as what its package
 /// runs or exports: `main`, `module`, `types`, `bin`, `exports` and `browser`.
-pub(super) fn entries(text: &str, dir: &str, files: &BTreeSet<&str>) -> Option<Vec<String>> {
+pub(crate) fn entries(text: &str, dir: &str, files: &BTreeSet<&str>) -> Option<Vec<String>> {
     let json = serde_json::from_str::<serde_json::Value>(text).ok()?;
     let mut named = Vec::new();
     for key in [
@@ -176,7 +190,7 @@ const FRAMEWORKS: &[Framework] = &[
 ];
 
 /// The frameworks a `package.json` lists in `dependencies` or `devDependencies`.
-pub(super) fn frameworks(text: &str) -> Vec<&'static Framework> {
+pub(crate) fn frameworks(text: &str) -> Vec<&'static Framework> {
     let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
         return Vec::new();
     };
@@ -201,7 +215,7 @@ fn collect_strings(value: &serde_json::Value, out: &mut Vec<String>) {
 
 /// The package an external module belongs to: `lodash` for `lodash/fp`,
 /// `@scope/pkg` for `@scope/pkg/x`.
-pub(super) fn package(module: &str) -> String {
+pub(crate) fn package(module: &str) -> String {
     let mut parts = module.split('/');
     let first = parts.next().unwrap_or_default();
     match parts.next() {
@@ -213,7 +227,7 @@ pub(super) fn package(module: &str) -> String {
 /// The package `specifier` names when it is spelled as an npm package: a name,
 /// scoped or not, of the characters npm takes (letters, digits, `-`, `.`, `_`,
 /// neither of the last two first), with any path after it.
-pub(super) fn named_by(specifier: &str) -> Option<String> {
+pub(crate) fn named_by(specifier: &str) -> Option<String> {
     let valid = |part: &str| {
         !part.is_empty()
             && !part.starts_with(['.', '_'])
@@ -236,7 +250,7 @@ pub(super) fn named_by(specifier: &str) -> Option<String> {
 /// dependencies, the packages whose types an `@types/` one declares, and its own
 /// name. A `package.json` with neither name nor dependency table only marks its
 /// directory (`{"type": "module"}`) and is no package of its own.
-pub(super) fn importable(text: &str) -> Declares {
+pub(crate) fn importable(text: &str) -> Declares {
     let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
         return Declares::Unreadable;
     };
@@ -244,7 +258,7 @@ pub(super) fn importable(text: &str) -> Declares {
         return Declares::Marker;
     }
     let mut names: BTreeSet<String> = name(text).into_iter().collect();
-    for dependency in declared(text).unwrap_or_default() {
+    for dependency in listed("package.json", text).unwrap_or_default() {
         // `@types/node` declares the types of `node`, `@types/a__b` of `@a/b`.
         if dependency.name.starts_with("@types/") {
             names.insert(npm_name(&dependency.name));
@@ -268,7 +282,7 @@ pub(crate) fn npm_name(package: &str) -> String {
 /// The packages TypeScript or JavaScript source names in an import, a `require`
 /// or an `import()` it writes, not in a comment or a string; a relative or
 /// absolute path names a file instead.
-pub(super) fn named_in_source(file: &str, source: &str) -> BTreeSet<String> {
+pub(crate) fn named_in_source(file: &str, source: &str) -> BTreeSet<String> {
     typescript::written_imports(file, source)
         .into_iter()
         .filter(|import| import.form != Form::Computed)
@@ -285,8 +299,9 @@ mod tests {
 
     type Row = (usize, String, String, Source, Option<String>);
 
+    /// The dependencies of a `package.json` at `web/package.json` holding `text`.
     fn rows(text: &str) -> Vec<Row> {
-        declared(text)
+        listed("web/package.json", text)
             .unwrap()
             .into_iter()
             .map(|d| (d.line, d.name, d.package, d.source, d.part.map(|p| p.name)))
@@ -320,7 +335,7 @@ mod tests {
             [
                 (4, n("api"), n("api"), Source::Package, None),
                 (5, n("lodash"), n("lodash"), Source::Package, None),
-                (6, n("local"), n("local"), Source::Path(n("../local")), None),
+                (6, n("local"), n("local"), Source::Path(n("local")), None),
                 (7, n("alias"), n("real-pkg"), Source::Package, None),
                 (
                     10,
@@ -333,7 +348,7 @@ mod tests {
                 (14, n("fsevents"), n("fsevents"), Source::Package, None),
             ]
         );
-        let kinds: Vec<_> = declared(text)
+        let kinds: Vec<_> = listed("web/package.json", text)
             .unwrap()
             .into_iter()
             .map(|d| d.part.and_then(|p| p.kind))
@@ -351,8 +366,8 @@ mod tests {
 
     #[test]
     fn a_package_json_that_is_no_json_is_unread_not_empty() {
-        assert!(declared("{ \"dependencies\": ").is_none());
-        assert_eq!(declared("{}").map(|v| v.len()), Some(0));
+        assert!(listed("package.json", "{ \"dependencies\": ").is_none());
+        assert_eq!(listed("package.json", "{}").map(|v| v.len()), Some(0));
         assert_eq!(name("{}"), None);
     }
 
@@ -371,7 +386,7 @@ mod tests {
             got,
             [
                 (n("a"), n("a"), Source::Package),
-                (n("b"), n("b"), Source::Path(n("../b"))),
+                (n("b"), n("b"), Source::Path(n("b"))),
                 (n("c"), n("real"), Source::Package),
                 (n("d"), n("@acme/real"), Source::Package),
             ]

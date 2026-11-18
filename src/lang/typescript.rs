@@ -228,7 +228,7 @@ pub fn spelled(specifier: &str) -> Spelled {
             .map_or(specifier, |(path, _)| path);
         return Spelled::Paths(vec![path.to_string()]);
     }
-    match crate::lang::registry::Manifest::Npm.named_by(specifier) {
+    match crate::lang::registry::PACKAGE_JSON.named_by(specifier) {
         Some(package) => Spelled::Package(package),
         None => Spelled::Neither,
     }

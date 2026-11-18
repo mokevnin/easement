@@ -65,7 +65,7 @@ pub fn undeclared(
         let Some(manifest) =
             package_manifest(&file, kind, root, &known, &mut manifests, &mut unreadable)
         else {
-            orphans.insert(kind.file_name());
+            orphans.insert(kind.file_name);
             unowned.insert(file.clone());
             continue;
         };
@@ -154,7 +154,7 @@ pub fn undeclared(
 /// An unreadable one stops the search and is recorded in `unreadable`.
 fn package_manifest(
     file: &str,
-    kind: Manifest,
+    kind: &Manifest,
     root: &Path,
     known: &BTreeSet<&str>,
     manifests: &mut BTreeMap<String, Option<BTreeSet<String>>>,
@@ -162,7 +162,7 @@ fn package_manifest(
 ) -> Option<String> {
     let mut below = file.to_string();
     loop {
-        let manifest = nearest(&below, kind.file_name(), known)?;
+        let manifest = nearest(&below, kind.file_name, known)?;
         let declares = manifests
             .entry(manifest.clone())
             .or_insert_with(|| {
@@ -235,7 +235,7 @@ mod tests {
         let (mut manifests, mut unreadable) = (BTreeMap::new(), BTreeSet::new());
         let found = package_manifest(
             "src/esm/a.ts",
-            Manifest::Npm,
+            &registry::PACKAGE_JSON,
             dir.path(),
             &known,
             &mut manifests,
@@ -256,7 +256,7 @@ mod tests {
         let (mut manifests, mut unreadable) = (BTreeMap::new(), BTreeSet::new());
         let found = package_manifest(
             "src/lib.rs",
-            Manifest::Cargo,
+            &registry::CARGO_TOML,
             dir.path(),
             &known,
             &mut manifests,

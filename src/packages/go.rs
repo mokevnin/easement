@@ -6,7 +6,8 @@ use std::str::FromStr;
 
 use gomod_parser::{GoMod, Replacement};
 
-use super::{Declared, Declares, Source, line_at};
+use super::{Declared, Declares, Listed, Source, line_at, path_source};
+use crate::lang::registry::ManifestFile;
 
 /// What easement reads of a `go.mod`, with every path as Go reads it.
 struct Mod {
@@ -74,7 +75,13 @@ fn go_string(path: &str) -> Option<String> {
 /// The modules a `go.mod` requires directly, with the line of each. A `replace` by a
 /// directory next to the module makes it a package of the project by path. `None` for a
 /// `go.mod` that cannot be read.
-pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
+pub(crate) fn declared(file: &ManifestFile) -> Option<Listed> {
+    listed(file.path, file.text).map(Listed::from)
+}
+
+/// The modules the `go.mod` at `manifest`, holding `text`, requires directly: a
+/// directory a `replace` names is resolved against its own.
+fn listed(manifest: &str, text: &str) -> Option<Vec<Declared>> {
     let go_mod = parse(text)?;
     Some(
         go_mod
@@ -86,7 +93,7 @@ pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
                     .local
                     .iter()
                     .find(|(module, _)| *module == require.module)
-                    .map_or(Source::Package, |(_, dir)| Source::Path(dir.clone()));
+                    .map_or(Source::Package, |(_, dir)| path_source(manifest, dir));
                 let line = line_at(text, require.offset);
                 Declared::new(line, &require.module, &require.module, source)
             })
@@ -95,7 +102,7 @@ pub(super) fn declared(text: &str) -> Option<Vec<Declared>> {
 }
 
 /// The module path a `go.mod` declares.
-pub(super) fn name(text: &str) -> Option<String> {
+pub(crate) fn name(text: &str) -> Option<String> {
     parse(text)
         .map(|go_mod| go_mod.module)
         .filter(|module| !module.is_empty())
@@ -104,7 +111,7 @@ pub(super) fn name(text: &str) -> Option<String> {
 /// What the files under a `go.mod` may import: its own module and every module it
 /// requires, an `// indirect` one too, since `go build` builds with it. A `go.mod`
 /// that cannot be read makes it unreadable.
-pub(super) fn importable(text: &str) -> Declares {
+pub(crate) fn importable(text: &str) -> Declares {
     let Some(go_mod) = parse(text) else {
         return Declares::Unreadable;
     };
@@ -118,7 +125,7 @@ pub(super) fn importable(text: &str) -> Declares {
 
 /// Whether one of the modules `names` holds `package`: a Go import names a
 /// package path, which its module is a prefix of.
-pub(super) fn covers(names: &BTreeSet<String>, package: &str) -> bool {
+pub(crate) fn covers(names: &BTreeSet<String>, package: &str) -> bool {
     names
         .iter()
         .any(|m| package == m || package.starts_with(&format!("{m}/")))
@@ -131,8 +138,9 @@ mod tests {
 
     type Row = (usize, String, String, Source);
 
+    /// The modules a `go.mod` at `app/go.mod` holding `text` requires.
     fn rows(text: &str) -> Vec<Row> {
-        declared(text)
+        listed("app/go.mod", text)
             .unwrap()
             .into_iter()
             .map(|d| (d.line, d.name, d.package, d.source))
@@ -167,7 +175,7 @@ mod tests {
                     6,
                     n("example.com/lib"),
                     n("example.com/lib"),
-                    Source::Path(n("../lib"))
+                    Source::Path(n("lib"))
                 ),
                 (
                     7,
@@ -179,7 +187,7 @@ mod tests {
                     10,
                     n("github.com/x/y"),
                     n("github.com/x/y"),
-                    Source::Path(n("./vendor/y"))
+                    Source::Path(n("app/vendor/y"))
                 ),
             ]
         );
@@ -196,7 +204,7 @@ mod tests {
 
     #[test]
     fn a_go_mod_with_no_requirements_declares_nothing() {
-        assert_eq!(declared("module a\n").map(|v| v.len()), Some(0));
+        assert_eq!(listed("app/go.mod", "module a\n").map(|v| v.len()), Some(0));
         assert_eq!(name("go 1.22\n"), None);
     }
 
@@ -216,12 +224,12 @@ mod tests {
             [
                 (
                     "example.com/rel".to_string(),
-                    Source::Path("./rel".to_string())
+                    Source::Path("app/rel".to_string())
                 ),
                 ("example.com/abs".to_string(), Source::Package),
                 (
                     "example.com/back".to_string(),
-                    Source::Path("../back".to_string())
+                    Source::Path("back".to_string())
                 ),
             ]
         );
@@ -259,7 +267,7 @@ mod tests {
                 4,
                 "example.com/lib".to_string(),
                 "example.com/lib".to_string(),
-                Source::Path("../lib".to_string())
+                Source::Path("lib".to_string())
             )]
         );
         assert_eq!(name(text), Some("example.com/app".to_string()));
@@ -267,7 +275,7 @@ mod tests {
 
     #[test]
     fn a_directive_go_does_not_know_is_unread_not_skipped() {
-        assert!(declared("module a\n\nfrobnicate x\n").is_none());
+        assert!(listed("app/go.mod", "module a\n\nfrobnicate x\n").is_none());
     }
 
     /// Go takes a path as an interpreted string (`"a/b"`), not as a raw one; a
@@ -279,7 +287,7 @@ mod tests {
             "module a\n\nrequire `example.com/x` v1.0.0\n",
             "module a\n\nrequire example.com/x v1.0.0\n\nreplace example.com/x => `../x`\n",
         ] {
-            assert!(declared(text).is_none(), "{text}");
+            assert!(listed("app/go.mod", text).is_none(), "{text}");
             assert_eq!(name(text), None, "{text}");
             assert!(matches!(importable(text), Declares::Unreadable), "{text}");
         }
@@ -287,6 +295,12 @@ mod tests {
 
     #[test]
     fn a_block_that_never_closes_is_unread_not_empty() {
-        assert!(declared("module a\n\nrequire (\n\texample.com/x v1.0.0\n").is_none());
+        assert!(
+            listed(
+                "app/go.mod",
+                "module a\n\nrequire (\n\texample.com/x v1.0.0\n"
+            )
+            .is_none()
+        );
     }
 }

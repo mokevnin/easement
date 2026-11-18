@@ -54,7 +54,7 @@ rules:
     may_depend_on: [registry, parts]
     # The entry of one language, or one kind of manifest: only the registry, the
     # indexers, the adapters and `packages` name one; everything else asks a field
-    # of the entry or a method of `Manifest` (AGENTS.md).
+    # of the entry of a language or of a kind of manifest (AGENTS.md).
     forbid_symbol: &one_language
       - easement::lang::registry.GO
       - easement::lang::registry.TYPESCRIPT
@@ -66,9 +66,9 @@ rules:
       - easement::lang::registry.SWIFT
       - easement::lang::registry.RUBY
       - easement::lang::registry.RUST
-      - easement::lang::registry::Manifest.Npm
-      - easement::lang::registry::Manifest.Go
-      - easement::lang::registry::Manifest.Cargo
+      - easement::lang::registry.PACKAGE_JSON
+      - easement::lang::registry.GO_MOD
+      - easement::lang::registry.CARGO_TOML
     because: the core is language-agnostic; what differs by language goes through the registry (AGENTS.md)
   registry: { may_depend_on: [core, parts, languages] }
   parts: { may_depend_on: [] }
