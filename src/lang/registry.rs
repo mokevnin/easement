@@ -481,11 +481,34 @@ pub struct UnrelatedSpan {
     pub through_alias: bool,
 }
 
+/// How a language writes a comment, in which a suppression is written.
+#[derive(Debug)]
+pub struct Comments {
+    /// What opens a comment that runs to the end of its line (`//`, `#`).
+    pub line: &'static [&'static str],
+    /// What opens and what closes a block comment (`/*` and `*/`).
+    pub block: &'static [(&'static str, &'static str)],
+}
+
+/// `//` and `/* */`, as the languages of C's family write comments.
+const C_COMMENTS: Comments = Comments {
+    line: &["//"],
+    block: &[("/*", "*/")],
+};
+
+/// `#` to the end of the line.
+const HASH_COMMENTS: Comments = Comments {
+    line: &["#"],
+    block: &[],
+};
+
 #[derive(Debug)]
 pub struct Language {
     pub name: &'static str,
     /// Extensions of its source files.
     pub extensions: &'static [&'static str],
+    /// How it writes a comment.
+    pub comments: Comments,
     /// Suffixes of its declaration files (`d.ts`), which declare the types of code
     /// written elsewhere: one is the module its name says without the suffix, no
     /// import has to reach it, and an index need not hold it to cover the project.
@@ -574,6 +597,7 @@ const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx",
 pub static GO: Language = Language {
     name: "go",
     extensions: &["go"],
+    comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*_test.go"],
     not_tests: &[],
@@ -640,6 +664,7 @@ pub static GO: Language = Language {
 pub static TYPESCRIPT: Language = Language {
     name: "typescript",
     extensions: TYPESCRIPT_EXTENSIONS,
+    comments: C_COMMENTS,
     declarations: &["d.ts", "d.mts", "d.cts"],
     tests: &["**/*.test.*", "**/*.spec.*", "**/__tests__/**"],
     not_tests: &[],
@@ -707,6 +732,7 @@ pub static TYPESCRIPT: Language = Language {
 pub static PYTHON: Language = Language {
     name: "python",
     extensions: &["py", "pyi"],
+    comments: HASH_COMMENTS,
     declarations: &[],
     tests: &["**/test_*.py", "**/*_test.py"],
     not_tests: &[],
@@ -784,6 +810,7 @@ pub static PYTHON: Language = Language {
 pub static JAVA: Language = Language {
     name: "java",
     extensions: &["java"],
+    comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Test.java", "**/*Tests.java"],
     not_tests: &[],
@@ -848,6 +875,7 @@ pub static JAVA: Language = Language {
 pub static KOTLIN: Language = Language {
     name: "kotlin",
     extensions: &["kt", "kts"],
+    comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Test.kt", "**/*Tests.kt"],
     not_tests: &[],
@@ -882,6 +910,7 @@ pub static KOTLIN: Language = Language {
 pub static CSHARP: Language = Language {
     name: "csharp",
     extensions: &["cs"],
+    comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Test.cs", "**/*Tests.cs"],
     not_tests: &[],
@@ -939,6 +968,11 @@ pub static CSHARP: Language = Language {
 pub static PHP: Language = Language {
     name: "php",
     extensions: &["php"],
+    // A PHP file holds HTML around its code.
+    comments: Comments {
+        line: &["//", "#"],
+        block: &[("/*", "*/"), ("<!--", "-->")],
+    },
     declarations: &[],
     tests: &["**/*Test.php"],
     not_tests: &[],
@@ -996,6 +1030,7 @@ pub static PHP: Language = Language {
 pub static SWIFT: Language = Language {
     name: "swift",
     extensions: &["swift"],
+    comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Tests.swift"],
     not_tests: &[],
@@ -1028,6 +1063,7 @@ pub static SWIFT: Language = Language {
 pub static RUBY: Language = Language {
     name: "ruby",
     extensions: &["rb"],
+    comments: HASH_COMMENTS,
     declarations: &[],
     tests: &[],
     not_tests: &[],
@@ -1087,6 +1123,7 @@ pub static RUBY: Language = Language {
 pub static RUST: Language = Language {
     name: "rust",
     extensions: &["rs"],
+    comments: C_COMMENTS,
     declarations: &[],
     // Cargo's integration tests, benchmarks and examples: targets built with the
     // dev-dependencies. A module of one of those names under `src/` is the crate's
@@ -1305,6 +1342,27 @@ pub fn is_toolchain_dir(dir: &str) -> bool {
     LANGUAGES
         .iter()
         .any(|language| language.foreign_dirs.contains(&dir) || language.third_party.contains(&dir))
+}
+
+/// How the language of `file` writes a comment; for a file of no language,
+/// every way some language writes one.
+pub fn comments_of(file: &str) -> &'static Comments {
+    static EVERY: LazyLock<Comments> = LazyLock::new(|| {
+        let line: BTreeSet<&'static str> = LANGUAGES
+            .iter()
+            .flat_map(|language| language.comments.line.iter().copied())
+            .collect();
+        let block: BTreeSet<(&'static str, &'static str)> = LANGUAGES
+            .iter()
+            .flat_map(|language| language.comments.block.iter().copied())
+            .collect();
+        // Once, for the life of the process, as every other entry is static.
+        Comments {
+            line: Vec::from_iter(line).leak(),
+            block: Vec::from_iter(block).leak(),
+        }
+    });
+    of(file).map_or(&EVERY, |language| &language.comments)
 }
 
 /// The kind of manifest a file is, by its name.
