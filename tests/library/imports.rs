@@ -135,7 +135,10 @@ fn an_import_the_index_takes_nowhere_is_a_gap_that_names_its_cause() {
         at(&[(7, "../lib/polyfill")])
     );
     assert_eq!(
-        places(&checked, "the index holds no `require()`"),
+        places(
+            &checked,
+            "the index holds no module of 1 call(s) that import one"
+        ),
         at(&[(14, "../lib/util")])
     );
     assert_eq!(

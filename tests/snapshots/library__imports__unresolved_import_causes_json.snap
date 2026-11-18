@@ -57,22 +57,6 @@ expression: "report[\"evidence_gaps\"]"
     ]
   },
   {
-    "close": "write `import`, or `import x = require()`, instead of `require()`",
-    "count": 1,
-    "files": [
-      "src/app/main.ts"
-    ],
-    "kind": "unresolved_imports",
-    "message": "the index holds no `require()` of 1 import(s), so the dependencies they write were not checked (the compiler records `require()` only where it knows `require`: in JavaScript, or with `@types/node`): src/app/main.ts:14 (`../lib/util`)",
-    "places": [
-      {
-        "file": "src/app/main.ts",
-        "line": 14,
-        "specifier": "../lib/util"
-      }
-    ]
-  },
-  {
     "close": "write each target as a literal path, or review those dependencies by hand",
     "count": 1,
     "files": [
@@ -95,6 +79,22 @@ expression: "report[\"evidence_gaps\"]"
         "file": "src/app/main.ts",
         "line": 18,
         "specifier": "../lib/*.ts"
+      }
+    ]
+  },
+  {
+    "close": "write `import`, or `import x = require()`, instead of `require()`",
+    "count": 1,
+    "files": [
+      "src/app/main.ts"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the index holds no module of 1 call(s) that import one, so the dependencies they write were not checked (the compiler records `require()` only where it knows `require`: in JavaScript, or with `@types/node`): src/app/main.ts:14 (`../lib/util`)",
+    "places": [
+      {
+        "file": "src/app/main.ts",
+        "line": 14,
+        "specifier": "../lib/util"
       }
     ]
   }

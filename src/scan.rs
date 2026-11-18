@@ -189,7 +189,9 @@ fn compare(
             let resolution = resolved(&import);
             // A call reads its module in its own terms (a package it is given), so
             // its text names no file.
-            let spelled = written.spelled.filter(|_| form != Form::ImportCall);
+            let spelled = written
+                .spelled
+                .filter(|_| form != Form::ImportCall { as_import: false });
             let target = match spelled.map(|spelled| spelled(&import.specifier)) {
                 _ if resolution == scip::Resolution::Target => return Compared::Resolved,
                 Some(Spelled::Paths(paths)) => only_file(file, &paths, &exists),
@@ -208,8 +210,7 @@ fn compare(
             match (resolution, form) {
                 (scip::Resolution::Wildcard, _) => Cause::Wildcard,
                 (_, Form::SideEffect) => Cause::SideEffect,
-                (_, Form::Require) => Cause::Require,
-                (_, Form::ImportCall) => Cause::ImportCall,
+                (_, Form::ImportCall { .. }) => Cause::ImportCall,
                 _ => Cause::NoTarget,
             }
         }
