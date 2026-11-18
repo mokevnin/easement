@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.9.0](https://github.com/mokevnin/easement/compare/v0.8.0...v0.9.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **packages:** make each kind of manifest an entry of the registry ([#229](https://github.com/mokevnin/easement/issues/229))
+* **scip:** `easement::scip::UNNAMED` is gone (the reason is `registry::UnnamedPackages::cause` of the entry, `lang::typescript::UNNAMED`); `easement::scip::symbol` is public and the registry's `Indexer` has the fields `scheme`, `symbols` and `unnamed`.
+* **lang:** `easement::indexer::INDEXERS` and `Language.adapter` are gone; use `Language::indexer()` and `Language::adapter()`.
+* **lang:** `easement::lang::Form::Require` and `Cause::Require` are gone, and the `unresolved_imports` gap of an unrecorded `require()` says "the index holds no module of N call(s) that import one".
+* **symbols:** a `forbid_symbol` name with a short qualifier in Rust, Python, Java, C# or PHP now fires where it was silent.
+* **impact:** the text of `impact` lists each dependent on a line of its own as its chain, not the files of a component on one line, and `dependents` in JSON comes nearest first instead of in path order.
+
+### Features
+
+* **impact:** give each dependent its shortest import chain to the change ([ea12737](https://github.com/mokevnin/easement/commit/ea12737b2322dfc5f624a5fdb9604041e27939ac)), closes [#191](https://github.com/mokevnin/easement/issues/191)
+
+
+### Bug Fixes
+
+* **init:** take the directories a toolchain fills from the registry ([#225](https://github.com/mokevnin/easement/issues/225)) ([634f853](https://github.com/mokevnin/easement/commit/634f853ca2b9505b1242b8077cc81ba33f47c60f))
+* **suppress:** hold each rule a directive names to a violation on its line ([57931d3](https://github.com/mokevnin/easement/commit/57931d38c5f870a140ba60d71a4f300601a0bd29))
+* **symbols:** judge a Rust method of an impl block as a member of its type ([5750b76](https://github.com/mokevnin/easement/commit/5750b76f99c532ab6a6a83c2369865d0ddb7c579))
+* **symbols:** match a forbid_symbol qualifier by the end of its module path in every language ([#224](https://github.com/mokevnin/easement/issues/224)) ([7fe6800](https://github.com/mokevnin/easement/commit/7fe680063c2117ae023799d74e36c341959f4395))
+
+
+### Code Refactoring
+
+* **lang:** make require() an import call, not a cause of its own ([#227](https://github.com/mokevnin/easement/issues/227)) ([50ce79f](https://github.com/mokevnin/easement/commit/50ce79f312e850d6b755804b4c8be89562f0b478))
+* **lang:** make the indexer a field of the language entry ([#226](https://github.com/mokevnin/easement/issues/226)) ([a2f127b](https://github.com/mokevnin/easement/commit/a2f127b6e91175c8eb6f889b03bb3956475848d1))
+* **packages:** make each kind of manifest an entry of the registry ([#229](https://github.com/mokevnin/easement/issues/229)) ([d636d4f](https://github.com/mokevnin/easement/commit/d636d4f1caecbecb19235b66eca46548f35c3953))
+* **scip:** read each scheme by its language entry ([#228](https://github.com/mokevnin/easement/issues/228)) ([49ea40a](https://github.com/mokevnin/easement/commit/49ea40a687e53de5bc01ec61391e78975ceb040e))
+
 ## [0.8.0](https://github.com/mokevnin/easement/compare/v0.7.0...v0.8.0) (2026-11-17)
 
 
