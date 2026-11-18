@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::policy::Policy;
 use crate::{
     chains, check, diagram, examples, implementations, indexer, lang, manifests, matching, relpath,
-    scan, scip, suppress, symbols, unused,
+    scan, suppress, symbols, unused,
 };
 
 pub struct Project {
@@ -228,8 +228,20 @@ impl Project {
             stats.packages_partial = scan.packages_problems.clone();
         }
         stats.declarations_partial = scan.declarations_problems.clone();
-        stats.symbols_partial =
-            symbols::symbols_partial(self.config(), &map, &scan.unnamed_uses, &scip::UNNAMED);
+        // Each language whose index may leave packages unnamed says why, of its files.
+        stats.symbols_partial = lang::registry::LANGUAGES
+            .iter()
+            .filter_map(|language| Some((*language, language.indexer()?.unnamed.as_ref()?)))
+            .flat_map(|(language, unnamed)| {
+                let files: Vec<String> = scan
+                    .unnamed_uses
+                    .iter()
+                    .filter(|file| lang::registry::is(Path::new(file.as_str()), language))
+                    .cloned()
+                    .collect();
+                symbols::symbols_partial(self.config(), &map, &files, &unnamed.cause)
+            })
+            .collect();
         let paths: Vec<&str> = scan.paths.iter().map(String::as_str).collect();
         stats.symbols_partial.extend(symbols::symbols_unverified(
             self.config(),

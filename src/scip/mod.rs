@@ -26,14 +26,14 @@ use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 use crate::check::SymbolRef;
 use crate::flow::{Edge, Flow, Node, Use};
 use crate::lang::parts::Part;
-use crate::lang::registry::{self, Manifest};
+use crate::lang::registry::{self, Language};
 use crate::lang::{
     AliasDefinition, Aliased, Dep, Elsewhere, Hop, Import, Mention, Scope, Through, Written,
 };
 use crate::lang::{Target, Unit};
 use crate::relpath;
 
-mod symbol;
+pub mod symbol;
 
 use symbol::{Kind, Name, Shape, read, split};
 
@@ -49,21 +49,11 @@ pub struct Reference {
     /// document's `encoding`; `None` when its range is not on one line.
     pub columns: Option<(usize, usize)>,
     pub symbol: String,
-    /// For a reference into an unnamed npm package (see `UNNAMED_NPM`) that
-    /// stands on the string of an import: the module the string spells.
+    /// For a reference into a package the index left unnamed that stands on the
+    /// string of an import: the module the string spells, as the entry of its
+    /// language reads it ([`registry::UnnamedPackages`]).
     pub spelled: Option<String>,
 }
-
-/// How scip-typescript begins a symbol defined under a `package.json` with no
-/// `name`, such as the `{"type": "module"}` that marks `esm/` in a published
-/// package: which package that is, only the import in the source still says.
-const UNNAMED_NPM: &str = "scip-typescript npm . . ";
-
-/// Why the package of a name under [`UNNAMED_NPM`] is unknown, for the report.
-pub const UNNAMED: crate::symbols::Unnamed = crate::symbols::Unnamed {
-    what: "the npm package",
-    why: "a `package.json` without `name` inside the package hides it from the indexer, so those uses were not checked; scip-typescript 0.6.1 or newer names such a package: update the indexer and run again",
-};
 
 /// A source file of the index, with the paths relative to the project root.
 #[derive(Debug, Clone, Default)]
@@ -409,6 +399,10 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
             supertypes,
             ..Document::default()
         };
+        // The packages the index of the document's language may leave unnamed.
+        let unnamed = registry::of(&parsed.path)
+            .and_then(Language::indexer)
+            .and_then(|indexer| indexer.unnamed.as_ref());
         for occurrence in &document.occurrences {
             if is_local(&occurrence.symbol)
                 && occurrence.symbol_roles & DEFINITION != 0
@@ -453,14 +447,13 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
                 }
                 parsed.definitions.push(occurrence.symbol.clone());
             } else {
-                let spelled = match occurrence.symbol.starts_with(UNNAMED_NPM) {
-                    true => {
+                let spelled = unnamed
+                    .filter(|unnamed| (unnamed.is)(&occurrence.symbol))
+                    .and_then(|unnamed| {
                         let lines = source.get_or_insert_with(|| read_lines(root, &parsed.path));
-                        spelled_module(lines, occurrence, encoding)
-                            .filter(|module| installed(&root.join(&parsed.path), module))
-                    }
-                    false => None,
-                };
+                        let string = string_at(lines, occurrence, encoding)?;
+                        (unnamed.spelled)(string, &root.join(&parsed.path))
+                    });
                 parsed.references.push(Reference {
                     line: line_of(occurrence) + 1,
                     columns: single_line(occurrence).map(|(_, start, end)| (start, end)),
@@ -484,32 +477,15 @@ fn read_lines(root: &Path, path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether the npm package of `module` is in a `node_modules` above `file`,
-/// where TypeScript finds a package. A project without `name` in its
-/// `package.json` is unnamed too, and an alias into it (`@/gen/api` through
-/// `paths`) spells no package.
-fn installed(file: &Path, module: &str) -> bool {
-    let package = Manifest::Npm.package(module);
-    file.ancestors()
-        .skip(1)
-        .any(|dir| dir.join("node_modules").join(&package).is_dir())
-}
-
-/// The package an import names when `occurrence` stands on its string
-/// (`"hono"`, `'@scope/pkg/sub'`); `None` for a name, a relative path or a
-/// range over more than one line.
-fn spelled_module(
-    lines: &[String],
+/// What the string an occurrence stands on holds between its quotes (`"hono"`,
+/// `'@scope/pkg/sub'`); `None` for a name, or a range over more than one line.
+fn string_at<'a>(
+    lines: &'a [String],
     occurrence: &Occurrence,
     encoding: PositionEncoding,
-) -> Option<String> {
+) -> Option<&'a str> {
     let (line, start, end) = single_line(occurrence)?;
-    let module = unquoted(between(lines.get(line)?, (start, end), encoding)?)?;
-    let bare = !module.is_empty()
-        && !module.starts_with(['.', '/'])
-        && !module.contains("${")
-        && !module.contains(['"', '\'', '`']);
-    bare.then(|| module.to_string())
+    unquoted(between(lines.get(line)?, (start, end), encoding)?)
 }
 
 /// The line, 0-based, and the start and end columns of an occurrence whose
@@ -3169,7 +3145,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unnamed_package_is_what_the_string_of_its_import_spells() {
+    fn the_string_an_occurrence_stands_on_is_read_between_its_quotes() {
         let at = |line: i32, start: i32, end: i32| {
             let mut occurrence = Occurrence::new();
             occurrence.range = vec![line, start, end];
@@ -3184,30 +3160,19 @@ mod tests {
         .map(str::to_string)
         .to_vec();
         let utf16 = PositionEncoding::UnspecifiedPositionEncoding;
+        assert_eq!(string_at(&lines, &at(0, 21, 27), utf16), Some("hono"));
+        assert_eq!(string_at(&lines, &at(0, 9, 13), utf16), None, "a name");
+        assert_eq!(string_at(&lines, &at(1, 14, 23), utf16), Some("./local"));
         assert_eq!(
-            spelled_module(&lines, &at(0, 21, 27), utf16).as_deref(),
-            Some("hono")
-        );
-        assert_eq!(spelled_module(&lines, &at(0, 9, 13), utf16), None, "a name");
-        assert_eq!(
-            spelled_module(&lines, &at(1, 14, 23), utf16),
-            None,
-            "a path"
-        );
-        assert_eq!(
-            spelled_module(&lines, &at(2, 20, 36), utf16).as_deref(),
+            string_at(&lines, &at(2, 20, 36), utf16),
             Some("@scope/pkg/sub")
         );
         let utf8 = PositionEncoding::UTF8CodeUnitOffsetFromLineStart;
         assert_eq!(
-            spelled_module(&lines, &at(2, 21, 37), utf8).as_deref(),
+            string_at(&lines, &at(2, 21, 37), utf8),
             Some("@scope/pkg/sub")
         );
-        assert_eq!(
-            spelled_module(&lines, &at(9, 0, 1), utf16),
-            None,
-            "no such line"
-        );
+        assert_eq!(string_at(&lines, &at(9, 0, 1), utf16), None, "no such line");
     }
 
     #[test]

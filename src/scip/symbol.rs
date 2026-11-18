@@ -1,16 +1,16 @@
-//! Reads a SCIP symbol into the shape every language shares ([`Name`]): what
-//! differs by scheme (`scip-ruby`, `scip-java`, `scip-dotnet`, `scip-php`, the
-//! namespaces of the rest) ends here.
+//! Reads a SCIP symbol into the shape every language shares ([`Name`]). What
+//! differs by scheme is said by the entry of the language whose indexer writes it
+//! ([`registry::Symbols`]): data, or a hook in `lang/<language>.rs`. This module
+//! holds what every scheme shares: the symbol split into its fields and
+//! descriptors, and the readings of modules and of classes those entries choose.
 
 use std::borrow::Cow;
 
-use super::UNNAMED_NPM;
-use crate::lang::registry;
-use crate::packages::npm_name;
+use crate::lang::registry::{self, Symbols};
 
 /// How a descriptor of a symbol ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kind {
+pub enum Kind {
     Namespace,
     /// A class, interface or other type: `Name#`.
     Type,
@@ -21,14 +21,14 @@ pub(super) enum Kind {
 
 /// A symbol split into the package that owns it and its descriptors.
 #[derive(Debug)]
-pub(super) struct Parsed<'a> {
-    pub(super) scheme: Cow<'a, str>,
-    pub(super) package: Cow<'a, str>,
-    pub(super) descriptors: Vec<(String, Kind)>,
+pub struct Parsed<'a> {
+    pub scheme: Cow<'a, str>,
+    pub package: Cow<'a, str>,
+    pub descriptors: Vec<(String, Kind)>,
 }
 
 /// `scheme manager package version descriptors`.
-pub(super) fn split(symbol: &str) -> Option<Parsed<'_>> {
+pub fn split(symbol: &str) -> Option<Parsed<'_>> {
     let ([scheme, _manager, package, _version], start) = header(symbol)?;
     let descriptors = descriptors(&symbol[start..])?;
     Some(Parsed {
@@ -67,7 +67,7 @@ fn header(symbol: &str) -> Option<([Cow<'_, str>; 4], usize)> {
 /// The descriptors of a symbol: a name, quoted in backticks when it holds
 /// anything but identifier characters, and a suffix (`/` namespace, `#` type,
 /// `.` term, `().` method, `:` meta, `!` macro, `[T]` type parameter, `(p)` parameter).
-pub(super) fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
+pub fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
     scan(text).map(|found| {
         found
             .into_iter()
@@ -77,7 +77,7 @@ pub(super) fn descriptors(text: &str) -> Option<Vec<(String, Kind)>> {
 }
 
 /// The descriptors with the offset, in characters, at which each one ends.
-pub(super) fn scan(text: &str) -> Option<Vec<(String, Kind, usize)>> {
+pub fn scan(text: &str) -> Option<Vec<(String, Kind, usize)>> {
     let chars: Vec<char> = text.chars().collect();
     let mut at = 0;
     let mut found = Vec::new();
@@ -130,7 +130,7 @@ pub(super) fn scan(text: &str) -> Option<Vec<(String, Kind, usize)>> {
 
 /// The name that starts at `at`, quoted in backticks (a doubled one stands for itself)
 /// or of identifier characters, and the offset just past it.
-pub(super) fn identifier(chars: &[char], mut at: usize) -> Option<(String, usize)> {
+pub fn identifier(chars: &[char], mut at: usize) -> Option<(String, usize)> {
     let mut name = String::new();
     if chars.get(at) == Some(&'`') {
         at += 1;
@@ -158,7 +158,7 @@ pub(super) fn identifier(chars: &[char], mut at: usize) -> Option<(String, usize
 }
 
 /// `symbol` with only its first `count` descriptors.
-pub(super) fn cut(symbol: &str, count: usize) -> String {
+pub fn cut(symbol: &str, count: usize) -> String {
     let start = header(symbol).map_or(symbol.len(), |(_, start)| start);
     let text = &symbol[start..];
     let end = match count.checked_sub(1) {
@@ -178,32 +178,32 @@ pub(super) fn cut(symbol: &str, count: usize) -> String {
 /// symbol of each scheme into this shape; past it, nothing tells one language from
 /// another, and [`super::Indexed::facts`] makes the same facts of the same shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Name {
-    pub(super) shape: Shape,
+pub struct Name {
+    pub shape: Shape,
     /// The symbol whose definition is the name's home: the symbol itself, or the
     /// module that a constructor or a nested type stands for.
-    pub(super) symbol: String,
+    pub symbol: String,
     /// For a member, the name it belongs to, whose home stands for the member's
     /// when the index defines no member.
-    pub(super) owner: Option<String>,
+    pub owner: Option<String>,
     /// The package that owns the symbol, with the scheme: what tells the project's own
     /// symbols from those of its dependencies. `None` when the index gives both the same.
-    pub(super) package: Option<String>,
+    pub package: Option<String>,
     /// The names of the module the symbol is, or lives in.
-    pub(super) path: Vec<String>,
+    pub path: Vec<String>,
     /// The names below that module: the top-level name, then the member.
-    pub(super) inner: Vec<String>,
+    pub inner: Vec<String>,
     /// The external module, in the spelling of the language's imports and of `forbid_external`.
-    pub(super) external: String,
+    pub external: String,
     /// What `forbid_symbol` calls it; `None` for a module that is a place, not a name
     /// (a Go package, a TypeScript file).
-    pub(super) called: Option<Called>,
-    pub(super) reading: Reading,
+    pub called: Option<Called>,
+    pub reading: Reading,
 }
 
 /// What a name is to the rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum Shape {
+pub enum Shape {
     /// A package or namespace named on its own, which is no dependency.
     Package,
     /// The unit names live in, a dependency even when it is external: a Go package, a
@@ -222,22 +222,22 @@ pub(super) enum Shape {
 
 /// How `forbid_symbol` and `public_symbols` call a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Called {
-    pub(super) qualifier: Qualifier,
-    pub(super) name: String,
+pub struct Called {
+    pub qualifier: Qualifier,
+    pub name: String,
     /// The member of the name that is used: a method, a variant, a constant.
-    pub(super) member: Option<Member>,
+    pub member: Option<Member>,
 }
 
 /// A member of a name, and what `forbid_symbol` calls it through.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Member {
-    pub(super) through: Through,
-    pub(super) name: String,
+pub struct Member {
+    pub through: Through,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Through {
+pub enum Through {
     /// As the index spells it: `Shop::Db::Client`.
     Spelled(String),
     /// The qualifier of the name and the name, joined by this: `db::client` `::`
@@ -248,7 +248,7 @@ pub(super) enum Through {
 impl Called {
     /// The qualifier of the name as the symbol rules write it: as the index spells it,
     /// else the module path of `file`, the file that defines it, when one does.
-    pub(super) fn qualifier_in(&self, file: Option<&str>) -> String {
+    pub fn qualifier_in(&self, file: Option<&str>) -> String {
         match (&self.qualifier, file) {
             (Qualifier::Spelled(qualifier), _) => qualifier.clone(),
             (Qualifier::File(_), Some(file)) => registry::module_path(file).to_string(),
@@ -258,7 +258,7 @@ impl Called {
 
     /// The member used, as `forbid_symbol` names it: what it is called through, and
     /// its name. `specifier` is the qualifier of the name as the use spells it.
-    pub(super) fn method(&self, specifier: &str) -> Option<(String, String)> {
+    pub fn method(&self, specifier: &str) -> Option<(String, String)> {
         let member = self.member.as_ref()?;
         let through = match &member.through {
             Through::Spelled(owner) => owner.clone(),
@@ -269,7 +269,7 @@ impl Called {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Qualifier {
+pub enum Qualifier {
     Spelled(String),
     /// The path of the file that defines the name, without its extension, or this
     /// when no file of the project does.
@@ -278,36 +278,53 @@ pub(super) enum Qualifier {
 
 /// What the index of a language says of its symbols besides their shape.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct Reading {
+pub struct Reading {
     /// A line that writes a path also references each module around it
     /// (`crate::domain::order`, `Shop::Domain::Order`): the line depends on the deepest.
-    pub(super) enclosing: bool,
+    pub enclosing: bool,
     /// A definition names its module by its path from the working directory
     /// (`src.shop.infra`) and a reference as imported (`shop.infra`), so a reference is
     /// matched by the ending of its path.
-    pub(super) by_ending: bool,
+    pub by_ending: bool,
     /// The index does not say which package the symbol is in; only the string of
-    /// the import does (see `UNNAMED_NPM`).
-    pub(super) unnamed: bool,
+    /// the import does (see [`registry::UnnamedPackages`]).
+    pub unnamed: bool,
 }
 
-/// `symbol` in the shape every language shares.
-pub(super) fn read(symbol: &str) -> Option<Name> {
+/// `symbol` in the shape every language shares, as the entry of the language whose
+/// indexer writes its scheme reads it. `None` for a symbol that does not split, or
+/// of a scheme no entry declares: nothing is made of it.
+pub fn read(symbol: &str) -> Option<Name> {
     let parsed = split(symbol)?;
-    Some(match parsed.scheme.as_ref() {
-        "scip-ruby" => ruby(symbol, &parsed),
-        // scip-java gives `new X()` only as the constructor of `X`.
-        "scip-java" => classes(symbol, &parsed, ".", Some("<init>"), Some(parsed.owner())),
-        // scip-dotnet gives an attribute `[X]` only as the constructor of `XAttribute`, and
-        // the project's own types and the framework's the same header.
-        "scip-dotnet" => classes(symbol, &parsed, ".", Some(".ctor"), None),
-        "scip-php" => classes(symbol, &parsed, "\\", None, Some(parsed.owner())),
-        _ => modules(symbol, &parsed),
+    let language = registry::of_scheme(&parsed.scheme)?;
+    Some(match language.indexer()?.symbols {
+        Symbols::Modules {
+            qualifier,
+            external,
+        } => modules(
+            symbol,
+            &parsed,
+            language.member_separator,
+            qualifier,
+            external,
+        ),
+        Symbols::Classes {
+            separator,
+            constructor,
+            owned,
+        } => classes(
+            symbol,
+            &parsed,
+            separator,
+            constructor,
+            owned.then(|| parsed.owner()),
+        ),
+        Symbols::Own(read) => read(symbol, &parsed),
     })
 }
 
 /// The names of the descriptors.
-pub(super) fn names(parsed: &Parsed) -> Vec<String> {
+pub fn names(parsed: &Parsed) -> Vec<String> {
     parsed
         .descriptors
         .iter()
@@ -316,62 +333,55 @@ pub(super) fn names(parsed: &Parsed) -> Vec<String> {
 }
 
 /// How many descriptors from `from` on are of `kind`.
-pub(super) fn leading(parsed: &Parsed, from: usize, kind: Kind) -> usize {
+pub fn leading(parsed: &Parsed, from: usize, kind: Kind) -> usize {
     parsed.descriptors[from..]
         .iter()
         .take_while(|(_, k)| *k == kind)
         .count()
 }
 
+/// A symbol of a language whose modules are namespaces, as a hook of its entry
+/// sees it: the hook settles what its language reads differently and gives the
+/// qualifier its names are called by.
+pub struct Module<'a> {
+    pub symbol: &'a str,
+    pub parsed: &'a Parsed<'a>,
+    /// How many descriptors, from the first, are the module's namespaces.
+    pub modules: usize,
+    /// The names of the module.
+    pub path: Vec<String>,
+    /// The names below the module: the top-level name, then the member.
+    pub inner: Vec<String>,
+    pub reading: Reading,
+}
+
 /// Go, TypeScript, Python and Rust: modules are namespaces, and a name at their top
-/// level is the first descriptor past them.
-pub(super) fn modules(symbol: &str, parsed: &Parsed) -> Name {
+/// level is the first descriptor past them. `qualifier` and `external` are the hooks
+/// of the language's entry; `member_separator` joins a type and its member.
+pub fn modules(
+    symbol: &str,
+    parsed: &Parsed,
+    member_separator: &'static str,
+    qualifier: fn(&mut Module<'_>) -> Qualifier,
+    external: fn(&Parsed<'_>) -> String,
+) -> Name {
     let names = names(parsed);
     let modules = leading(parsed, 0, Kind::Namespace);
-    let mut path = names[..modules].to_vec();
-    let mut inner = names[modules..].to_vec();
-    let mut reading = Reading::default();
-    let qualifier = match parsed.scheme.as_ref() {
-        "scip-go" => Qualifier::Spelled(parsed.namespace("/")),
-        "scip-python" => {
-            // A module is the term `__init__` of its namespace.
-            if modules == 1 && inner == ["__init__"] {
-                inner.clear();
-            }
-            path = path
-                .iter()
-                .flat_map(|name| name.split('.'))
-                .map(str::to_string)
-                .collect();
-            reading.by_ending = true;
-            Qualifier::Spelled(parsed.namespace("."))
-        }
-        "rust-analyzer" => {
-            // `crate/` is the root of the crate, around its modules (`domain/order/`).
-            path.retain(|name| name != "crate");
-            // An `impl` block names no type of its own: `impl#[Block]size()` (and
-            // `impl#[Block][Display]fmt()` for a trait) is `size` of `Block`.
-            if let [(block, Kind::Type), (of, Kind::Parameter), rest @ ..] =
-                &parsed.descriptors[modules..]
-                && block == "impl"
-            {
-                inner = std::iter::once(of)
-                    .chain(
-                        rest.iter()
-                            .skip_while(|(_, kind)| *kind == Kind::Parameter)
-                            .map(|(name, _)| name),
-                    )
-                    .cloned()
-                    .collect();
-            }
-            reading.enclosing = true;
-            Qualifier::Spelled(parsed.external_module())
-        }
-        _ => {
-            reading.unnamed = symbol.starts_with(UNNAMED_NPM);
-            Qualifier::File(npm_name(&parsed.package))
-        }
+    let mut module = Module {
+        symbol,
+        parsed,
+        modules,
+        path: names[..modules].to_vec(),
+        inner: names[modules..].to_vec(),
+        reading: Reading::default(),
     };
+    let qualifier = qualifier(&mut module);
+    let Module {
+        path,
+        inner,
+        reading,
+        ..
+    } = module;
     // scip-typescript names an ambient module by its string, quotes and all
     // (`"*.css"`): one with a wildcard stands for the files it matches.
     let wildcard = matches!(qualifier, Qualifier::File(_))
@@ -393,17 +403,11 @@ pub(super) fn modules(symbol: &str, parsed: &Parsed) -> Name {
             qualifier,
             name: name.clone(),
             member: inner.get(1).map(|member| Member {
-                // A Rust path joins a type and what is in it as it joins modules,
-                // as the registry says for a name an example writes.
-                through: Through::Joined(if parsed.scheme == "rust-analyzer" {
-                    registry::RUST.member_separator
-                } else {
-                    "."
-                }),
+                through: Through::Joined(member_separator),
                 name: member.clone(),
             }),
         }),
-        external: parsed.external_module(),
+        external: external(parsed),
         path,
         inner,
         reading,
@@ -413,7 +417,7 @@ pub(super) fn modules(symbol: &str, parsed: &Parsed) -> Name {
 /// Java, C# and PHP: a namespace is no module; a class is what an import names, and
 /// a type nested in it is reached through it. `constructor` is the member that stands
 /// for its class: the indexer records the class the code writes only as that member.
-pub(super) fn classes(
+pub fn classes(
     symbol: &str,
     parsed: &Parsed,
     separator: &str,
@@ -461,60 +465,10 @@ pub(super) fn classes(
     }
 }
 
-/// Ruby: modules and classes are both types, and a constant names one; everything
-/// below it is a member (`Shop#Web#Order#run().`). A class method belongs to the
-/// singleton class (``Shop#Web#`<Class:Order>`#find().``), which stands for the class.
-pub(super) fn ruby(symbol: &str, parsed: &Parsed) -> Name {
-    let names = names(parsed);
-    let types = leading(parsed, 0, Kind::Type);
-    let mut path = names[..types].to_vec();
-    let mut class = cut(symbol, types);
-    if let Some(last) = path.last_mut()
-        && let Some(singleton) = last
-            .strip_prefix("<Class:")
-            .and_then(|name| name.strip_suffix('>'))
-            .map(str::to_string)
-    {
-        class = format!("{}{singleton}#", cut(symbol, types - 1));
-        *last = singleton;
-    }
-    let inner = names[types..].to_vec();
-    let shape = match (types, inner.is_empty()) {
-        (0, _) => Shape::Package,
-        (_, true) => Shape::Module,
-        (_, false) => Shape::Member,
-    };
-    let qualified = path.join("::");
-    Name {
-        shape,
-        symbol: match shape {
-            Shape::Module => class.clone(),
-            _ => symbol.to_string(),
-        },
-        owner: (shape == Shape::Member).then_some(class),
-        package: Some(parsed.owner()),
-        called: path.split_last().map(|(name, outer)| Called {
-            qualifier: Qualifier::Spelled(outer.join("::")),
-            name: name.clone(),
-            member: inner.first().map(|member| Member {
-                through: Through::Spelled(qualified.clone()),
-                name: member.clone(),
-            }),
-        }),
-        external: qualified,
-        path,
-        inner,
-        reading: Reading {
-            enclosing: true,
-            ..Reading::default()
-        },
-    }
-}
-
 impl Parsed<'_> {
     /// The namespace descriptors joined: the import path of a Go package, the
     /// dotted name of a Python module, the path of a Rust module.
-    pub(super) fn namespace(&self, separator: &str) -> String {
+    pub fn namespace(&self, separator: &str) -> String {
         self.descriptors
             .iter()
             .take_while(|(_, kind)| *kind == Kind::Namespace)
@@ -525,7 +479,7 @@ impl Parsed<'_> {
 
     /// The descriptors past the namespace joined by `.`: the name of a definition
     /// within its module (`Order.total`). Empty for a module itself.
-    pub(super) fn within_namespace(&self) -> String {
+    pub fn within_namespace(&self) -> String {
         self.descriptors
             .iter()
             .filter(|(_, kind)| *kind != Kind::Namespace)
@@ -536,64 +490,15 @@ impl Parsed<'_> {
 
     /// The package that owns the symbol, with the scheme: what tells the
     /// project's own symbols from those of its dependencies.
-    pub(super) fn owner(&self) -> String {
+    pub fn owner(&self) -> String {
         format!("{} {}", self.scheme, self.package)
-    }
-
-    /// The external module the symbol of a language whose modules are namespaces
-    /// belongs to, in the spelling of its import statements and of `forbid_external`.
-    pub(super) fn external_module(&self) -> String {
-        match self.scheme.as_ref() {
-            // Go: the package path (`fmt`, `net/http`, `github.com/lib/pq`).
-            "scip-go" => self.namespace("/"),
-            // Python: the dotted module (`os.path`, `requests`).
-            "scip-python" => self.namespace("."),
-            // Rust: the crate and the module path; the standard library is
-            // spread over `core`, `alloc` and `std` but written `std::…`.
-            "rust-analyzer" => {
-                let krate = match self.package.as_ref() {
-                    "core" | "alloc" | "std" => "std".to_string(),
-                    other => other.replace('-', "_"),
-                };
-                std::iter::once(krate)
-                    .chain(
-                        self.descriptors
-                            .iter()
-                            .take_while(|(_, kind)| *kind == Kind::Namespace)
-                            .map(|(name, _)| name.clone())
-                            .filter(|name| name != "crate"),
-                    )
-                    .collect::<Vec<_>>()
-                    .join("::")
-            }
-            // TypeScript: the npm package and the file inside it that was imported
-            // (`lodash/fp`, `moment/locale/ru`); `@types/x` stands for `x`.
-            _ => {
-                let mut parts: Vec<String> = self
-                    .descriptors
-                    .iter()
-                    .take_while(|(_, kind)| *kind == Kind::Namespace)
-                    .map(|(name, _)| name.clone())
-                    .collect();
-                if let Some(last) = parts.last_mut() {
-                    *last = registry::TYPESCRIPT.module_path(last).to_string();
-                    if last == "index" {
-                        parts.pop();
-                    }
-                }
-                std::iter::once(npm_name(&self.package))
-                    .chain(parts)
-                    .collect::<Vec<_>>()
-                    .join("/")
-            }
-        }
     }
 }
 
 /// A definition as its symbol spells it, past the package and the modules around it
 /// ([`Parsed::within_namespace`]); the symbol itself when it cannot be read or names
 /// a module.
-pub(super) fn shown_name(symbol: &str) -> String {
+pub fn shown_name(symbol: &str) -> String {
     split(symbol)
         .map(|parsed| parsed.within_namespace())
         .filter(|name| !name.is_empty())
@@ -756,35 +661,5 @@ mod tests {
         let virtual_module =
             read("scip-typescript npm app 1.0.0 src/`x.d.ts`/`\"virtual:x\"`/").unwrap();
         assert_eq!(virtual_module.shape, Shape::Module);
-    }
-
-    #[test]
-    fn an_npm_package_is_named_as_its_imports_spell_it() {
-        let deep = split("scip-typescript npm moment 2.0.0 locale/`ru.d.ts`/").unwrap();
-        assert_eq!(deep.external_module(), "moment/locale/ru");
-    }
-
-    /// The file of an npm package is named by its module path, whatever extension
-    /// or declaration suffix TypeScript gives it; an `index` file is its directory.
-    #[test]
-    fn an_npm_file_is_named_without_any_typescript_suffix() {
-        let module = |file: &str| {
-            split(&format!("scip-typescript npm pkg 1.0.0 `{file}`/"))
-                .unwrap()
-                .external_module()
-        };
-        for file in [
-            "foo.cjs",
-            "foo.mts",
-            "foo.cts",
-            "foo.jsx",
-            "foo.d.mts",
-            "foo.d.ts",
-        ] {
-            assert_eq!(module(file), "pkg/foo", "{file}");
-        }
-        for file in ["index.cjs", "index.d.cts", "index.ts"] {
-            assert_eq!(module(file), "pkg", "{file}");
-        }
     }
 }

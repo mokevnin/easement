@@ -8,9 +8,13 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::Node;
 
-use super::registry::{Explained, Language, Spelled, TYPESCRIPT, UnindexedUse, UnrelatedSpan};
+use super::registry::{
+    Explained, Language, Spelled, TYPESCRIPT, UnindexedUse, UnnamedPackages, UnrelatedSpan,
+};
 use super::{Cause, Form, Import};
+use crate::packages::npm_name;
 use crate::relpath::{self, parent};
+use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 
 /// The file a relative specifier names, as the bundlers resolve it: the path
 /// itself, with an extension, or its index.
@@ -277,9 +281,137 @@ pub fn needs(root: &Path, dir: &Path, shown: &str) -> anyhow::Result<()> {
     )
 }
 
+/// How scip-typescript begins a symbol defined under a `package.json` with no
+/// `name`, such as the `{"type": "module"}` that marks `esm/` in a published
+/// package: which package that is, only the import in the source still says.
+const UNNAMED_NPM: &str = "scip-typescript npm . . ";
+
+/// The npm packages scip-typescript leaves unnamed, which the string of the import
+/// names.
+pub const UNNAMED: UnnamedPackages = UnnamedPackages {
+    is: is_unnamed,
+    spelled: unnamed_spelled,
+    cause: crate::symbols::Unnamed {
+        what: "the npm package",
+        why: "a `package.json` without `name` inside the package hides it from the indexer, so those uses were not checked; scip-typescript 0.6.1 or newer names such a package: update the indexer and run again",
+    },
+};
+
+/// Whether scip-typescript left the package of `symbol` unnamed.
+fn is_unnamed(symbol: &str) -> bool {
+    symbol.starts_with(UNNAMED_NPM)
+}
+
+/// The module the string of an import names (`hono`, `@scope/pkg/sub`), when it
+/// is spelled as a package and that package is in a `node_modules` above `file`,
+/// where TypeScript finds a package. A project without `name` in its `package.json`
+/// is unnamed too, and an alias into it (`@/gen/api` through `paths`) spells no
+/// package.
+fn unnamed_spelled(string: &str, file: &Path) -> Option<String> {
+    let Spelled::Package(package) = spelled(string) else {
+        return None;
+    };
+    file.ancestors()
+        .skip(1)
+        .any(|dir| {
+            TYPESCRIPT
+                .third_party
+                .iter()
+                .any(|installs| dir.join(installs).join(&package).is_dir())
+        })
+        .then(|| string.to_string())
+}
+
+/// A TypeScript symbol's names are called by the file that defines them, or by
+/// the npm package when no file of the project does.
+pub fn qualifier(module: &mut symbol::Module<'_>) -> Qualifier {
+    module.reading.unnamed = is_unnamed(module.symbol);
+    Qualifier::File(npm_name(&module.parsed.package))
+}
+
+/// The external module of a TypeScript symbol: the npm package and the file inside
+/// it that was imported (`lodash/fp`, `moment/locale/ru`); `@types/x` stands for `x`.
+pub fn external(parsed: &Parsed<'_>) -> String {
+    let mut parts: Vec<String> = parsed
+        .descriptors
+        .iter()
+        .take_while(|(_, kind)| *kind == Kind::Namespace)
+        .map(|(name, _)| name.clone())
+        .collect();
+    if let Some(last) = parts.last_mut() {
+        *last = TYPESCRIPT.module_path(last).to_string();
+        if last == "index" {
+            parts.pop();
+        }
+    }
+    std::iter::once(npm_name(&parsed.package))
+        .chain(parts)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_npm_package_is_named_as_its_imports_spell_it() {
+        let deep = crate::scip::symbol::split("scip-typescript npm moment 2.0.0 locale/`ru.d.ts`/")
+            .unwrap();
+        assert_eq!(external(&deep), "moment/locale/ru");
+    }
+
+    /// The file of an npm package is named by its module path, whatever extension
+    /// or declaration suffix TypeScript gives it; an `index` file is its directory.
+    #[test]
+    fn an_npm_file_is_named_without_any_typescript_suffix() {
+        let module = |file: &str| {
+            external(
+                &crate::scip::symbol::split(&format!("scip-typescript npm pkg 1.0.0 `{file}`/"))
+                    .unwrap(),
+            )
+        };
+        for file in [
+            "foo.cjs",
+            "foo.mts",
+            "foo.cts",
+            "foo.jsx",
+            "foo.d.mts",
+            "foo.d.ts",
+        ] {
+            assert_eq!(module(file), "pkg/foo", "{file}");
+        }
+        for file in ["index.cjs", "index.d.cts", "index.ts"] {
+            assert_eq!(module(file), "pkg", "{file}");
+        }
+    }
+
+    /// A package the index left unnamed is the one the string of the import spells,
+    /// when that package is installed in a `node_modules` above the file; a path, an
+    /// alias or a package not installed there names none.
+    #[test]
+    fn an_unnamed_package_is_the_installed_one_its_import_spells() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("node_modules/hono")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/@scope/pkg")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/a.ts");
+        assert!((UNNAMED.is)(
+            "scip-typescript npm . . esm/`index.d.ts`/Thing#"
+        ));
+        assert!(!(UNNAMED.is)(
+            "scip-typescript npm hono 4.0.0 `index.d.ts`/Hono#"
+        ));
+        assert_eq!((UNNAMED.spelled)("hono", &file).as_deref(), Some("hono"));
+        assert_eq!(
+            (UNNAMED.spelled)("@scope/pkg/sub", &file).as_deref(),
+            Some("@scope/pkg/sub")
+        );
+        assert_eq!((UNNAMED.spelled)("zod", &file), None, "not installed");
+        assert_eq!((UNNAMED.spelled)("./local", &file), None, "a path");
+        assert_eq!((UNNAMED.spelled)("@/gen/api", &file), None, "an alias");
+    }
 
     #[test]
     fn the_cache_key_reads_only_what_scip_typescript_does() {
