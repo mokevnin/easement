@@ -184,9 +184,9 @@ pub struct Name {
     /// For a member, the name it belongs to, whose home stands for the member's
     /// when the index defines no member.
     pub owner: Option<String>,
-    /// The package that owns the symbol, with the scheme: what tells the project's own
-    /// symbols from those of its dependencies. `None` when the index gives both the same.
-    pub package: Option<String>,
+    /// The package that owns the symbol: what tells the project's own symbols from
+    /// those of its dependencies.
+    pub package: Package,
     /// The names of the module the symbol is, or lives in.
     pub path: Vec<String>,
     /// The names below that module: the top-level name, then the member.
@@ -197,6 +197,45 @@ pub struct Name {
     /// (a Go package, a TypeScript file).
     pub called: Option<Called>,
     pub reading: Reading,
+}
+
+/// The package a name is of, decided once while its symbol is read.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Package {
+    /// The package the index credits the symbol to, with the scheme
+    /// (`scip-typescript app`): the project's own when a document of the project
+    /// defines a name of it, a dependency otherwise.
+    Credited(String),
+    /// A package installed under a third-party directory of the language's
+    /// toolchain that the path of the symbol runs into (`node_modules/hono/`), by its
+    /// name (`hono`, `@scope/pkg`): a dependency, whatever package the index credits
+    /// the symbol to.
+    Installed(String),
+    /// The index credits the project's names and its dependencies' to the same
+    /// package (scip-dotnet's), so only where a name is defined tells them apart.
+    Unsaid,
+}
+
+impl Package {
+    /// The package the index credits the name to, when that may be the project's
+    /// own: one a path puts the name in, or none, never is.
+    pub fn credited(&self) -> Option<&str> {
+        match self {
+            Package::Credited(package) => Some(package),
+            Package::Installed(_) | Package::Unsaid => None,
+        }
+    }
+}
+
+/// Where the toolchain of a language installs third-party packages, as the path
+/// of a symbol shows them.
+#[derive(Debug, Clone, Copy)]
+pub struct Installs<'a> {
+    /// The directories it installs them in (`node_modules`).
+    pub dirs: &'a [&'a str],
+    /// The package a path below one of them is in (`@scope/pkg` of
+    /// `@scope/pkg/index.d.ts`), as its kind of manifest names a package.
+    pub package: fn(&str) -> String,
 }
 
 /// What a name is to the rules.
@@ -274,9 +313,6 @@ pub struct Reading {
     /// (`src.shop.infra`) and a reference as imported (`shop.infra`), so a reference is
     /// matched by the ending of its path.
     pub by_ending: bool,
-    /// The index does not say which package the symbol is in; only the string of
-    /// the import does (see [`crate::lang::language::UnnamedPackages`]).
-    pub unnamed: bool,
 }
 
 /// The names of the descriptors.
@@ -300,7 +336,6 @@ pub fn leading(parsed: &Parsed, from: usize, kind: Kind) -> usize {
 /// sees it: the hook settles what its language reads differently and gives the
 /// qualifier its names are called by.
 pub struct Module<'a> {
-    pub symbol: &'a str,
     pub parsed: &'a Parsed<'a>,
     /// How many descriptors, from the first, are the module's namespaces.
     pub modules: usize,
@@ -311,20 +346,63 @@ pub struct Module<'a> {
     pub reading: Reading,
 }
 
+/// The package installed where the path of a symbol runs into one of `installs`,
+/// the innermost when they nest (pnpm's `node_modules/.pnpm/a@1.0.0/node_modules/a/`),
+/// with the symbol as one of its own, which the hooks of the language read as they
+/// read any symbol of a package: what it names past the package, and how many of the
+/// descriptors of the symbol that leaves out. `None` when the path runs into none,
+/// or names nothing inside the package.
+fn installed<'a>(parsed: &Parsed<'a>, installs: &Installs) -> Option<(Parsed<'a>, usize)> {
+    let namespaces = &parsed.descriptors[..leading(parsed, 0, Kind::Namespace)];
+    let dir = namespaces
+        .iter()
+        .rposition(|(name, _)| installs.dirs.contains(&name.as_str()))?;
+    let below: Vec<&str> = namespaces[dir + 1..]
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let package = (installs.package)(&below.join("/"));
+    // The directories the package's name takes, and at least one inside it.
+    let length = package.split('/').count();
+    if below.len() <= length {
+        return None;
+    }
+    let skipped = dir + 1 + length;
+    Some((
+        Parsed {
+            scheme: parsed.scheme.clone(),
+            package: Cow::Owned(package),
+            descriptors: parsed.descriptors[skipped..].to_vec(),
+        },
+        skipped,
+    ))
+}
+
 /// Go, TypeScript, Python and Rust: modules are namespaces, and a name at their top
 /// level is the first descriptor past them. `qualifier` and `external` are the hooks
-/// of the language's entry; `member_separator` joins a type and its member.
+/// of the language's entry; `member_separator` joins a type and its member. A symbol
+/// whose path runs into a package of `installs`, when the language has them, is
+/// read as that package's.
 pub fn modules(
     symbol: &str,
     parsed: &Parsed,
     member_separator: &'static str,
+    installs: Option<&Installs>,
     qualifier: fn(&mut Module<'_>) -> Qualifier,
     external: fn(&Parsed<'_>) -> String,
 ) -> Name {
+    let installed = installs.and_then(|installs| installed(parsed, installs));
+    let (parsed, package, skipped) = match &installed {
+        Some((inside, skipped)) => (
+            inside,
+            Package::Installed(inside.package.to_string()),
+            *skipped,
+        ),
+        None => (parsed, Package::Credited(parsed.owner()), 0),
+    };
     let names = names(parsed);
     let modules = leading(parsed, 0, Kind::Namespace);
     let mut module = Module {
-        symbol,
         parsed,
         modules,
         path: names[..modules].to_vec(),
@@ -353,8 +431,8 @@ pub fn modules(
     Name {
         shape,
         symbol: symbol.to_string(),
-        owner: (shape == Shape::Member).then(|| cut(symbol, modules + 1)),
-        package: Some(parsed.owner()),
+        owner: (shape == Shape::Member).then(|| cut(symbol, skipped + modules + 1)),
+        package,
         called: inner.first().filter(|_| !wildcard).map(|name| Called {
             qualifier,
             name: name.clone(),
@@ -378,7 +456,7 @@ pub fn classes(
     parsed: &Parsed,
     separator: &str,
     constructor: Option<&str>,
-    package: Option<String>,
+    package: Package,
 ) -> Name {
     let names = names(parsed);
     let namespaces = leading(parsed, 0, Kind::Namespace);
@@ -598,6 +676,83 @@ mod tests {
         assert_eq!(
             cut(symbol, 2),
             "scip-dotnet nuget My  Lib 1.0  beta Shop/Order#"
+        );
+    }
+
+    /// A name whose path runs into a package under `node_modules` is that package's,
+    /// read as if the index credited it there, whatever package it does credit it to:
+    /// the project (`app`), a nameless one (`.`) or a workspace's root.
+    #[test]
+    fn a_name_under_node_modules_is_of_the_package_its_path_runs_into() {
+        let thing = |path: &str| {
+            let name = read(&format!(
+                "scip-typescript npm app 1.0.0 {path}`index.d.ts`/Thing#run()."
+            ))
+            .unwrap();
+            let called = name.called.unwrap();
+            (name.package, name.external, called.qualifier, called.name)
+        };
+        let of = |package: &str| {
+            (
+                Package::Installed(package.to_string()),
+                package.to_string(),
+                Qualifier::File(package.to_string()),
+                "Thing".to_string(),
+            )
+        };
+        assert_eq!(thing("node_modules/kit/"), of("kit"));
+        assert_eq!(thing("node_modules/`@sc`/kit/"), of("@sc/kit"));
+        // pnpm's store holds the package under a `node_modules` of its own.
+        assert_eq!(
+            thing("node_modules/`.pnpm`/`kit@1.0.0`/node_modules/kit/"),
+            of("kit")
+        );
+        // A member's owner is the type, cut from the symbol as it is written.
+        let member =
+            read("scip-typescript npm . . node_modules/`@sc`/kit/`index.d.ts`/Thing#run().")
+                .unwrap();
+        assert_eq!(
+            member.owner.as_deref(),
+            Some("scip-typescript npm . . node_modules/`@sc`/kit/`index.d.ts`/Thing#")
+        );
+        assert_eq!(member.path, ["index.d.ts"]);
+        let module = |symbol: &str| read(symbol).unwrap().external;
+        assert_eq!(
+            module("scip-typescript npm root HEAD node_modules/kit/lib/`fp.d.ts`/"),
+            "kit/lib/fp"
+        );
+        assert_eq!(
+            module("scip-typescript npm . . node_modules/`@types`/node/`index.d.ts`/"),
+            "node"
+        );
+    }
+
+    /// Only a namespace of the path that holds a package and a file inside it puts
+    /// the name in that package; otherwise the index's credit stands.
+    #[test]
+    fn a_path_that_names_no_package_inside_node_modules_keeps_the_credited_one() {
+        let package = |symbol: &str| read(symbol).unwrap().package;
+        let app = Package::Credited("scip-typescript app".to_string());
+        // A file right in `node_modules`, or in a scope, is in no package.
+        assert_eq!(
+            package("scip-typescript npm app 1.0.0 node_modules/`index.d.ts`/x."),
+            app
+        );
+        assert_eq!(
+            package("scip-typescript npm app 1.0.0 node_modules/`@sc`/`index.d.ts`/x."),
+            app
+        );
+        // A name that is no namespace is no directory.
+        assert_eq!(
+            package("scip-typescript npm app 1.0.0 src/`a.ts`/node_modules."),
+            app
+        );
+        // A language whose toolchain names no install directory reads none.
+        assert_eq!(
+            read("scip-python python shop 0.1 `node_modules.kit`/x.")
+                .unwrap()
+                .package,
+            Package::Credited("scip-python shop".to_string())
         );
     }
 

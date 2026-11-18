@@ -229,28 +229,14 @@ impl Project {
         }
         stats.declarations_partial = scan.declarations_problems.clone();
         stats.schemes_partial = scan.unknown_schemes.clone();
-        // Each language whose index may leave packages unnamed says why, of its files.
-        stats.symbols_partial = lang::registry::LANGUAGES
-            .iter()
-            .filter_map(|language| Some((*language, language.indexer()?.unnamed.as_ref()?)))
-            .flat_map(|(language, unnamed)| {
-                let files: Vec<String> = scan
-                    .unnamed_uses
-                    .iter()
-                    .filter(|file| lang::registry::is(Path::new(file.as_str()), language))
-                    .cloned()
-                    .collect();
-                symbols::symbols_partial(self.config(), &map, &files, &unnamed.cause)
-            })
-            .collect();
         let paths: Vec<&str> = scan.paths.iter().map(String::as_str).collect();
-        stats.symbols_partial.extend(symbols::symbols_unverified(
+        stats.symbols_partial = symbols::symbols_unverified(
             self.config(),
             &map,
             &paths,
             &scan.deps,
             &scan.unverified_symbols,
-        ));
+        );
         stats.implementations_partial = implementations::gaps(
             self.config(),
             &map,

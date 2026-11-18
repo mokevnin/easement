@@ -540,7 +540,6 @@ rules:
             line,
             columns: None,
             symbol: symbol.to_string(),
-            spelled: None,
         };
         let scope = |symbol: &str, first, last| Scope {
             symbol: symbol.to_string(),
@@ -685,7 +684,6 @@ rules:
                     line: 3,
                     columns: None,
                     symbol: "One().".into(),
-                    spelled: None,
                 }],
                 ..Document::default()
             },

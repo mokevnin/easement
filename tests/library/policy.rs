@@ -139,8 +139,8 @@ fn an_external_module_the_manifest_does_not_declare_fails() {
 #[test]
 fn a_package_whose_types_sit_under_a_marker_package_json_is_judged_by_its_name() {
     // `{"type": "module"}` in a subdirectory of a package (zod, hono, @simplewebauthn/browser)
-    // hid the package from scip-typescript before 0.6.1. Now the index names it, and the
-    // directory is part of the module, as `dist/` is for any package.
+    // marks how its files load, not another package: the directory is part of the module,
+    // as `dist/` is for any package.
     let marker = "{\"type\": \"module\"}\n";
     let stub = "declare const stub: any;\nexport default stub;\n";
     let nested = |name: &'static str| {
@@ -224,12 +224,14 @@ fn a_package_whose_types_sit_under_a_marker_package_json_is_judged_by_its_name()
 
 #[test]
 fn an_alias_into_a_project_with_a_nameless_package_json_is_no_package() {
-    // Without `name`, the project's own files are unnamed too; `@/gen/api` resolves
-    // through `paths` to an ignored file, which the index defines and the walk drops.
+    // Without `name`, the index credits the project's own files to the package `.`;
+    // `@/gen/api` resolves through `paths` to an ignored file, which the index defines
+    // and the walk drops. It stays the project's own, for the rules on imports and on
+    // names alike.
     let (_tmp, root) = project(&[
         (
             "easement.yml",
-            "version: 1\nmanifests: true\ncomponents:\n  app: { in: src }\n",
+            "version: 1\nmanifests: true\ncomponents:\n  app: { in: src }\nrules:\n  app: { forbid_symbol: [kit.Thing] }\n",
         ),
         (
             "package.json",
@@ -246,14 +248,15 @@ fn an_alias_into_a_project_with_a_nameless_package_json_is_no_package() {
             "import { api } from \"@/gen/api\";\nexport const all = [api];\n",
         ),
     ]);
-    let said = report_of(&root, Outcome::Passed);
-    assert!(!said.contains("[undeclared]"), "{said}");
+    let checked = check(&root);
+    let report = json(&checked);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{report}");
+    assert_eq!(report["violations"], serde_json::json!([]), "{report}");
+    assert!(gap_messages(&report, "symbols").is_empty(), "{report}");
 }
 
 #[test]
 fn forbid_symbol_judges_a_name_of_a_package_under_a_marker_package_json() {
-    // scip-typescript before 0.6.1 left such a name unnamed, and easement said it could not
-    // judge it (`a_name_of_an_unnamed_package_...` in src/scip/mod.rs); now the index names it.
     let (_tmp, root) = project(&[
         (
             "easement.yml",
@@ -279,7 +282,7 @@ fn forbid_symbol_judges_a_name_of_a_package_under_a_marker_package_json() {
             "src/web/a.ts",
             "import { Thing } from \"nested\";\nexport const t = new Thing();\n",
         ),
-        // No rule on names covers `api`, so nothing was left unjudged there.
+        // No rule on names covers `api`.
         (
             "src/api/b.ts",
             "import { Thing } from \"nested\";\nexport const t = new Thing();\n",
@@ -302,7 +305,6 @@ fn forbid_symbol_judges_a_name_of_a_package_under_a_marker_package_json() {
     assert!(gap_messages(&report, "symbols").is_empty(), "{report}");
     let said = text(&checked);
     assert!(said.contains("web must not use nested.Thing"), "{said}");
-    assert!(!said.contains("cannot tell the npm package"), "{said}");
 }
 
 #[test]

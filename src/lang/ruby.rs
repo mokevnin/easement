@@ -1,7 +1,8 @@
 //! Ruby beyond what every language shares: how scip-ruby's symbols read.
 
 use crate::scip::symbol::{
-    Called, Kind, Member, Name, Parsed, Qualifier, Reading, Shape, Through, cut, leading, names,
+    Called, Kind, Member, Name, Package, Parsed, Qualifier, Reading, Shape, Through, cut, leading,
+    names,
 };
 
 /// Ruby: modules and classes are both types, and a constant names one; everything
@@ -35,7 +36,7 @@ pub fn read(symbol: &str, parsed: &Parsed<'_>) -> Name {
             _ => symbol.to_string(),
         },
         owner: (shape == Shape::Member).then_some(class),
-        package: Some(parsed.owner()),
+        package: Package::Credited(parsed.owner()),
         called: path.split_last().map(|(name, outer)| Called {
             qualifier: Qualifier::Spelled(outer.join("::")),
             name: name.clone(),

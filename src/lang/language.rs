@@ -118,8 +118,6 @@ pub struct Indexer {
     pub scheme: &'static str,
     /// How its symbols are read into the shape every language shares.
     pub symbols: Symbols,
-    /// The packages its index may leave unnamed, which only an import names.
-    pub unnamed: Option<UnnamedPackages>,
 }
 
 /// How the symbols of an index are read into the shape every language shares
@@ -147,20 +145,6 @@ pub enum Symbols {
     },
     /// Read whole by a hook of the language (Ruby).
     Own(fn(&str, &Parsed<'_>) -> Name),
-}
-
-/// Packages an index may leave unnamed, so that only the string of the import
-/// names them (scip-typescript under a `package.json` without `name`).
-#[derive(Debug)]
-pub struct UnnamedPackages {
-    /// Whether the index left the package of `symbol` unnamed.
-    pub is: fn(&str) -> bool,
-    /// The module an import names, from the string the reference stands on and the
-    /// path of the file that writes it; `None` when it names no package installed
-    /// where the file is.
-    pub spelled: fn(&str, &Path) -> Option<String>,
-    /// Why the package of such a name is unknown, for the report.
-    pub cause: crate::symbols::Unnamed,
 }
 
 /// A known cause of a failed run of an indexer, told by what the run printed.
@@ -366,7 +350,9 @@ pub struct Language {
     /// Directories its toolchain fills with third-party code (`node_modules`)
     /// that is no language's project code, which easement never walks. Unlike
     /// `foreign_dirs`, the walk skips them for every language: a stray `.py`
-    /// in `node_modules` is not the project's either.
+    /// in `node_modules` is not the project's either. A symbol whose path runs
+    /// into one is of the package installed there, named as its manifest's
+    /// `package` names it, whatever package the index credits it to.
     pub third_party: &'static [&'static str],
     /// What its indexer may be run with, under `indexers.<name>` of the policy.
     pub settings: &'static [Setting],
