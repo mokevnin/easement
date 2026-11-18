@@ -418,47 +418,57 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
         .filter(|d| project.contains(d.path.as_str()) || excluded.binary_search(&d.path).is_ok())
         .partition(|d| project.contains(d.path.as_str()));
     let mut parts_doubts: Vec<(String, lang::parts::Doubt)> = Vec::new();
-    // (the file that declares them, the files a test-only module may be in)
-    let mut declared_files: Vec<(String, Vec<String>)> = Vec::new();
-    // The other modules each file declares, test code too if the file turns out to be.
+    // (the parts of the language, the file that declares them, the files its test code
+    // may be in)
+    let mut declared_files: Vec<(&lang::registry::Parts, String, Vec<String>)> = Vec::new();
+    // The other files each file declares as its own code, test code too if the file turns
+    // out to be.
     let mut modules: HashMap<String, Vec<lang::parts::Module>> = HashMap::new();
     for document in &mut documents {
-        let Some(find) = lang::registry::of(&document.path).and_then(|language| language.parts)
+        let Some(parts) =
+            lang::registry::of(&document.path).and_then(|language| language.parts.as_ref())
         else {
             continue;
         };
         match std::fs::read_to_string(root.join(&document.path)) {
             Ok(source) => {
-                let found = find(&document.path, &source);
+                let found = (parts.find)(&document.path, &source);
                 document.parts = found.spans;
                 parts_doubts.extend(found.doubts.into_iter().map(|d| (document.path.clone(), d)));
-                declared_files.extend(found.files.into_iter().map(|f| (document.path.clone(), f)));
+                declared_files.extend(
+                    found
+                        .test_files
+                        .into_iter()
+                        .map(|f| (parts, document.path.clone(), f)),
+                );
                 modules.insert(document.path.clone(), found.modules);
             }
-            Err(_) => parts_doubts.push((document.path.clone(), lang::parts::Doubt::Unreadable)),
+            Err(_) => parts_doubts.push((document.path.clone(), parts.unreadable)),
         }
     }
-    // A module that only a test build has is test code as a whole, in its own file, and
-    // so is every module that file declares, all the way down.
+    // A file that only test code declares is test code as a whole, and so is every file
+    // it declares as its own code, all the way down.
     let mut pending = declared_files;
     let mut test_files: HashSet<String> = HashSet::new();
-    while let Some((declaring, candidates)) = pending.pop() {
+    while let Some((parts, declaring, candidates)) = pending.pop() {
         let Some(file) = candidates
             .into_iter()
             .find(|c| project.contains(c.as_str()))
         else {
-            parts_doubts.push((declaring, lang::parts::Doubt::ModuleInAnotherFile));
+            parts_doubts.push((declaring, parts.missing_file));
             continue;
         };
         if !test_files.insert(file.clone()) {
             continue;
         }
         if let Some(document) = documents.iter_mut().find(|d| d.path == file) {
-            document.parts = vec![lang::parts::Span::test(1..=usize::MAX)];
+            document.parts = vec![lang::parts::Span::test(parts.test, 1..=usize::MAX)];
         }
         for module in modules.remove(&file).unwrap_or_default() {
             match module {
-                lang::parts::Module::Files(candidates) => pending.push((file.clone(), candidates)),
+                lang::parts::Module::Files(candidates) => {
+                    pending.push((parts, file.clone(), candidates));
+                }
                 lang::parts::Module::Unplaced(doubt) => parts_doubts.push((file.clone(), doubt)),
             }
         }

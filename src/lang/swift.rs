@@ -134,8 +134,67 @@ impl Adapter for Swift {
     }
 }
 
+/// The modules of the Swift toolchain and Apple's SDKs that a Swift file imports.
+pub const STD: &[&str] = &[
+    "AVFoundation",
+    "Accelerate",
+    "AppKit",
+    "Combine",
+    "Contacts",
+    "CoreBluetooth",
+    "CoreData",
+    "CoreFoundation",
+    "CoreGraphics",
+    "CoreImage",
+    "CoreLocation",
+    "CoreML",
+    "CoreMotion",
+    "CoreText",
+    "CryptoKit",
+    "Darwin",
+    "Dispatch",
+    "Foundation",
+    "FoundationNetworking",
+    "Glibc",
+    "MapKit",
+    "Metal",
+    "Network",
+    "Observation",
+    "OSLog",
+    "Photos",
+    "QuartzCore",
+    "RegexBuilder",
+    "SafariServices",
+    "SceneKit",
+    "Security",
+    "SpriteKit",
+    "StoreKit",
+    "Swift",
+    "SwiftData",
+    "SwiftUI",
+    "Synchronization",
+    "SystemConfiguration",
+    "Testing",
+    "UIKit",
+    "UniformTypeIdentifiers",
+    "UserNotifications",
+    "WebKit",
+    "WidgetKit",
+    "XCTest",
+    "os",
+    "simd",
+];
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_the_toolchain_and_apple_s_sdks() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("V.swift", "Foundation"));
+        assert!(is_std("V.swift", "SwiftUI.View"));
+        assert!(!is_std("V.swift", "Alamofire"));
+    }
+
     use super::*;
 
     #[test]

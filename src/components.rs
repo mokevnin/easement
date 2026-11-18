@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 
+use crate::config::STD;
 use crate::config::{Ban, Config, ForbiddenName, TESTS};
+use crate::lang::registry::is_std;
 use crate::lang::{Unit, registry};
-use crate::stdlib::{STD, is_std};
 
 /// Maps repository-relative paths (files or directories, `/`-separated) to components.
 ///

@@ -321,8 +321,22 @@ impl Adapter for Kotlin {
     }
 }
 
+/// Whether a module is Kotlin's standard library: `kotlin` and what is below it,
+/// or a package of the JDK, which Kotlin on the JVM imports as its own.
+pub fn std(module: &str) -> bool {
+    super::registry::KOTLIN.first_segment(module) == "kotlin" || super::java::jdk(module)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_kotlin_and_the_jdk() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("A.kt", "kotlin.math.max"));
+        assert!(is_std("a.kts", "java.io.File"));
+        assert!(!is_std("A.kt", "kotlinx.coroutines.launch"));
+    }
+
     use super::*;
 
     /// Type parameters may hold spaces (`reified`, bounds, a list), and so may

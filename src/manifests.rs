@@ -59,7 +59,7 @@ pub fn undeclared(
             unjudged.insert(relpath::extension(&file).to_string());
             continue;
         };
-        if crate::stdlib::is_std(&file, module) {
+        if crate::lang::registry::is_std(&file, module) {
             continue;
         }
         let Some(manifest) =

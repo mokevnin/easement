@@ -1,7 +1,6 @@
 ---
-source: src/main.rs
-assertion_line: 822
-expression: is_std
+source: src/lang/registry.rs
+expression: table
 ---
 a.go net/http: true
 a.go github.com/x/y: false

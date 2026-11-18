@@ -35,7 +35,6 @@ mod review;
 mod scan;
 mod scip;
 mod scope;
-mod stdlib;
 mod suggest;
 mod suppress;
 mod symbols;

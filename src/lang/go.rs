@@ -208,8 +208,23 @@ pub fn external(parsed: &Parsed<'_>) -> String {
     parsed.namespace("/")
 }
 
+/// Whether a module is Go's standard library: a package path without a domain
+/// (`fmt`, `net/http`); `C` is cgo.
+pub fn std(module: &str) -> bool {
+    module != "C" && !super::registry::GO.first_segment(module).contains('.')
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_a_package_path_without_a_domain() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("a.go", "net/http"));
+        assert!(is_std("a.go", "fmt"));
+        assert!(!is_std("a.go", "github.com/lib/pq"));
+        assert!(!is_std("a.go", "C"));
+    }
+
     use super::*;
     use crate::lang::registry::GO;
 

@@ -11,12 +11,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use super::parts::Found;
+use super::parts::{Doubt, Found};
 use super::{Adapter, Cause, Import};
 use crate::packages::{Declares, Framework, Listed, Named, cargo, go as gomod, npm};
 use crate::relpath;
 use crate::scip::symbol::{Module, Name, Parsed, Qualifier};
-use crate::stdlib;
 
 /// A kind of manifest: the file that declares the external modules of a language's
 /// files, which the `manifests` rule reads, and the dependencies of a package of the
@@ -502,6 +501,35 @@ const HASH_COMMENTS: Comments = Comments {
     block: &[],
 };
 
+/// Which modules are the standard library of a language, for `$std`.
+#[derive(Debug)]
+pub enum Std {
+    /// Those whose first segment, cut at the language's `module_separators`, is
+    /// one of these: `os` of `os.path`, `std` of `std::fmt`.
+    Roots(&'static [&'static str]),
+    /// Those the function takes, by the whole module: Go's paths without a
+    /// domain, the JDK's packages.
+    Rule(fn(&str) -> bool),
+}
+
+/// The parts of a language's source files that a dependency belongs to instead of
+/// the file, and what easement says when it cannot tell them.
+#[derive(Debug)]
+pub struct Parts {
+    /// Finds them in a source, from its path and text.
+    pub find: fn(&str, &str) -> Found,
+    /// Their names, as `part:` names them.
+    pub names: &'static [&'static str],
+    /// The one that only a test build has: a file only test code declares is
+    /// in it as a whole.
+    pub test: &'static str,
+    /// Why the test code of a file easement cannot read is judged as the file's.
+    pub unreadable: Doubt,
+    /// Why a file that test code declares, which the project does not have, is
+    /// not judged as test code.
+    pub missing_file: Doubt,
+}
+
 #[derive(Debug)]
 pub struct Language {
     pub name: &'static str,
@@ -520,9 +548,9 @@ pub struct Language {
     /// Whether its compiler builds the files of a directory together, as Go does a
     /// package: reaching one of them reaches the others, but not its test files.
     pub whole_directory: bool,
-    /// Whether a module belongs to its standard library, for `$std`; `None`
-    /// when easement cannot tell.
-    pub std: Option<fn(&str) -> bool>,
+    /// Which modules are its standard library, for `$std`; `None` when easement
+    /// cannot tell.
+    pub std: Option<Std>,
     /// Extensions of the files `unused` judges: those whose import graph shows
     /// every use of another file. Empty when it judges none.
     pub unused: &'static [&'static str],
@@ -543,11 +571,9 @@ pub struct Language {
     /// `implementation` rule judges. A language without declared relations is an
     /// evidence gap for that rule.
     pub relations: Relations,
-    /// Finds the parts of a source file that a dependency belongs to instead of the
+    /// The parts of a source file that a dependency belongs to instead of the
     /// file, for example the code of a test build. `None` when the file is one unit.
-    pub parts: Option<fn(&str, &str) -> Found>,
-    /// The names of the parts `parts` finds, as `part:` names them.
-    pub part_names: &'static [&'static str],
+    pub parts: Option<Parts>,
     /// A file the language runs when any module below its directory is imported
     /// (Python's `__init__.py`): `unused` counts it as reached from that module.
     pub runs_on_import: Option<&'static str>,
@@ -602,7 +628,7 @@ pub static GO: Language = Language {
     tests: &["**/*_test.go"],
     not_tests: &[],
     whole_directory: true,
-    std: Some(stdlib::go),
+    std: Some(Std::Rule(super::go::std)),
     unused: &["go"],
     conventional: &[],
     manifest: Some(&GO_MOD),
@@ -649,7 +675,6 @@ pub static GO: Language = Language {
     }),
     foreign_dirs: &["vendor", "testdata"],
     third_party: &[],
-    part_names: &[],
     module_separators: &["/"],
     member_separator: ".",
     settings: &[Setting {
@@ -723,7 +748,6 @@ pub static TYPESCRIPT: Language = Language {
     }),
     foreign_dirs: &[],
     third_party: &["node_modules"],
-    part_names: &[],
     module_separators: &["/"],
     member_separator: ".",
     settings: &[],
@@ -737,7 +761,7 @@ pub static PYTHON: Language = Language {
     tests: &["**/test_*.py", "**/*_test.py"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::python),
+    std: Some(Std::Roots(super::python::STD)),
     // A stub (`.pyi`) is imported by type checkers, not by the program.
     unused: &["py"],
     conventional: &["**/conftest.py", "**/__main__.py", "**/setup.py"],
@@ -801,7 +825,6 @@ pub static PYTHON: Language = Language {
     }),
     foreign_dirs: &[],
     third_party: &[],
-    part_names: &[],
     module_separators: &["."],
     member_separator: ".",
     settings: &[],
@@ -815,7 +838,7 @@ pub static JAVA: Language = Language {
     tests: &["**/*Test.java", "**/*Tests.java"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::java),
+    std: Some(Std::Rule(super::java::std)),
     unused: &["java"],
     conventional: &["**/package-info.java", "**/module-info.java"],
     manifest: None,
@@ -865,7 +888,6 @@ pub static JAVA: Language = Language {
     }),
     foreign_dirs: &["target", "build"],
     third_party: &[],
-    part_names: &[],
     module_separators: &["."],
     member_separator: ".",
     settings: &[],
@@ -880,7 +902,7 @@ pub static KOTLIN: Language = Language {
     tests: &["**/*Test.kt", "**/*Tests.kt"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::kotlin),
+    std: Some(Std::Rule(super::kotlin::std)),
     unused: &[],
     conventional: &[],
     manifest: None,
@@ -901,7 +923,6 @@ pub static KOTLIN: Language = Language {
     reader: Reader::Adapter(super::kotlin::adapter),
     foreign_dirs: &[],
     third_party: &[],
-    part_names: &[],
     module_separators: &["."],
     member_separator: ".",
     settings: &[],
@@ -915,7 +936,7 @@ pub static CSHARP: Language = Language {
     tests: &["**/*Test.cs", "**/*Tests.cs"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::csharp),
+    std: Some(Std::Roots(&["System"])),
     unused: &["cs"],
     conventional: &[],
     manifest: None,
@@ -959,7 +980,6 @@ pub static CSHARP: Language = Language {
     }),
     foreign_dirs: &["bin", "obj"],
     third_party: &[],
-    part_names: &[],
     module_separators: &["."],
     member_separator: ".",
     settings: &[],
@@ -977,7 +997,7 @@ pub static PHP: Language = Language {
     tests: &["**/*Test.php"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::php),
+    std: Some(Std::Rule(super::php::std)),
     unused: &["php"],
     conventional: &[],
     manifest: None,
@@ -1020,7 +1040,6 @@ pub static PHP: Language = Language {
     }),
     foreign_dirs: &["vendor"],
     third_party: &[],
-    part_names: &[],
     module_separators: &["\\"],
     member_separator: ".",
     settings: &[],
@@ -1035,7 +1054,7 @@ pub static SWIFT: Language = Language {
     tests: &["**/*Tests.swift"],
     not_tests: &[],
     whole_directory: false,
-    std: Some(stdlib::swift),
+    std: Some(Std::Roots(super::swift::STD)),
     unused: &[],
     conventional: &[],
     manifest: None,
@@ -1053,7 +1072,6 @@ pub static SWIFT: Language = Language {
     reader: Reader::Adapter(super::swift::adapter),
     foreign_dirs: &[],
     third_party: &[],
-    part_names: &[],
     module_separators: &["."],
     member_separator: ".",
     settings: &[],
@@ -1114,7 +1132,6 @@ pub static RUBY: Language = Language {
     }),
     foreign_dirs: &["vendor"],
     third_party: &[],
-    part_names: &[],
     module_separators: &["::"],
     member_separator: "::",
     settings: &[],
@@ -1139,7 +1156,7 @@ pub static RUST: Language = Language {
         "**/src/**/examples/**/*.rs",
     ],
     whole_directory: false,
-    std: Some(stdlib::rust),
+    std: Some(Std::Roots(&["std", "proc_macro"])),
     unused: &["rs"],
     conventional: &[
         "**/build.rs",
@@ -1156,7 +1173,13 @@ pub static RUST: Language = Language {
     relations: Relations::None {
         because: "the rust index declares no implementations",
     },
-    parts: Some(super::rust::parts),
+    parts: Some(Parts {
+        find: super::rust::parts,
+        names: &[super::rust::TEST],
+        test: super::rust::TEST,
+        unreadable: super::rust::UNREADABLE,
+        missing_file: super::rust::MODULE_IN_ANOTHER_FILE,
+    }),
     runs_on_import: None,
     uses_unimported: &[],
     program: None,
@@ -1193,7 +1216,6 @@ pub static RUST: Language = Language {
     }),
     foreign_dirs: &[],
     third_party: &[],
-    part_names: &["cfg(test)"],
     module_separators: &["::"],
     member_separator: "::",
     settings: &[],
@@ -1229,6 +1251,27 @@ pub fn of(file: &str) -> Option<&'static Language> {
 }
 
 impl Language {
+    /// The first segment of one of its modules, cut at its `module_separators`:
+    /// `os` of `os.path`, `std` of `std::fmt`, the module itself when uncut.
+    pub fn first_segment<'a>(&self, module: &'a str) -> &'a str {
+        let cut = self
+            .module_separators
+            .iter()
+            .filter_map(|separator| module.find(separator))
+            .min()
+            .unwrap_or(module.len());
+        &module[..cut]
+    }
+
+    /// Whether `module` belongs to its standard library, as its entry says.
+    pub fn is_std(&self, module: &str) -> bool {
+        match &self.std {
+            Some(Std::Roots(roots)) => roots.contains(&self.first_segment(module)),
+            Some(Std::Rule(rule)) => rule(module),
+            None => false,
+        }
+    }
+
     /// Its indexer, when an indexer reads its files.
     pub fn indexer(&self) -> Option<&Indexer> {
         match &self.reader {
@@ -1319,6 +1362,18 @@ pub fn spells_with_suffix(written: &str, module: &str) -> bool {
 /// `.env`, nor `src/` of `src/.env`.
 fn names_a_file(stem: &str) -> bool {
     !stem.is_empty() && !stem.ends_with('/')
+}
+
+/// Whether `module`, imported by `file`, belongs to the standard library of the
+/// file's language. A language whose entry says nothing of it never matches.
+pub fn is_std(file: &str, module: &str) -> bool {
+    of(file).is_some_and(|language| language.is_std(module))
+}
+
+/// Whether `$std` can tell the standard library of `file`'s language. What a
+/// manifest declares is never the standard library, so `$std` knows it too.
+pub fn knows_std(file: &str) -> bool {
+    manifest_of(file).is_some() || of(file).is_some_and(|language| language.std.is_some())
 }
 
 /// Whether `file` is a declaration file of its language (`a.d.ts`), which
@@ -1558,8 +1613,8 @@ pub fn part_sources() -> String {
     sources.extend(
         LANGUAGES
             .iter()
-            .filter(|language| language.parts.is_some())
-            .map(|language| format!("{} source ({})", language.name, quoted(language.part_names))),
+            .filter_map(|language| Some((language.name, language.parts.as_ref()?)))
+            .map(|(name, parts)| format!("{name} source ({})", quoted(parts.names))),
     );
     sources.join(" and ")
 }
@@ -1662,6 +1717,47 @@ mod tests {
         assert_eq!(format!("{:?}", GO_MOD), "Manifest(\"go.mod\")");
     }
 
+    /// The part a file only test code declares is put in as a whole is one of
+    /// the parts its language names, so `part:` can name it.
+    #[test]
+    fn the_test_part_of_a_language_is_one_of_its_parts() {
+        for language in LANGUAGES {
+            if let Some(parts) = &language.parts {
+                assert!(parts.names.contains(&parts.test), "{}", language.name);
+            }
+        }
+        assert!(LANGUAGES.iter().any(|language| language.parts.is_some()));
+    }
+
+    /// Which modules each language takes for its standard library.
+    #[test]
+    fn each_language_tells_its_standard_library() {
+        let mut table = String::new();
+        for (file, module) in [
+            ("a.go", "net/http"),
+            ("a.go", "github.com/x/y"),
+            ("a.go", "C"),
+            ("a.py", "os.path"),
+            ("a.pyi", "os"),
+            ("a.py", "requests"),
+            ("A.java", "java.util.List"),
+            ("A.kt", "kotlin.collections.List"),
+            ("a.kts", "java.io.File"),
+            ("a.rs", "std::fmt"),
+            ("a.rs", "serde::de"),
+            ("A.cs", "System.IO"),
+            ("a.php", "DateTime"),
+            ("a.php", "Symfony\\Component"),
+            ("a.swift", "Foundation"),
+            ("a.ts", "fs"),
+            ("a.rb", "json"),
+        ] {
+            table.push_str(&format!("{file} {module}: {}\n", is_std(file, module)));
+        }
+        insta::assert_snapshot!("std_by_language", table);
+        assert!(knows_std("a.go") && knows_std("package.json") && !knows_std("a.ts"));
+    }
+
     /// A module nests another only across a separator some language cuts at (#108).
     #[test]
     fn a_module_nests_only_what_sits_below_it_at_a_separator() {
@@ -1754,7 +1850,7 @@ mod tests {
             .collect();
             table.push_str(&format!(
                 "{file}: indexer {covered:?}, adapter {adapters:?}, std {}, unused {:?}, manifest {:?}\n",
-                crate::stdlib::knows(file),
+                knows_std(file),
                 crate::unused::family(file),
                 of(file).and_then(|l| l.manifest),
             ));

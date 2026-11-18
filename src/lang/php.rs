@@ -12,8 +12,20 @@ pub fn needs(_root: &Path, dir: &Path, shown: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether a class is PHP's own: one of no namespace (`DateTime`, `PDO`, `Exception`).
+pub fn std(module: &str) -> bool {
+    !module.contains('\\')
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_a_class_of_no_namespace() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("a.php", "DateTime"));
+        assert!(!is_std("a.php", "Illuminate\\Support\\Str"));
+    }
+
     use super::*;
 
     #[test]

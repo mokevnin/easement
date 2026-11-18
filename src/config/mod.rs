@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use crate::check::RuleId;
 use crate::decision::Grant;
 use crate::lang::registry;
-use crate::stdlib::STD;
 use anyhow::{Context, Result, anyhow, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,6 +20,11 @@ use validate::unknown_component;
 
 pub const DEFAULT_CONFIG: &str = "easement.yml";
 pub const DEFAULT_BASELINE: &str = "easement.baseline.yml";
+
+/// The pattern in `may_use_external` and `forbid_external` that stands for the
+/// standard library of the importing file's language, as its registry entry
+/// tells it.
+pub const STD: &str = "$std";
 
 /// Configuration of the easement architecture quality gate.
 #[derive(Debug, Deserialize, JsonSchema)]
