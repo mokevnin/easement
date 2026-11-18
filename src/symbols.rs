@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, in_words, name_first};
+use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, in_words};
 use crate::components::ComponentMap;
 use anyhow::{Result, bail};
 
@@ -362,51 +362,6 @@ pub fn contradicted_grants(
     Ok(())
 }
 
-/// Why an index left the package of some names unnamed, as the code that reads
-/// the index knows it.
-#[derive(Debug)]
-pub struct Unnamed {
-    /// What it could not name: `the npm package`.
-    pub what: &'static str,
-    /// Why, and how to have it named.
-    pub why: &'static str,
-}
-
-/// Why `forbid_symbol` left uses of names unchecked: the files in `unnamed`
-/// use names whose package the index left unnamed, for the reason `cause` gives.
-/// Only files that a `forbid_symbol` list covers count: all of them for the top-level
-/// list, else those of a component with its own.
-pub fn symbols_partial(
-    config: &Config,
-    map: &ComponentMap,
-    unnamed: &[String],
-    cause: &Unnamed,
-) -> Vec<Unjudged> {
-    let unnamed: Vec<&str> = unnamed
-        .iter()
-        .map(String::as_str)
-        .filter(|file| forbids_symbols(config, map, file))
-        .collect();
-    if unnamed.is_empty() {
-        return Vec::new();
-    }
-    const SHOWN: usize = 3;
-    let files = name_first(
-        &unnamed,
-        SHOWN,
-        ", ",
-        |file| file.to_string(),
-        |more| format!(" and {more} more files"),
-    );
-    vec![
-        Unjudged::new(format!(
-            "`forbid_symbol` cannot tell {} of the names used in {files}: {}",
-            cause.what, cause.why
-        ))
-        .in_files(unnamed),
-    ]
-}
-
 /// Whether a `forbid_symbol` list covers `file`: the top-level one, or that of
 /// its component.
 fn forbids_symbols(config: &Config, map: &ComponentMap, file: &str) -> bool {
@@ -757,23 +712,6 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
             let config = forbidding(&[pattern]);
             assert!(never_firing(&config, &known, true).is_empty(), "{pattern}");
         }
-    }
-
-    #[test]
-    fn unjudged_names_say_why_the_index_left_them_unnamed() {
-        let config = forbidding(&["i18next.i18next"]);
-        let map = ComponentMap::new(&config).unwrap();
-        let cause = Unnamed {
-            what: "the package",
-            why: "update the indexer",
-        };
-        let notes = symbols_partial(&config, &map, &["web/a.ts".to_string()], &cause);
-        assert_eq!(notes.len(), 1);
-        assert_eq!(
-            notes[0].reason,
-            "`forbid_symbol` cannot tell the package of the names used in web/a.ts: update the indexer"
-        );
-        assert_eq!(notes[0].files, ["web/a.ts"]);
     }
 
     #[test]

@@ -72,9 +72,6 @@ pub struct Scan {
     /// Source files easement could not read: what they import beyond the index,
     /// and what they suppress, is unknown.
     pub unreadable: Vec<String>,
-    /// Checked files that use a name of a package the indexer left unnamed,
-    /// which no rule on names judged.
-    pub unnamed_uses: Vec<String>,
     /// Imports that checked files of the index write that the index took to no
     /// source target and whose text names none either: their dependencies are
     /// missing (scip-go on an import cycle, a package that does not type-check, a
@@ -97,8 +94,6 @@ pub struct Scan {
     /// The qualifier and name of the symbols the index knows under a name that
     /// `forbid_symbol` lists.
     pub known_symbols: Vec<(String, String)>,
-    /// Whether `known_symbols` is whole: false when the index left some unnamed.
-    pub known_symbols_whole: bool,
     /// Indexers that ran.
     pub indexed: usize,
     /// Indexes taken from the cache instead of running their indexer.
@@ -125,8 +120,6 @@ impl Scan {
         self.uncovered.is_empty()
             && self.unresolved_imports.is_empty()
             && self.unknown_schemes.is_empty()
-            && self.unnamed_uses.is_empty()
-            && self.known_symbols_whole
             && self.paths.iter().all(|f| indexer::indexed(f))
     }
 }
@@ -606,12 +599,6 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
             .cloned(),
     );
     unread.sort();
-    let unnamed_uses = facts
-        .unnamed
-        .iter()
-        .filter(|file| is_source(Path::new(file.as_str())))
-        .cloned()
-        .collect();
     // Uses of names count only for a language whose uses are verified; a rule
     // over the others is an evidence gap (`check::symbols_unverified`).
     let (symbols, unverified_symbols): (Vec<SymbolRef>, Vec<SymbolRef>) = facts
@@ -656,7 +643,6 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
             unreadable.dedup();
             unreadable
         },
-        unnamed_uses,
         unresolved_imports: checked_imports.unresolved,
         unread_unresolved_imports: unread_imports.unresolved,
         unknown_schemes: names.unknown_schemes(),
@@ -677,7 +663,6 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
             out
         },
         known_symbols: facts.known,
-        known_symbols_whole: facts.known_whole,
         indexed: indexed.ran,
         from_cache: indexed.cached,
         flow,

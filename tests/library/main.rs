@@ -24,6 +24,7 @@ mod formats;
 mod implementations;
 mod imports;
 mod indexers;
+mod installed;
 mod languages;
 mod packages;
 mod plan;

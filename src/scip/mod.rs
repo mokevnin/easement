@@ -25,7 +25,6 @@ use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 
 use crate::check::{SymbolRef, Unjudged};
 use crate::flow::{Edge, Flow, Node, Use};
-use crate::lang::language::Language;
 use crate::lang::parts::Part;
 use crate::lang::registry;
 use crate::lang::{
@@ -37,7 +36,7 @@ use crate::relpath;
 pub mod symbol;
 
 use crate::lang::language::Symbols;
-use symbol::{Called, Kind, Name, Qualifier, Shape, classes, modules, split};
+use symbol::{Called, Installs, Kind, Name, Package, Qualifier, Shape, classes, modules, split};
 
 /// `SymbolRole::Definition` in the bitset of an occurrence.
 const DEFINITION: i32 = 1;
@@ -51,10 +50,6 @@ pub struct Reference {
     /// document's `encoding`; `None` when its range is not on one line.
     pub columns: Option<(usize, usize)>,
     pub symbol: String,
-    /// For a reference into a package the index left unnamed that stands on the
-    /// string of an import: the module the string spells, as the entry of its
-    /// language reads it ([`crate::lang::language::UnnamedPackages`]).
-    pub spelled: Option<String>,
 }
 
 /// A source file of the index, with the paths relative to the project root.
@@ -360,7 +355,7 @@ pub struct Documents(pub Vec<Document>);
 /// Parses an index written by an indexer that ran in `base` (a directory
 /// relative to the project `root`, `""` for the root itself). Documents outside
 /// the project, such as generated files in a build cache, are dropped. The
-/// source of a document is read only for a reference into an unnamed package.
+/// source of a document is read only for the name of a class it defines locally.
 pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
     let index = Index::parse_from_bytes(bytes).context("not a SCIP index")?;
     let prefix = relpath::slash(base);
@@ -401,10 +396,6 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
             supertypes,
             ..Document::default()
         };
-        // The packages the index of the document's language may leave unnamed.
-        let unnamed = registry::of(&parsed.path)
-            .and_then(Language::indexer)
-            .and_then(|indexer| indexer.unnamed.as_ref());
         for occurrence in &document.occurrences {
             if is_local(&occurrence.symbol)
                 && occurrence.symbol_roles & DEFINITION != 0
@@ -449,18 +440,10 @@ pub fn parse(bytes: &[u8], root: &Path, base: &Path) -> Result<Vec<Document>> {
                 }
                 parsed.definitions.push(occurrence.symbol.clone());
             } else {
-                let spelled = unnamed
-                    .filter(|unnamed| (unnamed.is)(&occurrence.symbol))
-                    .and_then(|unnamed| {
-                        let lines = source.get_or_insert_with(|| read_lines(root, &parsed.path));
-                        let string = string_at(lines, occurrence, encoding)?;
-                        (unnamed.spelled)(string, &root.join(&parsed.path))
-                    });
                 parsed.references.push(Reference {
                     line: line_of(occurrence) + 1,
                     columns: single_line(occurrence).map(|(_, start, end)| (start, end)),
                     symbol: occurrence.symbol.clone(),
-                    spelled,
                 });
             }
         }
@@ -477,17 +460,6 @@ fn read_lines(root: &Path, path: &str) -> Vec<String> {
         .lines()
         .map(str::to_string)
         .collect()
-}
-
-/// What the string an occurrence stands on holds between its quotes (`"hono"`,
-/// `'@scope/pkg/sub'`); `None` for a name, or a range over more than one line.
-fn string_at<'a>(
-    lines: &'a [String],
-    occurrence: &Occurrence,
-    encoding: PositionEncoding,
-) -> Option<&'a str> {
-    let (line, start, end) = single_line(occurrence)?;
-    unquoted(between(lines.get(line)?, (start, end), encoding)?)
 }
 
 /// The line, 0-based, and the start and end columns of an occurrence whose
@@ -573,14 +545,9 @@ struct DepKey<'a> {
 pub struct Facts {
     pub deps: Vec<Dep>,
     pub symbols: Vec<SymbolRef>,
-    /// With `symbols`, the files that use a name of an unnamed package, whose
-    /// uses are left out of `symbols`.
-    pub unnamed: BTreeSet<String>,
     /// With `watched`, the qualifier and name of every symbol the index defines or
     /// references whose name is one of `watched`: what a `forbid_symbol` name can mean.
     pub known: Vec<(String, String)>,
-    /// Whether `known` is whole: false when the index left some definitions unnamed.
-    pub known_whole: bool,
 }
 
 /// For the tests: [`Indexed::facts`] of `documents`, with `excluded` beside them.
@@ -703,8 +670,9 @@ pub struct Indexed<'a> {
     names: &'a Names<'a>,
     checked: Definitions<'a>,
     hidden: Definitions<'a>,
-    /// Packages that define something are the project's own: a reference into
-    /// one that no definition matches (a relative import in Python) is not external.
+    /// The packages the index credits a name a document defines to are the
+    /// project's own: a reference into one that no definition matches (a relative
+    /// import in Python) is not external.
     own: BTreeSet<String>,
     /// Every alias the checked and excluded documents define, with its file.
     aliases: HashMap<&'a str, (&'a str, &'a Alias)>,
@@ -783,7 +751,7 @@ impl<'a> Indexed<'a> {
             .defined
             .keys()
             .chain(hidden.defined.keys())
-            .filter_map(|symbol| names.get(symbol)?.package.clone())
+            .filter_map(|symbol| Some(names.get(symbol)?.package.credited()?.to_string()))
             .collect();
         let mut aliases = HashMap::new();
         for document in names.documents.iter().chain(names.excluded) {
@@ -987,24 +955,13 @@ impl<'a> Indexed<'a> {
         )
     }
 
-    /// The external module a module, or a name at the top level of one, that no
-    /// file of the project defines is in, as `reference` to it names it: `None` for
-    /// a symbol of the project's own package that no document defines (a relative
-    /// import in Python, a JSON file scip-typescript does not index), and for an
-    /// unnamed package whose string the reference does not stand on.
-    fn external(&self, name: &Name, reference: &Reference) -> Option<String> {
-        if name.reading.unnamed {
-            // Only the string of the import names an unnamed package; a name bound
-            // to one of its modules (`z` of `import { z } from "zod"`) stands on a
-            // line whose string already did.
-            return reference
-                .spelled
-                .clone()
-                .filter(|module| !module.is_empty());
-        }
+    /// The external module a name that no file of the project defines is in: `None`
+    /// for a name of the project's own package (a relative import in Python, a JSON
+    /// file scip-typescript does not index).
+    fn external(&self, name: &Name) -> Option<String> {
         let own = name
             .package
-            .as_ref()
+            .credited()
             .is_some_and(|package| self.own.contains(package));
         (!own).then(|| name.external.clone())
     }
@@ -1042,7 +999,7 @@ impl<'a> Indexed<'a> {
             match name.shape {
                 // The file itself is no target of its own import.
                 _ if file == Some(document.path.as_str()) => {}
-                Shape::Module if file.is_some() || self.external(name, reference).is_some() => {
+                Shape::Module if file.is_some() || self.external(name).is_some() => {
                     return Resolution::Target;
                 }
                 Shape::TopLevel if file.is_some() => return Resolution::Target,
@@ -1065,7 +1022,6 @@ impl<'a> Indexed<'a> {
     ) -> Facts {
         let defined = &mine.defined;
         let reopened = &mine.reopened;
-        let own = &self.own;
         let lookup = Lookup { mine, others };
         let defined_at = |symbol: &str| lookup.defined_at(symbol);
         // The one file that defines `symbol`: a module reopened in several files is no
@@ -1080,10 +1036,8 @@ impl<'a> Indexed<'a> {
         let checked: HashSet<&str> = documents.iter().map(|d| d.path.as_str()).collect();
         let mut deps = Vec::new();
         let mut uses = Vec::new();
-        let mut unnamed = BTreeSet::new();
         // Records the use of `name` that `document` makes at `line`, when it is a use of
-        // a name of another file, or the file among those whose uses are unjudged when the
-        // index does not say which package the name is of.
+        // a name of another file.
         let mut record_use =
             |document: &Document, its_own: &HashSet<&str>, name: &Name, line: usize| {
                 let Some(called) = name.called.as_ref() else {
@@ -1095,10 +1049,6 @@ impl<'a> Indexed<'a> {
                 let own_name = found == Some(document.path.as_str())
                     || (name.shape != Shape::Member && its_own.contains(name.symbol.as_str()));
                 if own_name {
-                    return;
-                }
-                if found.is_none() && name.reading.unnamed {
-                    unnamed.insert(document.path.clone());
                     return;
                 }
                 let target = match found {
@@ -1133,7 +1083,6 @@ impl<'a> Indexed<'a> {
                     line: line + 1,
                     columns: None,
                     symbol: (*symbol).to_string(),
-                    spelled: None,
                 })
                 .collect(),
             ..Document::default()
@@ -1163,9 +1112,7 @@ impl<'a> Indexed<'a> {
             let external_at: HashSet<(usize, (usize, usize), Shape)> = read
                 .iter()
                 .zip(&files)
-                .filter(|((_, name), file)| {
-                    file.is_none() && name.package.as_ref().is_none_or(|p| !own.contains(p))
-                })
+                .filter(|((_, name), file)| file.is_none() && self.external(name).is_some())
                 .filter_map(|((reference, name), _)| written_at(reference, name))
                 .collect();
             let merged: Vec<bool> = read
@@ -1270,7 +1217,7 @@ impl<'a> Indexed<'a> {
             // The modules the file names, by package and path, at the first line that does: a
             // name of one adds nothing, whichever of its files defines it (a Go package). A
             // re-exported name has a module of its own, which the line does not name.
-            let mut named: HashMap<(&Option<String>, &[String]), usize> = HashMap::new();
+            let mut named: HashMap<ModulePath, usize> = HashMap::new();
             for ((reference, name), merged) in read.iter().zip(&merged) {
                 if name.shape == Shape::Module && !merged {
                     let line = named
@@ -1313,7 +1260,7 @@ impl<'a> Indexed<'a> {
                 }
                 let module = match internal {
                     Some(_) => String::new(),
-                    None => match self.external(name, reference) {
+                    None => match self.external(name) {
                         Some(module) => module,
                         None => continue,
                     },
@@ -1486,7 +1433,6 @@ impl<'a> Indexed<'a> {
                 });
             }
         }
-        let known_whole = !unnamed.remove("");
         deps.retain(|dep| !dep.file.as_os_str().is_empty());
         route(&mut deps);
         let mut known = Vec::new();
@@ -1511,15 +1457,13 @@ impl<'a> Indexed<'a> {
         Facts {
             deps,
             symbols: uses,
-            unnamed,
             known,
-            known_whole,
         }
     }
 }
 
 /// A module by its package and path, as a name of it gives them.
-type ModulePath<'a> = (&'a Option<String>, &'a [String]);
+type ModulePath<'a> = (&'a Package, &'a [String]);
 
 /// What the symbol rules call `name`, a name defined in `file`: `None` for a module,
 /// and for a name the index gives no call of.
@@ -1861,6 +1805,16 @@ pub(crate) fn read(symbol: &str) -> Option<Name> {
             symbol,
             &parsed,
             language.member_separator,
+            // Where its packages are installed, when its kind of manifest says how a
+            // path below them names one.
+            language
+                .manifest
+                .and_then(|manifest| manifest.package)
+                .map(|package| Installs {
+                    dirs: language.third_party,
+                    package,
+                })
+                .as_ref(),
             qualifier,
             external,
         ),
@@ -1873,7 +1827,11 @@ pub(crate) fn read(symbol: &str) -> Option<Name> {
             &parsed,
             separator,
             constructor,
-            owned.then(|| parsed.owner()),
+            if owned {
+                Package::Credited(parsed.owner())
+            } else {
+                Package::Unsaid
+            },
         ),
         Symbols::Own(read) => read(symbol, &parsed),
     })
@@ -1915,7 +1873,6 @@ mod tests {
                     line: *line,
                     columns: None,
                     symbol: symbol.to_string(),
-                    spelled: None,
                 })
                 .collect(),
             ..Document::default()
@@ -2894,7 +2851,6 @@ mod tests {
             line,
             columns,
             symbol: symbol.to_string(),
-            spelled: None,
         };
         let io = "scip-go gomod github.com/golang/go/src go1.25 io/";
         let document = Document {
@@ -2961,7 +2917,6 @@ mod tests {
                 lines[line - 1].len() - 1,
             )),
             symbol: symbol.to_string(),
-            spelled: None,
         };
         let app = "scip-typescript npm app 1.0.0 src/";
         let main = Document {
@@ -3027,7 +2982,6 @@ mod tests {
                 (start, start + text.len())
             }),
             symbol,
-            spelled: None,
         };
         let main = Document {
             path: "src/app/main.py".into(),
@@ -3189,7 +3143,6 @@ mod tests {
             line,
             columns: Some(columns),
             symbol: symbol.to_string(),
-            spelled: None,
         };
         let mut platform = doc("src/platform/link.ts", &[], &[]);
         platform.references = vec![
@@ -3238,52 +3191,35 @@ mod tests {
         assert_eq!(facts.deps[0].target, Target::External("lodash".into()));
     }
 
+    /// The text a reference stands on is cut at columns counted in the code units of
+    /// the index's encoding, and a string is read between its quotes.
     #[test]
-    fn a_name_of_an_unnamed_package_is_no_symbol_use_but_is_reported_as_unjudged() {
-        // scip-typescript before 0.6.1 indexes what sits under a `package.json` without
-        // `name` (`{"type": "module"}` in `esm/`) as the unnamed package `. .`.
-        let documents = vec![doc(
-            "src/web/a.ts",
-            &[],
-            &[(1, "scip-typescript npm . . esm/`index.d.ts`/Thing#")],
-        )];
-        let facts = facts(&documents, &[], true);
-        assert!(facts.symbols.is_empty());
-        assert_eq!(
-            facts.unnamed.into_iter().collect::<Vec<_>>(),
-            ["src/web/a.ts"]
-        );
-    }
-
-    #[test]
-    fn the_string_an_occurrence_stands_on_is_read_between_its_quotes() {
-        let at = |line: i32, start: i32, end: i32| {
-            let mut occurrence = Occurrence::new();
-            occurrence.range = vec![line, start, end];
-            occurrence
-        };
-        let lines: Vec<String> = [
-            "import { Hono } from 'hono'",
-            "import x from \"./local\"",
-            // `é` is one UTF-16 unit and two UTF-8 bytes.
-            "/*é*/ import a from \"@scope/pkg/sub\"",
-        ]
-        .map(str::to_string)
-        .to_vec();
+    fn the_text_between_two_columns_is_counted_in_the_units_of_the_encoding() {
+        fn at(line: &str, columns: (usize, usize), encoding: PositionEncoding) -> Option<&str> {
+            between(line, columns, encoding).and_then(unquoted)
+        }
         let utf16 = PositionEncoding::UnspecifiedPositionEncoding;
-        assert_eq!(string_at(&lines, &at(0, 21, 27), utf16), Some("hono"));
-        assert_eq!(string_at(&lines, &at(0, 9, 13), utf16), None, "a name");
-        assert_eq!(string_at(&lines, &at(1, 14, 23), utf16), Some("./local"));
         assert_eq!(
-            string_at(&lines, &at(2, 20, 36), utf16),
-            Some("@scope/pkg/sub")
+            at("import { Hono } from 'hono'", (21, 27), utf16),
+            Some("hono")
         );
+        assert_eq!(
+            at("import { Hono } from 'hono'", (9, 13), utf16),
+            None,
+            "a name"
+        );
+        assert_eq!(
+            at("import x from \"./local\"", (14, 23), utf16),
+            Some("./local")
+        );
+        // `é` is one UTF-16 unit and two UTF-8 bytes.
+        let line = "/*é*/ import a from \"@scope/pkg/sub\"";
+        assert_eq!(at(line, (20, 36), utf16), Some("@scope/pkg/sub"));
         let utf8 = PositionEncoding::UTF8CodeUnitOffsetFromLineStart;
-        assert_eq!(
-            string_at(&lines, &at(2, 21, 37), utf8),
-            Some("@scope/pkg/sub")
-        );
-        assert_eq!(string_at(&lines, &at(9, 0, 1), utf16), None, "no such line");
+        assert_eq!(at(line, (21, 37), utf8), Some("@scope/pkg/sub"));
+        let utf32 = PositionEncoding::UTF32CodeUnitOffsetFromLineStart;
+        assert_eq!(at(line, (20, 36), utf32), Some("@scope/pkg/sub"));
+        assert_eq!(at("short", (9, 10), utf16), None, "past the line");
     }
 
     #[test]
