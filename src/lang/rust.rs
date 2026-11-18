@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::parts::{Doubt, Found, Module, Span};
+use super::registry::starts_with_any;
 use crate::relpath;
 
 /// The test-only items of a Rust source: the attribute, then the item up to its closing
@@ -559,10 +560,52 @@ fn module_name(item: &[u8]) -> Option<String> {
         .map(|name| name.trim_start_matches("r#").to_string())
 }
 
+/// rust-analyzer runs Cargo and rustc of the toolchain rustup picks: flags,
+/// `--cfg`, the toolchain and the standard library's sources change the index.
+/// Not the variables Cargo sets for what it runs (`CARGO_PKG_NAME`,
+/// `CARGO_MANIFEST_DIR`), which name the checkout and so would keep a
+/// worktree from reusing the index.
+pub fn env(name: &str) -> bool {
+    const SET_BY_CARGO: &[&str] = &[
+        "CARGO_MANIFEST_",
+        "CARGO_PKG_",
+        "CARGO_CRATE_NAME",
+        "CARGO_BIN_",
+        "CARGO_PRIMARY_PACKAGE",
+        "CARGO_TARGET_TMPDIR",
+        "CARGO_MAKEFLAGS",
+        "CARGO_CFG_",
+        "CARGO_FEATURE_",
+    ];
+    starts_with_any(name, &["RUSTFLAGS", "RUSTC", "RUSTDOC"])
+        || matches!(
+            name,
+            "CARGO" | "RUSTUP_TOOLCHAIN" | "RUSTUP_HOME" | "RUST_SRC_PATH"
+        )
+        || (name.starts_with("CARGO_") && !starts_with_any(name, SET_BY_CARGO))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lang::parts::Kind;
+
+    #[test]
+    fn the_variables_of_rustc_and_cargo_are_keyed_but_those_cargo_sets() {
+        for name in [
+            "RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_BUILD_RUSTFLAGS",
+            "RUSTUP_TOOLCHAIN",
+            "RUST_SRC_PATH",
+            "CARGO",
+        ] {
+            assert!(env(name), "{name}");
+        }
+        for name in ["CARGO_PKG_NAME", "CARGO_MANIFEST_DIR"] {
+            assert!(!env(name), "{name}");
+        }
+    }
 
     fn lines(source: &str) -> Vec<RangeInclusive<usize>> {
         parts("src/lib.rs", source)

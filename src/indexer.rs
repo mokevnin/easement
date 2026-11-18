@@ -13,366 +13,50 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 
 use crate::check::{self, Platform};
-use crate::lang::registry::{self, Language};
+use crate::lang::registry::{self, Indexer, Language};
 use crate::relpath;
 use crate::scip::{self, Document, Documents};
 
-/// The SCIP indexer of a language: how to run it and what its index depends on.
-pub struct Indexer {
-    /// The language whose files it reads.
-    pub language: &'static Language,
-    binary: &'static str,
-    /// Files that mark a directory the indexer runs in.
-    markers: &'static [&'static str],
-    /// Run only in the outermost marked directories: a Cargo workspace holds its members.
-    outermost: bool,
-    /// Run at the project root when no marker is found (Python projects often have none).
-    fallback_root: bool,
-    /// Arguments that write the index to the given file.
-    args: fn(&Path) -> Vec<String>,
-    install: &'static str,
-    /// The mise tool that installs the indexer, for the `[tools]` of a `mise.toml`.
-    mise: Option<&'static str>,
-    /// Why it cannot run on Windows, with the upstream cause; `None` when it can.
-    /// There easement does not start it: its files are uncovered with this reason.
-    /// Removed by hand once the pinned indexer runs there (the Windows CI run shows it).
-    not_on_windows: Option<&'static str>,
-    /// For an indexer that has no output option: the file it writes in its working directory.
-    writes_in_cwd: Option<&'static str>,
-    /// The argument that makes it print its version, for `doctor`; `None` for an
-    /// indexer that takes any argument for a request to index (scip-php).
-    version_flag: Option<&'static str>,
-    /// What has to be in place before the indexer runs: (project root, directory, shown name).
-    needs: fn(&Path, &Path, &str) -> Result<()>,
-    /// Which project files under the index directory the cache key reads (the `/`-separated
-    /// path): what the indexer could see. Another language's sources, docs and assets are left
-    /// out, so a change to them reuses the index. When in doubt, a file is in.
-    inputs: fn(&Language, &str) -> bool,
-    /// Which inherited environment variables change what the indexer writes
-    /// (`GOFLAGS`, `PYTHONPATH`); their values are in the cache key.
-    env: fn(&str) -> bool,
-}
-
-/// Go's own variables (`GOFLAGS`, `GOOS`, `GO111MODULE`) have no `_` after `GO`,
-/// unlike `GOOGLE_APPLICATION_CREDENTIALS`, which a CI job may point at another
-/// file every run; cgo's are `CGO_*`.
-fn go_env(name: &str) -> bool {
-    name.strip_prefix("GO").is_some_and(|rest| {
-        rest.bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-    }) || name.starts_with("CGO_")
-}
-
-fn starts_with_any(name: &str, prefixes: &[&str]) -> bool {
-    prefixes.iter().any(|prefix| name.starts_with(prefix))
-}
-
-/// pyright asks the `python3` on the path for its search paths, and scip-python
-/// runs `pip` for the installed packages: `PYTHONPATH` changes what an import
-/// resolves to. `PYTHONHASHSEED` is left out: tox sets a new one every run. So
-/// is `VIRTUAL_ENV`, which alone does not change the index and names the
-/// checkout when the environment lives in it, as uv and Poetry put it.
-fn python_env(name: &str) -> bool {
-    (name.starts_with("PYTHON") && name != "PYTHONHASHSEED") || name.starts_with("PIP_")
-}
-
-/// scip-java runs Maven or Gradle with the JDK of `JAVA_HOME`: `MAVEN_ARGS`
-/// can skip the build, `ORG_GRADLE_PROJECT_*` sets project properties. Not
-/// `JAVA_*` as a prefix: CI runners name every JDK they carry
-/// (`JAVA_HOME_17_X64`), used or not.
-fn java_env(name: &str) -> bool {
-    matches!(
-        name,
-        "JAVA_HOME"
-            | "JAVA_OPTS"
-            | "JAVA_TOOL_OPTIONS"
-            | "JDK_JAVA_OPTIONS"
-            | "_JAVA_OPTIONS"
-            | "GRADLE_OPTS"
-            | "GRADLE_USER_HOME"
-    ) || starts_with_any(name, &["MAVEN_", "ORG_GRADLE_PROJECT_"])
-}
-
-/// MSBuild reads every environment variable as a property, by a name of any
-/// case (`DefineConstants=X` turns on `#if X`). Keying all of them would miss on
-/// every CI run, so the key holds the SDK's own and the properties that decide
-/// what is compiled; a project that reads another variable needs `--no-cache`
-/// after changing it.
-fn csharp_env(name: &str) -> bool {
-    let name = name.to_ascii_uppercase();
-    starts_with_any(&name, &["DOTNET_", "MSBUILD", "NUGET_"])
-        || matches!(
-            name.as_str(),
-            "DEFINECONSTANTS"
-                | "CONFIGURATION"
-                | "PLATFORM"
-                | "TARGETFRAMEWORK"
-                | "TARGETFRAMEWORKS"
-                | "RUNTIMEIDENTIFIER"
-                | "RUNTIMEIDENTIFIERS"
-                | "LANGVERSION"
-        )
-}
-
-/// rust-analyzer runs Cargo and rustc of the toolchain rustup picks: flags,
-/// `--cfg`, the toolchain and the standard library's sources change the index.
-/// Not the variables Cargo sets for what it runs (`CARGO_PKG_NAME`,
-/// `CARGO_MANIFEST_DIR`), which name the checkout and so would keep a
-/// worktree from reusing the index.
-fn rust_env(name: &str) -> bool {
-    const SET_BY_CARGO: &[&str] = &[
-        "CARGO_MANIFEST_",
-        "CARGO_PKG_",
-        "CARGO_CRATE_NAME",
-        "CARGO_BIN_",
-        "CARGO_PRIMARY_PACKAGE",
-        "CARGO_TARGET_TMPDIR",
-        "CARGO_MAKEFLAGS",
-        "CARGO_CFG_",
-        "CARGO_FEATURE_",
-    ];
-    starts_with_any(name, &["RUSTFLAGS", "RUSTC", "RUSTDOC"])
-        || matches!(
-            name,
-            "CARGO" | "RUSTUP_TOOLCHAIN" | "RUSTUP_HOME" | "RUST_SRC_PATH"
-        )
-        || (name.starts_with("CARGO_") && !starts_with_any(name, SET_BY_CARGO))
-}
-
-fn nothing_needed(_: &Path, _: &Path, _: &str) -> Result<()> {
-    Ok(())
-}
-
-/// Every file the project owns: for an indexer whose build reads files of its own choosing
-/// (Maven, Gradle, Cargo, MSBuild, Bundler, Composer, Python's environment). The directories
-/// its toolchain fills with code not the project's own are left out: build output (`target`)
-/// is made from the files keyed, and an install (`vendor`) from a lock file.
-fn every_own_file(language: &Language, path: &str) -> bool {
-    !language.is_foreign(path)
-}
-
-/// scip-go reads the Go sources and what `go` resolves them with: the module and workspace
-/// files and a vendored dependency list. A vendored dependency is no code of the project, but
-/// scip-go type-checks against it, and one a `replace` takes from outside the project changes
-/// `vendor/` alone: its files are in.
-fn go_inputs(_: &Language, path: &str) -> bool {
-    let name = relpath::file_name(path);
-    name.ends_with(".go")
-        || matches!(
-            name,
-            "go.mod" | "go.sum" | "go.work" | "go.work.sum" | "modules.txt"
-        )
-}
-
-/// scip-typescript reads what the TypeScript compiler does: the sources and declarations, every
-/// JSON file (a `tsconfig.json` and what it extends, a `package.json`, a JSON module an import
-/// names) and the lock files that decide which dependency is installed.
-fn typescript_inputs(_: &Language, path: &str) -> bool {
-    let name = relpath::file_name(path);
-    let source = registry::TYPESCRIPT
-        .extensions
-        .contains(&relpath::extension(name));
-    source
-        || name.ends_with(".json")
-        || name.ends_with(".json5")
-        || matches!(
-            name,
-            "pnpm-lock.yaml" | "pnpm-workspace.yaml" | "yarn.lock" | "bun.lock" | "bun.lockb"
-        )
-}
-
 /// Whether an indexer reads `file`, a declaration file (`a.d.ts`) included.
 pub fn indexed(file: &str) -> bool {
-    INDEXERS.iter().any(|indexer| indexer.reads(file))
+    indexers().any(|indexer| indexer.reads(file))
 }
 
-pub static INDEXERS: &[Indexer] = &[
-    Indexer {
-        language: &registry::GO,
-        binary: "scip-go",
-        markers: &["go.mod"],
-        outermost: false,
-        fallback_root: false,
-        args: |out| vec!["--output".into(), out.display().to_string()],
-        install: "mise use -g go:github.com/scip-code/scip-go/cmd/scip-go",
-        mise: Some("go:github.com/scip-code/scip-go/cmd/scip-go"),
-        not_on_windows: None,
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: go_inputs,
-        env: go_env,
-    },
-    Indexer {
-        language: &registry::TYPESCRIPT,
-        binary: "scip-typescript",
-        markers: &["tsconfig.json"],
-        outermost: false,
-        fallback_root: false,
-        args: |out| {
-            vec![
-                "index".into(),
-                "--no-progress-bar".into(),
-                "--output".into(),
-                out.display().to_string(),
-            ]
-        },
-        install: "mise use -g npm:@sourcegraph/scip-typescript",
-        mise: Some("npm:@sourcegraph/scip-typescript"),
-        not_on_windows: None,
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: require_installed,
-        inputs: typescript_inputs,
-        env: |_| false,
-    },
-    Indexer {
-        language: &registry::PYTHON,
-        binary: "scip-python",
-        markers: &[
-            "pyproject.toml",
-            "setup.py",
-            "setup.cfg",
-            "requirements.txt",
-        ],
-        outermost: false,
-        fallback_root: true,
-        args: |out| {
-            vec![
-                "index".into(),
-                ".".into(),
-                "--quiet".into(),
-                "--project-name".into(),
-                "project".into(),
-                "--project-version".into(),
-                "0".into(),
-                "--output".into(),
-                out.display().to_string(),
-            ]
-        },
-        install: "mise use -g npm:@sourcegraph/scip-python",
-        mise: Some("npm:@sourcegraph/scip-python"),
-        not_on_windows: Some(
-            "scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224)",
-        ),
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: every_own_file,
-        env: python_env,
-    },
-    Indexer {
-        language: &registry::PHP,
-        binary: "scip-php",
-        markers: &["composer.json"],
-        outermost: false,
-        fallback_root: false,
-        args: |_| Vec::new(),
-        install: "composer global require davidrjenni/scip-php",
-        mise: None,
-        not_on_windows: Some(
-            "scip-php leaves every file out of its index there (https://github.com/davidrjenni/scip-php/issues/814)",
-        ),
-        writes_in_cwd: Some("index.scip"),
-        version_flag: None,
-        needs: require_composer,
-        inputs: every_own_file,
-        env: |_| false,
-    },
-    Indexer {
-        language: &registry::JAVA,
-        binary: "scip-java",
-        markers: &["pom.xml", "build.gradle", "build.gradle.kts"],
-        outermost: true,
-        fallback_root: false,
-        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
-        install: "mise use -g github:sourcegraph/scip-java",
-        mise: Some("github:sourcegraph/scip-java"),
-        not_on_windows: Some(
-            "the scip-java release ships a POSIX launcher only, which Windows cannot run",
-        ),
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: every_own_file,
-        env: java_env,
-    },
-    Indexer {
-        language: &registry::CSHARP,
-        binary: "scip-dotnet",
-        markers: &["*.csproj", "*.sln", "*.slnx"],
-        outermost: true,
-        fallback_root: false,
-        args: |out| vec!["index".into(), "--output".into(), out.display().to_string()],
-        install: "dotnet tool install --global scip-dotnet",
-        mise: None,
-        not_on_windows: None,
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: every_own_file,
-        env: csharp_env,
-    },
-    Indexer {
-        language: &registry::RUBY,
-        binary: "scip-ruby",
-        markers: &["Gemfile", "*.gemspec"],
-        outermost: true,
-        fallback_root: false,
-        args: |out| {
-            vec![
-                "--gem-metadata".into(),
-                "project@0".into(),
-                "--index-file".into(),
-                out.display().to_string(),
-                ".".into(),
-            ]
-        },
-        install: "mise use -g github:sourcegraph/scip-ruby",
-        mise: Some("github:sourcegraph/scip-ruby"),
-        not_on_windows: Some("scip-ruby has no Windows release"),
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: every_own_file,
-        // scip-ruby reads no variable that changes the index; Bundler's are read
-        // by the gem's wrapper, which easement does not run.
-        env: |_| false,
-    },
-    Indexer {
-        language: &registry::RUST,
-        binary: "rust-analyzer",
-        markers: &["Cargo.toml"],
-        outermost: true,
-        fallback_root: false,
-        args: |out| {
-            vec![
-                "scip".into(),
-                ".".into(),
-                "--output".into(),
-                out.display().to_string(),
-            ]
-        },
-        install: "rustup component add rust-analyzer",
-        mise: None,
-        not_on_windows: None,
-        writes_in_cwd: None,
-        version_flag: Some("--version"),
-        needs: nothing_needed,
-        inputs: every_own_file,
-        env: rust_env,
-    },
-];
+/// The languages whose index must hold `file`, by name.
+#[cfg(test)]
+pub(crate) fn covering(file: &str) -> Vec<&'static str> {
+    indexers()
+        .filter(|indexer| indexer.covers(file))
+        .map(|indexer| indexer.name())
+        .collect()
+}
 
-impl Indexer {
-    pub fn name(&self) -> &'static str {
+/// A language that an indexer reads, with its indexer: what a run of the indexer
+/// needs of both.
+#[derive(Clone, Copy)]
+struct LanguageIndexer {
+    language: &'static Language,
+    indexer: &'static Indexer,
+}
+
+/// Every language an indexer reads, in the order of the registry.
+fn indexers() -> impl Iterator<Item = LanguageIndexer> {
+    registry::LANGUAGES.into_iter().filter_map(|language| {
+        language
+            .indexer()
+            .map(|indexer| LanguageIndexer { language, indexer })
+    })
+}
+
+impl LanguageIndexer {
+    fn name(&self) -> &'static str {
         self.language.name
     }
 
     /// Why it cannot run on `platform`, `None` when it can.
     fn cannot_run_on(&self, platform: Platform) -> Option<&'static str> {
         match platform {
-            Platform::Windows => self.not_on_windows,
+            Platform::Windows => self.indexer.not_on_windows,
             Platform::Unix => None,
         }
     }
@@ -381,7 +65,7 @@ impl Indexer {
     fn cannot_run(&self, platform: Platform) -> Option<check::CannotRun> {
         self.cannot_run_on(platform).map(|reason| check::CannotRun {
             language: self.name(),
-            indexer: self.binary,
+            indexer: self.indexer.binary,
             platform,
             reason,
         })
@@ -403,7 +87,8 @@ impl Indexer {
 
     /// A marker is a file name, or `*.ext` for any file with that extension.
     fn has_marker(&self, name: &str) -> bool {
-        self.markers
+        self.indexer
+            .markers
             .iter()
             .any(|marker| match marker.strip_prefix('*') {
                 Some(suffix) => name.ends_with(suffix),
@@ -419,11 +104,11 @@ impl Indexer {
             .collect();
         dirs.sort();
         dirs.dedup();
-        if self.outermost {
+        if self.indexer.outermost {
             let all = dirs.clone();
             dirs.retain(|d| !all.iter().any(|p| p != d && relpath::is_under(d, p)));
         }
-        if dirs.is_empty() && self.fallback_root {
+        if dirs.is_empty() && self.indexer.fallback_root {
             dirs.push(String::new());
         }
         dirs
@@ -475,8 +160,7 @@ impl CacheUse {
 /// Why the indexer of `language` (a registry name, `python`) cannot run on
 /// `platform`; `None` when it can, or when the language has no indexer.
 pub fn cannot_index(platform: Platform, language: &str) -> Option<&'static str> {
-    INDEXERS
-        .iter()
+    indexers()
         .find(|indexer| indexer.name() == language)
         .and_then(|indexer| indexer.cannot_run_on(platform))
 }
@@ -592,8 +276,7 @@ pub struct Indexed {
 
 /// The indexers that cannot run on `platform`, each with the files of `files` it would read.
 fn unavailable(files: &[String], platform: Platform) -> Vec<check::Unavailable> {
-    INDEXERS
-        .iter()
+    indexers()
         .filter_map(|indexer| {
             let cannot_run = indexer.cannot_run(platform)?;
             let files: Vec<String> = files
@@ -610,9 +293,8 @@ fn unavailable(files: &[String], platform: Platform) -> Vec<check::Unavailable> 
 /// `platform`, each with the directories it indexes. Source files with no `go.mod`
 /// or `tsconfig.json` above them are not indexed; they are reported as uncovered,
 /// or can be `exclude`d.
-fn groups(files: &[String], platform: Platform) -> Vec<(&'static Indexer, Vec<String>)> {
-    INDEXERS
-        .iter()
+fn groups(files: &[String], platform: Platform) -> Vec<(LanguageIndexer, Vec<String>)> {
+    indexers()
         .filter(|language| language.cannot_run_on(platform).is_none())
         .filter(|language| files.iter().any(|f| language.covers(f)))
         .map(|language| (language, language.roots(files)))
@@ -634,9 +316,7 @@ pub fn run(
 ) -> Result<Indexed> {
     let (mut ran, mut cached) = (0, 0);
     let keyed = keyed(files, excluded);
-    let wanted = INDEXERS
-        .iter()
-        .flat_map(|language| files.iter().filter(|f| language.covers(f)));
+    let wanted = indexers().flat_map(|language| files.iter().filter(move |f| language.covers(f)));
     let platform = indexing.environment.platform;
     let groups = groups(files, platform);
     let results = in_parallel(&groups, indexing.jobs.get(), |(language, roots)| {
@@ -788,7 +468,7 @@ pub fn default_cache_dir(environment: &Environment) -> Option<PathBuf> {
 /// outside the project are not covered; `--no-cache` is for when they change
 /// without a lock file.
 fn fingerprint(
-    language: &Indexer,
+    language: &LanguageIndexer,
     binary: &Path,
     root: &Path,
     dir: &str,
@@ -799,11 +479,11 @@ fn fingerprint(
     let mut hasher = StableHasher::default();
     language.name().hash(&mut hasher);
     env.hash(&mut hasher);
-    (language.args)(Path::new("")).hash(&mut hasher);
+    (language.indexer.args)(Path::new("")).hash(&mut hasher);
     let cwd = root.join(dir);
     what_runs(
         binary,
-        language.binary,
+        language.indexer.binary,
         &cwd,
         &multiplexers(environment, &cwd),
     )
@@ -816,7 +496,7 @@ fn fingerprint(
     };
     let mut seen: Vec<(&str, Option<u64>)> = files
         .iter()
-        .filter(|f| (language.inputs)(language.language, f) || above(f))
+        .filter(|f| (language.indexer.inputs)(language.language, f) || above(f))
         .map(|f| {
             // An unreadable file is a different state from every readable one.
             let content = std::fs::read(root.join(f))
@@ -846,7 +526,7 @@ struct Key {
 /// inherited variables that `Language::env` names, with what easement sets for
 /// the run over them.
 fn key_env(
-    language: &Indexer,
+    language: &LanguageIndexer,
     inherited: impl IntoIterator<Item = (OsString, OsString)>,
     set: &[(&str, String)],
 ) -> Vec<(String, String)> {
@@ -858,7 +538,7 @@ fn key_env(
                 v.to_string_lossy().into_owned(),
             )
         })
-        .filter(|(k, _)| (language.env)(k))
+        .filter(|(k, _)| (language.indexer.env)(k))
         .collect();
     env.extend(set.iter().map(|(k, v)| (k.to_string(), v.clone())));
     env.into_iter().collect()
@@ -1008,7 +688,7 @@ struct Slot {
 /// `binary` reads ([`fingerprint`]): what `check` reads and writes, and what
 /// `doctor --cache` looks for, so the two cannot drift.
 fn slot(
-    language: &Indexer,
+    language: &LanguageIndexer,
     binary: &Path,
     root: &Path,
     dir: &str,
@@ -1066,7 +746,7 @@ pub enum Miss {
 }
 
 impl Probe {
-    fn new(language: &Indexer, dir: String, reason: Option<Miss>) -> Self {
+    fn new(language: &LanguageIndexer, dir: String, reason: Option<Miss>) -> Self {
         Probe {
             language: language.name(),
             dir: if dir.is_empty() { ".".to_string() } else { dir },
@@ -1113,16 +793,16 @@ pub fn probe(
         .collect();
     let mut probes = Vec::new();
     for (language, roots) in groups(files, environment.platform) {
-        let env = settings_env(language, settings, environment);
+        let env = settings_env(&language, settings, environment);
         for dir in roots {
             let reason = match (
                 indexing.cache_dir.as_deref(),
-                environment.which(language.binary, &cwd(root, &dir)),
+                environment.which(language.indexer.binary, &cwd(root, &dir)),
             ) {
                 (None, _) => Some(Miss::NoCacheDir),
                 (_, None) => Some(Miss::NotInstalled),
                 (Some(cache_dir), Some(binary)) => {
-                    let slot = slot(language, &binary, root, &dir, &keyed, &env, environment);
+                    let slot = slot(&language, &binary, root, &dir, &keyed, &env, environment);
                     let any = |prefix: &str| names.iter().any(|n| n.starts_with(prefix));
                     if cache_dir.join(&slot.name).is_file() {
                         None
@@ -1135,7 +815,7 @@ pub fn probe(
                     }
                 }
             };
-            probes.push(Probe::new(language, dir, reason));
+            probes.push(Probe::new(&language, dir, reason));
         }
     }
     probes
@@ -1175,8 +855,7 @@ impl Diagnosis {
 /// For every language with source files among `files`: is its indexer on the
 /// `PATH`, which version, and is what it needs in place.
 pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec<Diagnosis> {
-    INDEXERS
-        .iter()
+    indexers()
         .filter(|language| files.iter().any(|f| language.covers(f)))
         .map(|language| {
             // Where it cannot run, it is not started, not even for its version,
@@ -1184,7 +863,7 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
             if let Some(cannot_run) = language.cannot_run(environment.platform) {
                 return Diagnosis {
                     language: language.name(),
-                    binary: language.binary,
+                    binary: language.indexer.binary,
                     found: false,
                     path: None,
                     version: None,
@@ -1194,29 +873,29 @@ pub fn diagnose(root: &Path, files: &[String], environment: &Environment) -> Vec
                     cannot_run: Some(cannot_run),
                 };
             }
-            let binary = environment.which(language.binary, root);
+            let binary = environment.which(language.indexer.binary, root);
             let version = binary
                 .as_deref()
-                .zip(language.version_flag)
+                .zip(language.indexer.version_flag)
                 .and_then(|(binary, flag)| version_of(binary, flag, environment));
             let problems = language
                 .roots(files)
                 .iter()
                 .filter_map(|dir| {
                     let shown = if dir.is_empty() { "." } else { dir };
-                    (language.needs)(root, &root.join(dir), shown)
+                    (language.indexer.needs)(root, &root.join(dir), shown)
                         .err()
                         .map(|e| e.to_string())
                 })
                 .collect();
             Diagnosis {
                 language: language.name(),
-                binary: language.binary,
+                binary: language.indexer.binary,
                 found: binary.is_some(),
                 path: binary.map(|p| p.display().to_string()),
                 version,
-                install: Some(language.install),
-                mise: language.mise,
+                install: Some(language.indexer.install),
+                mise: language.indexer.mise,
                 problems,
                 cannot_run: None,
             }
@@ -1244,7 +923,7 @@ fn keyed(files: &[String], excluded: &[String]) -> Vec<String> {
 
 /// The variables easement sets for a run of the indexer, from the policy's `settings`.
 fn settings_env(
-    language: &Indexer,
+    language: &LanguageIndexer,
     settings: &registry::IndexerSettings,
     environment: &Environment,
 ) -> Vec<(&'static str, String)> {
@@ -1261,7 +940,7 @@ fn cwd(root: &Path, dir: &str) -> PathBuf {
 }
 
 fn index_dir(
-    language: &Indexer,
+    language: &LanguageIndexer,
     root: &Path,
     dir: &str,
     files: &[String],
@@ -1272,14 +951,16 @@ fn index_dir(
     let env = settings_env(language, settings, environment);
     let cwd = cwd(root, dir);
     let shown = if dir.is_empty() { "." } else { dir };
-    let binary = environment.which(language.binary, &cwd).ok_or_else(|| {
-        anyhow::anyhow!(
-            "`{}` is not installed, and easement needs it for {} files; install it with `{}`",
-            language.binary,
-            language.name(),
-            language.install
-        )
-    })?;
+    let binary = environment
+        .which(language.indexer.binary, &cwd)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "`{}` is not installed, and easement needs it for {} files; install it with `{}`",
+                language.indexer.binary,
+                language.name(),
+                language.indexer.install
+            )
+        })?;
     // The key reads every input of the indexer: only a run that uses the cache needs it.
     let cached = indexing
         .cache_dir
@@ -1309,15 +990,15 @@ fn index_dir(
     }
     // Checked only when the indexer runs: a cached index was written with them in place, and
     // what they are is in its key (a lock file).
-    (language.needs)(root, &cwd, shown)?;
+    (language.indexer.needs)(root, &cwd, shown)?;
     let out = tempfile::tempdir().context("cannot create a temporary directory")?;
-    let file = match language.writes_in_cwd {
+    let file = match language.indexer.writes_in_cwd {
         Some(name) => {
             let written = cwd.join(name);
             if written.exists() {
                 bail!(
                     "{} would overwrite {}, which is in the way; move it",
-                    language.binary,
+                    language.indexer.binary,
                     written.display()
                 );
             }
@@ -1327,14 +1008,17 @@ fn index_dir(
     };
     // What the indexer writes in the project goes when this run ends, failed or not:
     // left there, it would be in the way of every run after it.
-    let _written = language.writes_in_cwd.map(|_| RemoveOnDrop(file.clone()));
+    let _written = language
+        .indexer
+        .writes_in_cwd
+        .map(|_| RemoveOnDrop(file.clone()));
     let output = environment
         .command(&binary)
-        .args((language.args)(&file))
+        .args((language.indexer.args)(&file))
         .envs(env.iter().map(|(k, v)| (*k, v)))
         .current_dir(&cwd)
         .output()
-        .with_context(|| format!("cannot run {}", language.binary))?;
+        .with_context(|| format!("cannot run {}", language.indexer.binary))?;
     if !output.status.success() {
         // Some indexers report on stdout (Maven), others on stderr.
         let text = format!(
@@ -1349,26 +1033,31 @@ fn index_dir(
         } else {
             lines
         };
-        let hint = if text.contains("LAUNCHER_ARGS[@]: unbound variable") {
-            "\nscip-java's wrapper needs bash 4.4 or newer; the bash of macOS is 3.2, put a newer one first on the PATH (`brew install bash`)"
-        } else {
-            ""
-        };
+        let hint = language
+            .indexer
+            .hints
+            .iter()
+            .find(|hint| text.contains(hint.output))
+            .map_or(String::new(), |hint| format!("\n{}", hint.hint));
         bail!(
             "{} failed in {shown} ({}); if that directory is not part of the project, add it to `exclude`:\n{}{hint}",
-            language.binary,
+            language.indexer.binary,
             output.status,
             excerpt.join("\n")
         );
     }
     let bytes = std::fs::read(&file)
-        .with_context(|| format!("{} wrote no index in {shown}", language.binary))?;
-    let documents = scip::parse(&bytes, root, Path::new(dir))
-        .with_context(|| format!("cannot read the index of {} in {shown}", language.binary))?;
+        .with_context(|| format!("{} wrote no index in {shown}", language.indexer.binary))?;
+    let documents = scip::parse(&bytes, root, Path::new(dir)).with_context(|| {
+        format!(
+            "cannot read the index of {} in {shown}",
+            language.indexer.binary
+        )
+    })?;
     if documents.is_empty() {
         bail!(
             "{} indexed no files in {shown}; check what its project file includes",
-            language.binary
+            language.indexer.binary
         );
     }
     if let Some((path, prefix)) = cached
@@ -1450,54 +1139,16 @@ fn trim(parent: &Path, written: &Path, budget: u64) {
     }
 }
 
-/// `scip-php` reads the dependencies' code from `vendor`, through the autoloader.
-fn require_composer(_root: &Path, dir: &Path, shown: &str) -> Result<()> {
-    if !dir.join("composer.lock").is_file() || !dir.join("vendor/autoload.php").is_file() {
-        bail!(
-            "dependencies are not installed in {shown}: run `composer install` (scip-php needs composer.lock and vendor/)"
-        );
-    }
-    Ok(())
-}
-
-/// Without `node_modules` the TypeScript indexer cannot see third-party
-/// modules, so external dependencies would silently disappear from the check.
-fn require_installed(root: &Path, dir: &Path, shown: &str) -> Result<()> {
-    let manifest = dir.join("package.json");
-    let Ok(text) = std::fs::read_to_string(&manifest) else {
-        return Ok(());
-    };
-    let declares = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .is_some_and(|json| {
-            ["dependencies", "devDependencies"].iter().any(|key| {
-                json.get(key)
-                    .and_then(|v| v.as_object())
-                    .is_some_and(|o| !o.is_empty())
-            })
-        });
-    if !declares {
-        return Ok(());
-    }
-    let mut at: Option<PathBuf> = Some(dir.to_path_buf());
-    while let Some(current) = at {
-        if current.join("node_modules").is_dir() {
-            return Ok(());
-        }
-        at = (current != root)
-            .then(|| current.parent().map(Path::to_path_buf))
-            .flatten();
-    }
-    bail!(
-        "dependencies are not installed in {shown}: run `npm install` (or pnpm, yarn) first; `easement doctor` lists everything else that is missing"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    /// The indexer of the language called `name`.
+    fn indexer(name: &str) -> LanguageIndexer {
+        indexers().find(|i| i.name() == name).unwrap()
+    }
 
     #[test]
     fn jobs_are_a_number_or_the_cpus() {
@@ -1578,47 +1229,6 @@ mod tests {
         assert_eq!(started.load(Ordering::SeqCst), 2);
     }
 
-    #[test]
-    fn each_indexer_keys_the_variables_that_change_its_index() {
-        let keys = |language: &str, name: &str| {
-            let indexer = INDEXERS.iter().find(|i| i.name() == language).unwrap();
-            (indexer.env)(name)
-        };
-        for (language, name, keyed) in [
-            ("go", "GOFLAGS", true),
-            ("go", "GOOS", true),
-            ("go", "CGO_ENABLED", true),
-            ("go", "GOOGLE_APPLICATION_CREDENTIALS", false),
-            ("go", "GOROOT_1_22_X64", false),
-            ("typescript", "NODE_PATH", false),
-            ("python", "PYTHONPATH", true),
-            ("python", "PIP_USER", true),
-            ("python", "VIRTUAL_ENV", false),
-            ("python", "PYTHONHASHSEED", false),
-            ("php", "COMPOSER_VENDOR_DIR", false),
-            ("java", "JAVA_HOME", true),
-            ("java", "MAVEN_ARGS", true),
-            ("java", "ORG_GRADLE_PROJECT_flavor", true),
-            ("java", "GRADLE_USER_HOME", true),
-            ("java", "JAVA_HOME_17_X64", false),
-            ("csharp", "DefineConstants", true),
-            ("csharp", "MSBuildSDKsPath", true),
-            ("csharp", "DOTNET_ROOT", true),
-            ("csharp", "GITHUB_RUN_ID", false),
-            ("ruby", "BUNDLE_GEMFILE", false),
-            ("rust", "RUSTFLAGS", true),
-            ("rust", "CARGO_ENCODED_RUSTFLAGS", true),
-            ("rust", "CARGO_BUILD_RUSTFLAGS", true),
-            ("rust", "RUSTUP_TOOLCHAIN", true),
-            ("rust", "RUST_SRC_PATH", true),
-            ("rust", "CARGO", true),
-            ("rust", "CARGO_PKG_NAME", false),
-            ("rust", "CARGO_MANIFEST_DIR", false),
-        ] {
-            assert_eq!(keys(language, name), keyed, "{language} {name}");
-        }
-    }
-
     /// A hook or `git rebase --exec` that runs easement points git at its own
     /// repository; an indexer, which may run git (`go` stamps the build with it),
     /// works on the project and inherits none of that.
@@ -1645,8 +1255,8 @@ mod tests {
 
     #[test]
     fn the_cache_key_reads_the_environment_the_indexer_inherits() {
-        let go = &INDEXERS[0];
-        let ts = &INDEXERS[1];
+        let go = indexer("go");
+        let ts = indexer("typescript");
         let inherited = || {
             [
                 ("GOFLAGS", "-tags=race"),
@@ -1658,16 +1268,16 @@ mod tests {
             .map(|(k, v)| (OsString::from(k), OsString::from(v)))
         };
         assert_eq!(
-            key_env(go, inherited(), &[]),
+            key_env(&go, inherited(), &[]),
             [("CGO_ENABLED", "0"), ("GOFLAGS", "-tags=race")]
                 .map(|(k, v)| (k.to_string(), v.to_string()))
         );
         // What easement sets for the run wins over what it inherits.
         assert_eq!(
-            key_env(go, inherited(), &[("GOFLAGS", "-tags=x".to_string())])[1],
+            key_env(&go, inherited(), &[("GOFLAGS", "-tags=x".to_string())])[1],
             ("GOFLAGS".to_string(), "-tags=x".to_string())
         );
-        assert!(key_env(ts, inherited(), &[]).is_empty());
+        assert!(key_env(&ts, inherited(), &[]).is_empty());
     }
 
     #[test]
@@ -1727,9 +1337,23 @@ mod tests {
         assert_eq!(hasher.finish(), 0x3351_4638_acb3_3764);
     }
 
+    /// An indexer that has no release for a platform is not started there, and
+    /// says why; a language read by an adapter, or by no name, has no indexer to stop.
+    #[test]
+    fn an_indexer_is_not_started_where_it_cannot_run() {
+        assert!(
+            cannot_index(Platform::Windows, "python")
+                .is_some_and(|why| why.contains("scip-python"))
+        );
+        assert_eq!(cannot_index(Platform::Windows, "go"), None);
+        assert_eq!(cannot_index(Platform::Unix, "python"), None);
+        assert_eq!(cannot_index(Platform::Windows, "kotlin"), None);
+        assert_eq!(cannot_index(Platform::Windows, "cobol"), None);
+    }
+
     #[test]
     fn languages_cover_their_sources_and_roots() {
-        let ts = &INDEXERS[1];
+        let ts = indexer("typescript");
         assert!(ts.covers("src/a.tsx") && ts.covers("a.mjs"));
         assert!(!ts.covers("src/a.d.ts") && !ts.covers("main.go"));
         assert!(!ts.covers("src/a.d.mts") && !ts.covers("src/a.d.cts"));
@@ -1746,15 +1370,15 @@ mod tests {
         ]
         .map(String::from)
         .to_vec();
-        assert_eq!(INDEXERS[0].roots(&files), ["", "svc"]);
+        assert_eq!(indexer("go").roots(&files), ["", "svc"]);
         assert_eq!(ts.roots(&files), ["web"]);
         // A workspace root holds its members; Python falls back to the root.
-        assert_eq!(INDEXERS[7].roots(&files), [""]);
-        assert_eq!(INDEXERS[2].roots(&files), [""]);
+        assert_eq!(indexer("rust").roots(&files), [""]);
+        assert_eq!(indexer("python").roots(&files), [""]);
         let nested: Vec<String> = ["a/Cargo.toml", "b/Cargo.toml", "b/c/Cargo.toml"]
             .map(String::from)
             .to_vec();
-        assert_eq!(INDEXERS[7].roots(&nested), ["a", "b"]);
+        assert_eq!(indexer("rust").roots(&nested), ["a", "b"]);
     }
 
     /// The go tool ignores `testdata/` and a committed `vendor/`: a module in one
@@ -1769,14 +1393,14 @@ mod tests {
         ]
         .map(String::from)
         .to_vec();
-        assert_eq!(INDEXERS[0].roots(&files), [""]);
+        assert_eq!(indexer("go").roots(&files), [""]);
     }
 
     /// scip-php runs in every directory with a `composer.json`, not only the
     /// outermost: an installed package in a committed `vendor/` is no project of its own.
     #[test]
     fn an_installed_php_package_is_no_root() {
-        let php = INDEXERS.iter().find(|i| i.name() == "php").unwrap();
+        let php = indexer("php");
         let files: Vec<String> = [
             "composer.json",
             "src/A.php",
@@ -1786,45 +1410,6 @@ mod tests {
         .map(String::from)
         .to_vec();
         assert_eq!(php.roots(&files), ["", "packages/b"]);
-    }
-
-    #[test]
-    fn the_cache_key_of_go_and_typescript_reads_only_what_their_indexer_does() {
-        for path in [
-            "a.go",
-            "svc/x_test.go",
-            "go.mod",
-            "go.sum",
-            "go.work",
-            "vendor/modules.txt",
-        ] {
-            assert!(go_inputs(&registry::GO, path), "{path}");
-        }
-        for path in [
-            "web/a.tsx",
-            "README.md",
-            "locales/en.json",
-            "pnpm-lock.yaml",
-            "x.goal",
-        ] {
-            assert!(!go_inputs(&registry::GO, path), "{path}");
-        }
-        for path in [
-            "src/a.tsx",
-            "types/x.d.ts",
-            "lib/a.mjs",
-            "tsconfig.json",
-            "tsconfig.app.json",
-            "package.json",
-            "locales/en.json",
-            "pnpm-lock.yaml",
-            "yarn.lock",
-        ] {
-            assert!(typescript_inputs(&registry::TYPESCRIPT, path), "{path}");
-        }
-        for path in ["main.go", "go.mod", "README.md", "style.css", "logo.svg"] {
-            assert!(!typescript_inputs(&registry::TYPESCRIPT, path), "{path}");
-        }
     }
 
     #[test]
@@ -1843,25 +1428,6 @@ mod tests {
         let second = dir.path().join("other");
         std::fs::write(&second, "build 2").unwrap();
         assert_ne!(indexer_identity(&second).1, identity.1);
-    }
-
-    #[test]
-    fn missing_node_modules_is_an_error_only_when_dependencies_are_declared() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        require_installed(root, root, ".").unwrap();
-        std::fs::write(root.join("package.json"), r#"{"name":"x"}"#).unwrap();
-        require_installed(root, root, ".").unwrap();
-        std::fs::write(
-            root.join("package.json"),
-            r#"{"dependencies":{"lodash":"1"}}"#,
-        )
-        .unwrap();
-        let err = require_installed(root, root, ".").unwrap_err();
-        assert!(err.to_string().contains("not installed"));
-        assert!(err.to_string().contains("easement doctor"));
-        std::fs::create_dir(root.join("node_modules")).unwrap();
-        require_installed(root, root, ".").unwrap();
     }
 
     #[test]
@@ -1959,9 +1525,9 @@ mod tests {
         }
         let binary = root.join("scip-go");
         std::fs::write(&binary, "binary").unwrap();
-        let go = &INDEXERS[0];
+        let go = indexer("go");
         let environment = Environment::of_vars(BTreeMap::new());
-        let key = || fingerprint(go, &binary, root, "a", &files, &[], &environment);
+        let key = || fingerprint(&go, &binary, root, "a", &files, &[], &environment);
         let before = key();
         std::fs::write(root.join("b/y.go"), "2").unwrap();
         assert_ne!(key(), before);
@@ -1999,8 +1565,8 @@ mod tests {
         (tmp, root, environment)
     }
 
-    fn php() -> &'static Indexer {
-        INDEXERS.iter().find(|i| i.binary == "scip-php").unwrap()
+    fn php() -> LanguageIndexer {
+        indexer("php")
     }
 
     /// scip-php writes its index into the directory it indexes: a run that fails
@@ -2016,7 +1582,7 @@ mod tests {
             jobs: Jobs::default(),
         };
         let files = vec!["a.php".to_string()];
-        let failed = index_dir(php(), &root, "", &files, &indexing, &Default::default());
+        let failed = index_dir(&php(), &root, "", &files, &indexing, &Default::default());
         assert!(failed.is_err());
         assert!(!root.join("index.scip").exists());
     }

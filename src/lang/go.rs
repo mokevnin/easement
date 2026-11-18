@@ -4,7 +4,8 @@
 use tree_sitter::{Node, Tree};
 
 use super::Import;
-use super::registry::Inherited;
+use super::registry::{Inherited, Language};
+use crate::relpath;
 
 /// The syntax tree of the head of Go source: of its text up to `head_end`, all
 /// that `head` reads. A file is parsed for its head alone, so its size, generated
@@ -172,8 +173,67 @@ pub fn tags_env(tags: &[String], inherited: Inherited) -> (&'static str, String)
     ("GOFLAGS", flags)
 }
 
+/// Go's own variables (`GOFLAGS`, `GOOS`, `GO111MODULE`) have no `_` after `GO`,
+/// unlike `GOOGLE_APPLICATION_CREDENTIALS`, which a CI job may point at another
+/// file every run; cgo's are `CGO_*`.
+pub fn env(name: &str) -> bool {
+    name.strip_prefix("GO").is_some_and(|rest| {
+        rest.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    }) || name.starts_with("CGO_")
+}
+
+/// scip-go reads the Go sources and what `go` resolves them with: the module and workspace
+/// files and a vendored dependency list. A vendored dependency is no code of the project, but
+/// scip-go type-checks against it, and one a `replace` takes from outside the project changes
+/// `vendor/` alone: its files are in.
+pub fn inputs(language: &Language, path: &str) -> bool {
+    let name = relpath::file_name(path);
+    language.extensions.contains(&relpath::extension(name))
+        || matches!(
+            name,
+            "go.mod" | "go.sum" | "go.work" | "go.work.sum" | "modules.txt"
+        )
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::lang::registry::GO;
+
+    #[test]
+    fn the_cache_key_reads_only_what_scip_go_does() {
+        for path in [
+            "a.go",
+            "svc/x_test.go",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "vendor/modules.txt",
+        ] {
+            assert!(inputs(&GO, path), "{path}");
+        }
+        for path in [
+            "web/a.tsx",
+            "README.md",
+            "locales/en.json",
+            "pnpm-lock.yaml",
+            "x.goal",
+        ] {
+            assert!(!inputs(&GO, path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_variables_of_go_and_cgo_are_keyed() {
+        for name in ["GOFLAGS", "GOOS", "CGO_ENABLED"] {
+            assert!(env(name), "{name}");
+        }
+        for name in ["GOOGLE_APPLICATION_CREDENTIALS", "GOROOT_1_22_X64"] {
+            assert!(!env(name), "{name}");
+        }
+    }
+
     #[test]
     fn a_build_tag_is_letters_digits_underscores_and_dots() {
         for tag in ["race", "e2e_1", "go1.22"] {
