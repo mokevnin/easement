@@ -375,7 +375,7 @@ pub struct Language {
     pub module_separators: &'static [&'static str],
     /// What joins a type and a member of it in a name as `forbid_symbol` writes it
     /// (`.` of `db.Client.Query`, `::` of `db::client::Client.query`), as its index
-    /// is read in `src/scip/symbol.rs`.
+    /// is read.
     pub member_separator: &'static str,
 }
 
@@ -420,18 +420,13 @@ impl Language {
     /// What its module paths drop from the end of a file name: each declaration
     /// suffix, then each extension, all with their dot (`.d.ts` before `.ts`).
     pub(crate) fn module_suffixes(&self) -> impl Iterator<Item = String> + '_ {
-        self.declarations
-            .iter()
-            .chain(self.extensions)
-            .map(|suffix| format!(".{suffix}"))
+        module_suffixes(self.declarations, self.extensions)
     }
 
     /// The module path of one of its files: `file` without its declaration suffix
     /// or else its extension (`src/a.d.ts` and `src/a.ts` are `src/a`).
     pub fn module_path<'a>(&self, file: &'a str) -> &'a str {
-        self.module_suffixes()
-            .find_map(|suffix| file.strip_suffix(&suffix).filter(|stem| names_a_file(stem)))
-            .unwrap_or(file)
+        module_path_in(file, self.declarations, self.extensions)
     }
 
     /// Whether `file` lies in one of its `foreign_dirs`, at any depth: its code
@@ -456,4 +451,32 @@ impl Language {
 /// `.env`, nor `src/` of `src/.env`.
 pub(crate) fn names_a_file(stem: &str) -> bool {
     !stem.is_empty() && !stem.ends_with('/')
+}
+
+/// The suffixes a module path drops: each declaration suffix, then each extension,
+/// with its dot.
+fn module_suffixes<'a>(
+    declarations: &'a [&'a str],
+    extensions: &'a [&'a str],
+) -> impl Iterator<Item = String> + 'a {
+    declarations
+        .iter()
+        .chain(extensions)
+        .map(|suffix| format!(".{suffix}"))
+}
+
+/// The module path of `file`, written with these declaration suffixes and
+/// extensions: `file` without its declaration suffix or else its extension
+/// (`src/a.d.ts` and `src/a.ts` are `src/a`).
+pub fn module_path_in<'a>(file: &'a str, declarations: &[&str], extensions: &[&str]) -> &'a str {
+    module_suffixes(declarations, extensions)
+        .find_map(|suffix| file.strip_suffix(&suffix).filter(|stem| names_a_file(stem)))
+        .unwrap_or(file)
+}
+
+/// Whether `path` has one of `extensions`.
+pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extensions.contains(&extension))
 }

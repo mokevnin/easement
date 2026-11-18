@@ -1,11 +1,10 @@
-//! What easement knows of each language, told by the extensions of its files:
-//! data, and hooks for what a rule needs done differently, whose code sits in
-//! `lang/<language>.rs`. Adding a language is one entry here, its indexer or its
-//! adapter among it, which `indexer.rs` runs or `lang/<language>.rs` builds, and
-//! how the scheme of its index reads, which `scip/symbol.rs` follows. Each kind of
-//! manifest is an entry here too ([`Manifest`]), whose hooks' code sits in
-//! `packages/<kind>.rs`. The rules ask this table, never an extension, a language or
-//! a kind of manifest by name; `easement.yml` holds them to it.
+//! The table of what easement knows of each language, told by the extensions of
+//! its files, and of each kind of manifest, told by the name of its file: one
+//! entry each, whose type is in `lang/language.rs` or `packages/manifest.rs` and
+//! whose hooks' code sits in `lang/<language>.rs` or `packages/<kind>.rs`. Adding a
+//! language or a kind of manifest is one entry here. The rules ask this table,
+//! never an extension, a language or a kind of manifest by name; `easement.yml`
+//! holds them to it.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -26,7 +25,6 @@ pub static PACKAGE_JSON: Manifest = Manifest {
     declared: npm::declared,
     declares: npm::importable,
     package: Some(npm::package),
-    named_by: Some(npm::named_by),
     covers: None,
     named_in_source: Some(npm::named_in_source),
     namer: Some(npm::name),
@@ -42,7 +40,6 @@ pub static GO_MOD: Manifest = Manifest {
     declared: gomod::declared,
     declares: gomod::importable,
     package: None,
-    named_by: None,
     covers: Some(gomod::covers),
     named_in_source: None,
     namer: Some(gomod::name),
@@ -54,12 +51,11 @@ pub static GO_MOD: Manifest = Manifest {
 /// `Cargo.toml`. A dependency names a path or the workspace, never a package by
 /// its name.
 pub static CARGO_TOML: Manifest = Manifest {
-    file_name: "Cargo.toml",
+    file_name: cargo::FILE_NAME,
     part_names: cargo::PART_NAMES,
     declared: cargo::declared,
     declares: cargo::importable,
     package: Some(cargo::package),
-    named_by: None,
     covers: None,
     named_in_source: Some(cargo::named_in_source),
     namer: None,
@@ -82,8 +78,6 @@ const HASH_COMMENTS: Comments = Comments {
     line: &["#"],
     block: &[],
 };
-
-const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
 pub static GO: Language = Language {
     name: "go",
@@ -153,14 +147,14 @@ pub static GO: Language = Language {
 /// TypeScript and JavaScript, which one indexer reads and the bundlers resolve alike.
 pub static TYPESCRIPT: Language = Language {
     name: "typescript",
-    extensions: TYPESCRIPT_EXTENSIONS,
+    extensions: super::typescript::EXTENSIONS,
     comments: C_COMMENTS,
-    declarations: &["d.ts", "d.mts", "d.cts"],
+    declarations: super::typescript::DECLARATIONS,
     tests: &["**/*.test.*", "**/*.spec.*", "**/__tests__/**"],
     not_tests: &[],
     whole_directory: false,
     std: None,
-    unused: TYPESCRIPT_EXTENSIONS,
+    unused: super::typescript::EXTENSIONS,
     conventional: &[],
     manifest: Some(&PACKAGE_JSON),
     symbols: true,
@@ -212,7 +206,7 @@ pub static TYPESCRIPT: Language = Language {
         hints: &[],
     }),
     foreign_dirs: &[],
-    third_party: &["node_modules"],
+    third_party: super::typescript::THIRD_PARTY,
     module_separators: &["/"],
     member_separator: ".",
     settings: &[],
@@ -361,7 +355,7 @@ pub static JAVA: Language = Language {
 /// Read by imports alone (an adapter), so `unused` cannot judge it.
 pub static KOTLIN: Language = Language {
     name: "kotlin",
-    extensions: &["kt", "kts"],
+    extensions: super::kotlin::EXTENSIONS,
     comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Test.kt", "**/*Tests.kt"],
@@ -513,7 +507,7 @@ pub static PHP: Language = Language {
 /// Read by imports alone (an adapter), so `unused` cannot judge it.
 pub static SWIFT: Language = Language {
     name: "swift",
-    extensions: &["swift"],
+    extensions: super::swift::EXTENSIONS,
     comments: C_COMMENTS,
     declarations: &[],
     tests: &["**/*Tests.swift"],

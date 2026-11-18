@@ -597,7 +597,6 @@ pub(crate) mod tests {
         declared: fake_declared,
         declares: |_| Declares::Marker,
         package: None,
-        named_by: None,
         covers: None,
         named_in_source: None,
         namer: Some(fake_name),

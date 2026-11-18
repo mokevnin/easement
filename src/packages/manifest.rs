@@ -27,10 +27,6 @@ pub struct Manifest {
     /// when the module is its own package, as a Go module path is, which
     /// [`Manifest::covers`] matches by prefix.
     pub package: Option<fn(&str) -> String>,
-    /// The package a specifier names when it is spelled as one of this kind, read
-    /// from its text alone (`some-pkg` of `some-pkg/style.css`); `None` when no
-    /// import of its languages is spelled so.
-    pub named_by: Option<fn(&str) -> Option<String>>,
     /// Whether a manifest that declares these names covers a package; `None` when
     /// it covers the ones it names.
     pub covers: Option<fn(&BTreeSet<String>, &str) -> bool>,
@@ -113,12 +109,6 @@ impl Manifest {
     pub fn package(&self, module: &str) -> String {
         self.package
             .map_or_else(|| module.to_string(), |package| package(module))
-    }
-
-    /// The package a specifier names when it is spelled as one of this kind; `None`
-    /// for anything else (a path, `#lib/x`, `virtual:x`).
-    pub fn named_by(&self, specifier: &str) -> Option<String> {
-        self.named_by.and_then(|named_by| named_by(specifier))
     }
 
     /// Whether a manifest that declares `names` covers `package`.

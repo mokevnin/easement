@@ -8,23 +8,27 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::Node;
 
+use super::language::module_path_in;
 use super::language::{Explained, Language, Spelled, UnindexedUse, UnnamedPackages, UnrelatedSpan};
-use super::registry::TYPESCRIPT;
 use super::{Cause, Form, Import};
 use crate::packages::npm::npm_name;
 use crate::relpath::{self, parent};
 use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 
+/// The extensions of its files.
+pub const EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// The suffixes of its declaration files (`a.d.ts`).
+pub const DECLARATIONS: &[&str] = &["d.ts", "d.mts", "d.cts"];
+
+/// Where its package managers install third-party packages.
+pub const THIRD_PARTY: &[&str] = &["node_modules"];
+
 /// The file a relative specifier names, as the bundlers resolve it: the path
 /// itself, with an extension, or its index.
 pub fn resolve(from_dir: &str, spec: &str, files: &BTreeSet<&str>) -> Option<String> {
     let base = relpath::resolve(from_dir, spec)?;
-    let exts: Vec<&str> = TYPESCRIPT
-        .extensions
-        .iter()
-        .copied()
-        .chain(["d.ts"])
-        .collect();
+    let exts: Vec<&str> = EXTENSIONS.iter().copied().chain(["d.ts"]).collect();
     std::iter::once(base.clone())
         .chain(exts.iter().map(|e| format!("{base}.{e}")))
         .chain(exts.iter().map(|e| format!("{base}/index.{e}")))
@@ -227,7 +231,7 @@ pub fn spelled(specifier: &str) -> Spelled {
             .map_or(specifier, |(path, _)| path);
         return Spelled::Paths(vec![path.to_string()]);
     }
-    match crate::lang::registry::PACKAGE_JSON.named_by(specifier) {
+    match crate::packages::npm::named_by(specifier) {
         Some(package) => Spelled::Package(package),
         None => Spelled::Neither,
     }
@@ -313,8 +317,7 @@ fn unnamed_spelled(string: &str, file: &Path) -> Option<String> {
     file.ancestors()
         .skip(1)
         .any(|dir| {
-            TYPESCRIPT
-                .third_party
+            THIRD_PARTY
                 .iter()
                 .any(|installs| dir.join(installs).join(&package).is_dir())
         })
@@ -338,7 +341,7 @@ pub fn external(parsed: &Parsed<'_>) -> String {
         .map(|(name, _)| name.clone())
         .collect();
     if let Some(last) = parts.last_mut() {
-        *last = TYPESCRIPT.module_path(last).to_string();
+        *last = module_path_in(last, DECLARATIONS, EXTENSIONS).to_string();
         if last == "index" {
             parts.pop();
         }
@@ -352,6 +355,7 @@ pub fn external(parsed: &Parsed<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::registry::TYPESCRIPT;
 
     #[test]
     fn an_npm_package_is_named_as_its_imports_spell_it() {

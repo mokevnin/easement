@@ -4,8 +4,12 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
+use super::language::has_extension;
 use super::syntax::{captured_nodes, tree};
 use super::{Adapter, Import, Target};
+
+/// The extensions of its files.
+pub const EXTENSIONS: &[&str] = &["swift"];
 
 const QUERY: &str = "(import_declaration) @node";
 
@@ -93,7 +97,7 @@ impl Adapter for Swift {
     }
 
     fn handles(&self, path: &Path) -> bool {
-        super::registry::is(path, &super::registry::SWIFT)
+        has_extension(path, EXTENSIONS)
     }
 
     fn imports(&self, _path: &Path, source: &str) -> Result<Vec<Import>> {

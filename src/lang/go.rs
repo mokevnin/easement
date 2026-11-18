@@ -211,7 +211,7 @@ pub fn external(parsed: &Parsed<'_>) -> String {
 /// Whether a module is Go's standard library: a package path without a domain
 /// (`fmt`, `net/http`); `C` is cgo.
 pub fn std(module: &str) -> bool {
-    module != "C" && !super::registry::GO.first_segment(module).contains('.')
+    module != "C" && !module.split('/').next().unwrap_or(module).contains('.')
 }
 
 #[cfg(test)]

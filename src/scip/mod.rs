@@ -1085,7 +1085,7 @@ impl<'a> Indexed<'a> {
                     }
                     None => Some(Target::External(name.external.clone())),
                 };
-                let specifier = qualifier_in(&called, found);
+                let specifier = qualifier_in(called, found);
                 uses.push(SymbolRef {
                     file: PathBuf::from(&document.path),
                     from: unit_at(document, line),
@@ -1504,7 +1504,7 @@ fn called_in(name: &Name, file: &str) -> Option<crate::lang::Qualified> {
         .as_ref()
         .filter(|_| name.shape != Shape::Module)?;
     Some(crate::lang::Qualified {
-        qualifier: qualifier_in(&called, Some(file)),
+        qualifier: qualifier_in(called, Some(file)),
         name: called.name.clone(),
     })
 }
