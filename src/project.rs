@@ -228,6 +228,7 @@ impl Project {
             stats.packages_partial = scan.packages_problems.clone();
         }
         stats.declarations_partial = scan.declarations_problems.clone();
+        stats.schemes_partial = scan.unknown_schemes.clone();
         // Each language whose index may leave packages unnamed says why, of its files.
         stats.symbols_partial = lang::registry::LANGUAGES
             .iter()
