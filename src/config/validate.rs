@@ -28,9 +28,9 @@ impl Config {
                 }
             }
         }
-        for ban in Ban::ALL {
-            let key = ban.key();
-            for (i, listed) in self.top_bans(ban).iter().enumerate() {
+        for forbid in Forbid::ALL {
+            let key = forbid.key();
+            for (i, listed) in self.top_forbidden(forbid).iter().enumerate() {
                 let name = listed.name();
                 match (listed.allow(), listed.allow_in()) {
                     (Some([]), Some([])) => bail!(
@@ -162,9 +162,9 @@ impl Config {
                     bail!("{at}.forbid_symbol `{symbol}` must look like `package.Name`");
                 }
             }
-            for ban in Ban::ALL {
-                let list = ban.key();
-                for listed in rule.own_bans(ban) {
+            for forbid in Forbid::ALL {
+                let list = forbid.key();
+                for listed in rule.own_forbidden(forbid) {
                     // A component's own list binds only its files, so it has no one to let in.
                     for (key, set) in [
                         ("allow", listed.allow().is_some()),
@@ -191,8 +191,8 @@ impl Config {
                 bail!("{at}.max_instability must be between 0 and 1");
             }
         }
-        for ban in Ban::ALL {
-            self.validate_grants(ban, &check)?;
+        for forbid in Forbid::ALL {
+            self.validate_grants(forbid, &check)?;
         }
         self.validate_external_allowlists()?;
         // Named placeholders belong to `in` patterns only.
@@ -366,7 +366,7 @@ impl Config {
         Ok(())
     }
 
-    /// Rejects an `allow` or `allow_in` of the top-level list of `ban` that lets
+    /// Rejects an `allow` or `allow_in` of the top-level list of `forbid` that lets
     /// no one in, an `allow` that names what is no component or lets in a
     /// component whose own rule forbids the same, an `allow_in` pattern that is
     /// no plain glob, and either on an item another item can name too (a name
@@ -375,9 +375,13 @@ impl Config {
     /// own rule forbids the same is refused too: for a module as the pattern is
     /// written, for a name once the files are known
     /// ([`crate::symbols::contradicted_grants`]).
-    fn validate_grants(&self, ban: Ban, check: &impl Fn(&str, &str) -> Result<()>) -> Result<()> {
-        let list = ban.key();
-        let items = self.top_bans(ban);
+    fn validate_grants(
+        &self,
+        forbid: Forbid,
+        check: &impl Fn(&str, &str) -> Result<()>,
+    ) -> Result<()> {
+        let list = forbid.key();
+        let items = self.top_forbidden(forbid);
         for (i, listed) in items.iter().enumerate() {
             let name = listed.name();
             if let Some(paths) = listed.allow_in() {
@@ -396,7 +400,7 @@ impl Config {
                         .with_context(|| format!("bad pattern `{pattern}` in {place}"))?;
                 }
             }
-            if ban == Ban::External {
+            if forbid == Forbid::External {
                 self.validate_external_paths(i, listed)?;
             }
             let Some(allowed) = listed.allow() else {
@@ -405,7 +409,7 @@ impl Config {
             let place = format!("{list}[{i}].allow");
             for component in allowed {
                 check(component, &place)?;
-                if let Some(spelled) = self.own_ban(ban, component, name) {
+                if let Some(spelled) = self.own_spelling(forbid, component, name) {
                     bail!(
                         "{place} lets `{component}` use `{name}`, which rules.{component}.{list} forbids{spelled}"
                     );
@@ -424,16 +428,18 @@ impl Config {
         };
         for (i, first) in items.iter().enumerate() {
             for (j, second) in items.iter().enumerate().skip(i + 1) {
-                let same = match ban {
-                    Ban::Symbol => crate::symbols::may_name_the_same(first.name(), second.name()),
-                    Ban::External => first.name() == second.name(),
+                let same = match forbid {
+                    Forbid::Symbol => {
+                        crate::symbols::may_name_the_same(first.name(), second.name())
+                    }
+                    Forbid::External => first.name() == second.name(),
                 };
                 if let Some(key) = granting_key(first).or(granting_key(second))
                     && same
                 {
-                    let what = match ban {
-                        Ban::Symbol => "symbol",
-                        Ban::External => "module",
+                    let what = match forbid {
+                        Forbid::Symbol => "symbol",
+                        Forbid::External => "module",
                     };
                     bail!(
                         "{list}[{i}] `{}` and {list}[{j}] `{}` can name the same {what}, and one of them has `{key}`, so who may use it is ambiguous: list it once",
@@ -446,12 +452,12 @@ impl Config {
         Ok(())
     }
 
-    /// How the own list of `ban` in the rule of `component` writes what can be
+    /// How the own list of `forbid` in the rule of `component` writes what can be
     /// `name`, when it forbids it: empty when spelled alike, else `` as `own` ``.
-    fn own_ban(&self, ban: Ban, component: &str, name: &str) -> Option<String> {
-        match ban {
-            Ban::Symbol => crate::symbols::own_ban(self, component, name),
-            Ban::External => crate::components::own_external_ban(self, component, name),
+    fn own_spelling(&self, forbid: Forbid, component: &str, name: &str) -> Option<String> {
+        match forbid {
+            Forbid::Symbol => crate::symbols::own_symbol_spelling(self, component, name),
+            Forbid::External => crate::components::own_external_spelling(self, component, name),
         }
     }
 
@@ -464,7 +470,8 @@ impl Config {
         let module = item.name();
         for pattern in item.allow_in().unwrap_or_default() {
             for (component, entry) in &self.components {
-                let Some(spelled) = crate::components::own_external_ban(self, component, module)
+                let Some(spelled) =
+                    crate::components::own_external_spelling(self, component, module)
                 else {
                     continue;
                 };
@@ -1196,7 +1203,7 @@ components:
             ),
             "forbid_external[0].allow_in lets `web/dates.ts` use `dayjs`, but it lies inside `web`, whose rules.web.forbid_external forbids it"
         );
-        // An own ban of a submodule leaves the rest of the module to the grant.
+        // A submodule its own rule forbids leaves the rest of the module to the grant.
         assert!(three("forbid_external: [{ name: dayjs, allow: [web] }]\nrules:\n  web: { forbid_external: [dayjs/plugin] }\n").is_ok());
         // Globs and sets of components, as in every list of components.
         let config = three(
@@ -1249,7 +1256,7 @@ components:
                 three(&policy).err()
             );
         }
-        // A wider pattern than the ban, or another module: nothing contradicts.
+        // A wider pattern than the forbidden item, or another module: nothing contradicts.
         assert!(
             three(
                 "forbid_external: [dayjs]\nrules:\n  web: { may_use_external: ['day*', lodash] }\n"

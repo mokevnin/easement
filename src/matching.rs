@@ -113,9 +113,9 @@ fn unmatched_grants(
 ) -> Vec<Violation> {
     map.unmatched_grants(files)
         .into_iter()
-        .map(|(ban, item, pattern)| {
-            let key = ban.key();
-            let name = policy.config.top_bans(ban)[item].name();
+        .map(|(forbid, item, pattern)| {
+            let key = forbid.key();
+            let name = policy.config.top_forbidden(forbid)[item].name();
             Violation {
                 file: config_file.to_string(),
                 line: policy.config_line(&[key, &item.to_string(), "allow_in"], pattern),

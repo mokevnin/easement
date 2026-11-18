@@ -7,7 +7,7 @@ use crate::check::{Place, RuleId, SymbolRef, Unjudged, Violation, in_words};
 use crate::components::ComponentMap;
 use anyhow::{Result, bail};
 
-use crate::config::{Ban, Config, ForbiddenName};
+use crate::config::{Config, Forbid, ForbiddenName};
 use crate::lang::{Dep, Target, registry};
 use crate::policy::Policy;
 use crate::relpath::slash;
@@ -83,10 +83,10 @@ pub struct Use<'a> {
 impl<'a> Use<'a> {
     /// The use of `symbol` in `file`, written as `forbid_symbol` writes a name:
     /// `example.com/app/ent.Client`, and a member after its type, `ent.Client.Query`
-    /// or `db::client::Client.query`. A ban on the member or on its type names a
+    /// or `db::client::Client.query`. An item forbidding the member or its type names a
     /// member, and `public_symbols` judges its type, as for a use the scan finds.
     /// Where the language cannot tell a member from a name under a module without
-    /// the index (see [`registry::MemberType`]), the name is read both ways: a ban
+    /// the index (see [`registry::MemberType`]), the name is read both ways: an item
     /// on either names it, and `public_symbols` listing either lets it through.
     /// `None` when `symbol` has no qualifier.
     pub fn written(
@@ -204,7 +204,7 @@ pub fn bindings<'a>(
                 .map(Granted::Allow)
                 .or_else(|| match item {
                     Item::Top(i) => map
-                        .granted_in(Ban::Symbol, i, file)
+                        .granted_in(Forbid::Symbol, i, file)
                         .map(|(at, pattern)| Granted::AllowIn { at, pattern }),
                     Item::Own(_) => None,
                 });
@@ -301,7 +301,7 @@ pub fn outside_public_symbols<'a>(
 /// How the own `forbid_symbol` of `component` writes `symbol`, when it lists a
 /// name that can name the same symbol: empty when spelled alike, else
 /// `` as `own` ``, to follow `forbids` in an error.
-pub fn own_ban(config: &Config, component: &str, symbol: &str) -> Option<String> {
+pub fn own_symbol_spelling(config: &Config, component: &str, symbol: &str) -> Option<String> {
     let own = config
         .rules
         .get(component)?
@@ -344,12 +344,14 @@ pub fn contradicted_grants(
         let first = files
             .iter()
             .filter_map(|file| {
-                let (at, pattern) = map.granted_in(Ban::Symbol, i, file)?;
+                let (at, pattern) = map.granted_in(Forbid::Symbol, i, file)?;
                 let (component, spelled) = map
                     .component_of(file)
                     .into_iter()
                     .chain(parts.get(file).into_iter().flatten().copied())
-                    .find_map(|component| Some((component, own_ban(config, component, symbol)?)))?;
+                    .find_map(|component| {
+                        Some((component, own_symbol_spelling(config, component, symbol)?))
+                    })?;
                 Some((at, file, pattern, component, spelled))
             })
             .min_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));

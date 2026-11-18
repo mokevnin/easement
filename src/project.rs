@@ -168,9 +168,9 @@ impl Project {
         for suppression in &mut honoured {
             chains::attribute(policy, &map, &scan.deps, &mut suppression.excused);
         }
-        stats.unused_partial = unused.reasons;
+        stats.unused_gaps = unused.reasons;
         stats.frameworks = unused.frameworks;
-        stats.manifests_partial = undeclared.reasons;
+        stats.manifests_gaps = undeclared.reasons;
         Ok(Judgment {
             violations,
             suppressions: honoured,
@@ -225,19 +225,19 @@ impl Project {
             stats.naming_unseen = unseen.into_iter().collect();
         }
         if self.config().packages {
-            stats.packages_partial = scan.packages_problems.clone();
+            stats.packages_gaps = scan.packages_problems.clone();
         }
-        stats.declarations_partial = scan.declarations_problems.clone();
-        stats.schemes_partial = scan.unknown_schemes.clone();
+        stats.declarations_gaps = scan.declarations_problems.clone();
+        stats.schemes_gaps = scan.unknown_schemes.clone();
         let paths: Vec<&str> = scan.paths.iter().map(String::as_str).collect();
-        stats.symbols_partial = symbols::symbols_unverified(
+        stats.symbols_gaps = symbols::symbols_unverified(
             self.config(),
             &map,
             &paths,
             &scan.deps,
             &scan.unverified_symbols,
         );
-        stats.implementations_partial = implementations::gaps(
+        stats.implementations_gaps = implementations::gaps(
             self.config(),
             &map,
             &implementations::Scanned {
@@ -381,9 +381,9 @@ pub fn graph_unread(
     (stats.uncovered, accepted) = map.split_uncovered(&scan.uncovered);
     stats.unreadable = map.split_uncovered(&scan.unreadable).0;
     stats.unavailable = scan.unavailable.clone();
-    stats.imports_partial = unresolved_reasons(&scan.unresolved_imports);
+    stats.imports_gaps = unresolved_reasons(&scan.unresolved_imports);
     if config.tests.is_some() {
-        stats.parts_partial = parts_reasons(&scan.parts_doubts);
+        stats.parts_gaps = parts_reasons(&scan.parts_doubts);
     }
     accepted
 }
