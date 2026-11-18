@@ -62,7 +62,7 @@ pub fn entries(
         .chain(others.iter().map(String::as_str))
         .collect();
     let mut texts: BTreeMap<&str, Option<String>> = BTreeMap::new();
-    let mut packages: BTreeMap<Manifest, BTreeSet<&str>> = BTreeMap::new();
+    let mut packages: BTreeMap<&Manifest, BTreeSet<&str>> = BTreeMap::new();
     for manifest in files {
         let Some(kind) = registry::manifest_of(manifest) else {
             continue;

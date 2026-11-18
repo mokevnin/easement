@@ -62,6 +62,10 @@ _Avoid_: indexed import, import with a reference
 The file by which a name a file writes enters the component that defines it: the module the file names, else the first re-exporting module or alias of that component on the way the name came, else the file that defines the name. Surfaces judge the name there, against the component of the file that writes it.
 _Avoid_: entry point (a program's start), target (the file that defines the name)
 
+**Manifest**:
+A file that declares the external dependencies of a package, such as `package.json`, `go.mod` or `Cargo.toml`: the `manifests` rule checks the imports of the files under it against what it declares, and `packages` judges each dependency it declares as one of the file. Its kind is an entry of the registry, told by the name of the file.
+_Avoid_: lockfile (it pins versions, it declares nothing), project file (a `.csproj` or `pom.xml` is read by an indexer, not here)
+
 **Framework**:
 A dependency of a package that loads files of the package by convention, which no import names, such as SvelteKit's routes or Next.js's pages. It is a row of the table of the kind of manifest that lists it, and holds below that manifest's directory only, not in a package nested in it. `unused` takes the files it loads as entries, unless a config file may move them.
 _Avoid_: plugin, convention (a convention is what the framework loads)
