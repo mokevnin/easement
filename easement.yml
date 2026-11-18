@@ -20,7 +20,7 @@ components:
     in: src/lang/parts.rs
     public_symbols: [Kind, Part, Span, Found, Module, Doubt]
   # Code for particular languages: indexers, reading their indexes, adapters, manifests.
-  languages: { in: [src/indexer.rs, src/scip, src/lang/csharp.rs, src/lang/go.rs, src/lang/java.rs, src/lang/kotlin.rs, src/lang/php.rs, src/lang/python.rs, src/lang/rust.rs, src/lang/swift.rs, src/lang/typescript.rs, src/packages] }
+  languages: { in: [src/indexer.rs, src/scip, src/lang/csharp.rs, src/lang/go.rs, src/lang/java.rs, src/lang/kotlin.rs, src/lang/php.rs, src/lang/python.rs, src/lang/ruby.rs, src/lang/rust.rs, src/lang/swift.rs, src/lang/typescript.rs, src/packages] }
   # Commands, the scan that feeds them, and the rules that need the whole project.
   commands:
     in:

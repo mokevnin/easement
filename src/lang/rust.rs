@@ -8,6 +8,7 @@ use regex::Regex;
 use super::parts::{Doubt, Found, Module, Span};
 use super::registry::starts_with_any;
 use crate::relpath;
+use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 
 /// The test-only items of a Rust source: the attribute, then the item up to its closing
 /// brace (or its `;`), and the whole file for `#![cfg(test)]`. `mod tests;` is no part
@@ -583,6 +584,50 @@ pub fn env(name: &str) -> bool {
             "CARGO" | "RUSTUP_TOOLCHAIN" | "RUSTUP_HOME" | "RUST_SRC_PATH"
         )
         || (name.starts_with("CARGO_") && !starts_with_any(name, SET_BY_CARGO))
+}
+
+/// A Rust symbol's names are called by its crate and module path. `crate/` is the
+/// root of the crate, around its modules (`domain/order/`), and an `impl` block names
+/// no type of its own: `impl#[Block]size()` (and `impl#[Block][Display]fmt()` for a
+/// trait) is `size` of `Block`. A line that writes a path also references each
+/// module around it, so the line depends on the deepest.
+pub fn qualifier(module: &mut symbol::Module<'_>) -> Qualifier {
+    module.path.retain(|name| name != "crate");
+    if let [(block, Kind::Type), (of, Kind::Parameter), rest @ ..] =
+        &module.parsed.descriptors[module.modules..]
+        && block == "impl"
+    {
+        module.inner = std::iter::once(of)
+            .chain(
+                rest.iter()
+                    .skip_while(|(_, kind)| *kind == Kind::Parameter)
+                    .map(|(name, _)| name),
+            )
+            .cloned()
+            .collect();
+    }
+    module.reading.enclosing = true;
+    Qualifier::Spelled(external(module.parsed))
+}
+
+/// The external module of a Rust symbol: the crate and the module path; the
+/// standard library is spread over `core`, `alloc` and `std` but written `std::…`.
+pub fn external(parsed: &Parsed<'_>) -> String {
+    let krate = match parsed.package.as_ref() {
+        "core" | "alloc" | "std" => "std".to_string(),
+        other => other.replace('-', "_"),
+    };
+    std::iter::once(krate)
+        .chain(
+            parsed
+                .descriptors
+                .iter()
+                .take_while(|(_, kind)| *kind == Kind::Namespace)
+                .map(|(name, _)| name.clone())
+                .filter(|name| name != "crate"),
+        )
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 #[cfg(test)]

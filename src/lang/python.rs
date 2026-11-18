@@ -5,6 +5,7 @@ use tree_sitter::Node;
 
 use super::registry::{Explained, Spelled};
 use super::{Cause, Form, Import};
+use crate::scip::symbol::{self, Parsed, Qualifier};
 
 /// What brings about each cause of an unresolved Python import, and how to close it.
 pub const EXPLAINED: &[Explained] = &[
@@ -185,9 +186,42 @@ pub fn env(name: &str) -> bool {
     (name.starts_with("PYTHON") && name != "PYTHONHASHSEED") || name.starts_with("PIP_")
 }
 
+/// A Python symbol's names are called by its dotted module. A module is the term
+/// `__init__` of its namespace, and a definition names its module by its path from
+/// the working directory (`src.shop.infra`) while a reference names it as imported
+/// (`shop.infra`), so a reference is matched by the ending of its path.
+pub fn qualifier(module: &mut symbol::Module<'_>) -> Qualifier {
+    if module.modules == 1 && module.inner == ["__init__"] {
+        module.inner.clear();
+    }
+    module.path = module
+        .path
+        .iter()
+        .flat_map(|name| name.split('.'))
+        .map(str::to_string)
+        .collect();
+    module.reading.by_ending = true;
+    Qualifier::Spelled(module.parsed.namespace("."))
+}
+
+/// The external module of a Python symbol: the dotted module (`os.path`, `requests`).
+pub fn external(parsed: &Parsed<'_>) -> String {
+    parsed.namespace(".")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Python symbol's external module is its dotted module, as an import writes it.
+    #[test]
+    fn an_external_python_name_is_in_its_dotted_module() {
+        let parsed = crate::scip::symbol::split(
+            "scip-python python requests 2.31.0 `requests.adapters`/HTTPAdapter#",
+        )
+        .unwrap();
+        assert_eq!(external(&parsed), "requests.adapters");
+    }
     use crate::lang::Form;
 
     #[test]

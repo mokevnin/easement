@@ -1,8 +1,10 @@
 //! What easement knows of each language, told by the extensions of its files:
 //! data, and hooks for what a rule needs done differently, whose code sits in
 //! `lang/<language>.rs`. Adding a language is one entry here, its indexer or its
-//! adapter among it, which `indexer.rs` runs or `lang/<language>.rs` builds. The rules ask this table,
-//! never an extension or a language by name; `easement.yml` holds them to it.
+//! adapter among it, which `indexer.rs` runs or `lang/<language>.rs` builds, and
+//! how the scheme of its index reads, which `scip/symbol.rs` follows. The rules ask
+//! this table, never an extension or a language by name; `easement.yml` holds them
+//! to it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,7 @@ use std::sync::LazyLock;
 use super::parts::Found;
 use super::{Adapter, Cause, Import};
 use crate::relpath;
+use crate::scip::symbol::{Module, Name, Parsed, Qualifier};
 use crate::stdlib;
 
 /// The file that declares the external modules of a language's files, which
@@ -118,7 +121,7 @@ pub type AdapterBuilder = fn(&Path, &[PathBuf]) -> anyhow::Result<Box<dyn Adapte
 /// or the tree-sitter adapter that reads their imports. A language has exactly one.
 #[derive(Debug)]
 pub enum Reader {
-    Indexer(Indexer),
+    Indexer(&'static Indexer),
     Adapter(AdapterBuilder),
 }
 
@@ -158,6 +161,53 @@ pub struct Indexer {
     pub env: fn(&str) -> bool,
     /// What to tell whoever runs it when a failed run says something known.
     pub hints: &'static [Hint],
+    /// The scheme its index writes its symbols in (`scip-go`, `rust-analyzer`).
+    pub scheme: &'static str,
+    /// How its symbols are read into the shape every language shares.
+    pub symbols: Symbols,
+    /// The packages its index may leave unnamed, which only an import names.
+    pub unnamed: Option<UnnamedPackages>,
+}
+
+/// How the symbols of an index are read into the shape every language shares
+/// (`scip::symbol::Name`).
+#[derive(Debug)]
+pub enum Symbols {
+    /// Modules are namespaces, and a name at their top level is the first
+    /// descriptor past them (Go, Python, Rust, TypeScript). `qualifier` settles what
+    /// the language reads differently and gives the qualifier its names are called
+    /// by; `external` is the external module a symbol belongs to, in the spelling
+    /// of its imports and of `forbid_external`.
+    Modules {
+        qualifier: fn(&mut Module<'_>) -> Qualifier,
+        external: fn(&Parsed<'_>) -> String,
+    },
+    /// A namespace is no module; a class is what an import names, and a type nested
+    /// in it is reached through it (Java, C#, PHP). `separator` joins a namespace;
+    /// `constructor` is the member that stands for its class, as the indexer records
+    /// the class the code writes only as that member; `owned` is whether the package
+    /// of a symbol tells the project's own types from those of its dependencies.
+    Classes {
+        separator: &'static str,
+        constructor: Option<&'static str>,
+        owned: bool,
+    },
+    /// Read whole by a hook of the language (Ruby).
+    Own(fn(&str, &Parsed<'_>) -> Name),
+}
+
+/// Packages an index may leave unnamed, so that only the string of the import
+/// names them (scip-typescript under a `package.json` without `name`).
+#[derive(Debug)]
+pub struct UnnamedPackages {
+    /// Whether the index left the package of `symbol` unnamed.
+    pub is: fn(&str) -> bool,
+    /// The module an import names, from the string the reference stands on and the
+    /// path of the file that writes it; `None` when it names no package installed
+    /// where the file is.
+    pub spelled: fn(&str, &Path) -> Option<String>,
+    /// Why the package of such a name is unknown, for the report.
+    pub cause: crate::symbols::Unnamed,
 }
 
 /// A known cause of a failed run of an indexer, told by what the run printed.
@@ -370,8 +420,14 @@ pub static GO: Language = Language {
         }],
         spelled: None,
     }),
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-go",
+        scheme: "scip-go",
+        symbols: Symbols::Modules {
+            qualifier: super::go::qualifier,
+            external: super::go::external,
+        },
+        unnamed: None,
         markers: &["go.mod"],
         outermost: false,
         fallback_root: false,
@@ -430,8 +486,14 @@ pub static TYPESCRIPT: Language = Language {
         explained: super::typescript::EXPLAINED,
         spelled: Some(super::typescript::spelled),
     }),
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-typescript",
+        scheme: "scip-typescript",
+        symbols: Symbols::Modules {
+            qualifier: super::typescript::qualifier,
+            external: super::typescript::external,
+        },
+        unnamed: Some(super::typescript::UNNAMED),
         markers: &["tsconfig.json"],
         outermost: false,
         fallback_root: false,
@@ -489,8 +551,14 @@ pub static PYTHON: Language = Language {
         explained: super::python::EXPLAINED,
         spelled: Some(super::python::spelled),
     }),
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-python",
+        scheme: "scip-python",
+        symbols: Symbols::Modules {
+            qualifier: super::python::qualifier,
+            external: super::python::external,
+        },
+        unnamed: None,
         markers: &[
             "pyproject.toml",
             "setup.py",
@@ -558,8 +626,16 @@ pub static JAVA: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-java",
+        scheme: "scip-java",
+        // scip-java gives `new X()` only as the constructor of `X`.
+        symbols: Symbols::Classes {
+            separator: ".",
+            constructor: Some("<init>"),
+            owned: true,
+        },
+        unnamed: None,
         markers: &["pom.xml", "build.gradle", "build.gradle.kts"],
         outermost: true,
         fallback_root: false,
@@ -646,8 +722,17 @@ pub static CSHARP: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-dotnet",
+        scheme: "scip-dotnet",
+        // scip-dotnet gives an attribute `[X]` only as the constructor of `XAttribute`,
+        // and the project's own types and the framework's the same header.
+        symbols: Symbols::Classes {
+            separator: ".",
+            constructor: Some(".ctor"),
+            owned: false,
+        },
+        unnamed: None,
         markers: &["*.csproj", "*.sln", "*.slnx"],
         outermost: true,
         fallback_root: false,
@@ -693,8 +778,15 @@ pub static PHP: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-php",
+        scheme: "scip-php",
+        symbols: Symbols::Classes {
+            separator: "\\",
+            constructor: None,
+            owned: true,
+        },
+        unnamed: None,
         markers: &["composer.json"],
         outermost: false,
         fallback_root: false,
@@ -774,8 +866,11 @@ pub static RUBY: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "scip-ruby",
+        scheme: "scip-ruby",
+        symbols: Symbols::Own(super::ruby::read),
+        unnamed: None,
         markers: &["Gemfile", "*.gemspec"],
         outermost: true,
         fallback_root: false,
@@ -849,8 +944,14 @@ pub static RUST: Language = Language {
     program: None,
     unindexed_uses: None,
     written_imports: None,
-    reader: Reader::Indexer(Indexer {
+    reader: Reader::Indexer(&Indexer {
         binary: "rust-analyzer",
+        scheme: "rust-analyzer",
+        symbols: Symbols::Modules {
+            qualifier: super::rust::qualifier,
+            external: super::rust::external,
+        },
+        unnamed: None,
         markers: &["Cargo.toml"],
         outermost: true,
         fallback_root: false,
@@ -893,6 +994,13 @@ pub static LANGUAGES: [&Language; 10] = [
     &RUBY,
     &RUST,
 ];
+
+/// The language whose indexer writes symbols of `scheme`.
+pub fn of_scheme(scheme: &str) -> Option<&'static Language> {
+    LANGUAGES
+        .into_iter()
+        .find(|language| language.indexer().is_some_and(|i| i.scheme == scheme))
+}
 
 /// The language of a file, by its extension.
 pub fn of(file: &str) -> Option<&'static Language> {

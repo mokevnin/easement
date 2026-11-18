@@ -6,6 +6,7 @@ use tree_sitter::{Node, Tree};
 use super::Import;
 use super::registry::{Inherited, Language};
 use crate::relpath;
+use crate::scip::symbol::{self, Parsed, Qualifier};
 
 /// The syntax tree of the head of Go source: of its text up to `head_end`, all
 /// that `head` reads. A file is parsed for its head alone, so its size, generated
@@ -194,6 +195,17 @@ pub fn inputs(language: &Language, path: &str) -> bool {
             name,
             "go.mod" | "go.sum" | "go.work" | "go.work.sum" | "modules.txt"
         )
+}
+
+/// A Go symbol's names are called by its package path (`example.com/app/db.Client`).
+pub fn qualifier(module: &mut symbol::Module<'_>) -> Qualifier {
+    Qualifier::Spelled(module.parsed.namespace("/"))
+}
+
+/// The external package of a Go symbol: its path (`fmt`, `net/http`,
+/// `github.com/lib/pq`).
+pub fn external(parsed: &Parsed<'_>) -> String {
+    parsed.namespace("/")
 }
 
 #[cfg(test)]

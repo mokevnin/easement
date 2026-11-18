@@ -364,6 +364,7 @@ pub fn contradicted_grants(
 
 /// Why an index left the package of some names unnamed, as the code that reads
 /// the index knows it.
+#[derive(Debug)]
 pub struct Unnamed {
     /// What it could not name: `the npm package`.
     pub what: &'static str,
