@@ -7,18 +7,18 @@ use crate::components::ComponentMap;
 use crate::config::{Config, DEFAULT_CONFIG};
 use crate::{check, lang, report, scan};
 
-/// Directories whose children are the components, in order of preference.
+/// Directories whose children are the components, in order of preference. They are
+/// layouts shared across ecosystems (`src`, monorepos' `packages` and `apps`), not
+/// what one language knows, and the order decides between them, so they stay here
+/// rather than in the registry.
 const SOURCE_ROOTS: &[&str] = &[
     "internal", "src", "app", "lib", "packages", "apps", "services", "pkg",
 ];
 
-/// Top-level directories that are never components of their own.
+/// Top-level directories that are never components of their own, whatever the
+/// language; those a language's toolchain fills come from the registry.
 const NOT_COMPONENTS: &[&str] = &[
-    "node_modules",
-    "vendor",
-    "target",
     "dist",
-    "build",
     "out",
     "test",
     "tests",
@@ -65,7 +65,11 @@ pub fn discover(files: &[String]) -> Vec<Found> {
     named(
         dirs_under("")
             .into_iter()
-            .filter(|d| !d.starts_with('.') && !NOT_COMPONENTS.contains(&d.as_str()))
+            .filter(|d| {
+                !d.starts_with('.')
+                    && !NOT_COMPONENTS.contains(&d.as_str())
+                    && !lang::registry::is_toolchain_dir(d)
+            })
             .map(|d| (d.clone(), d)),
     )
 }
@@ -251,6 +255,23 @@ mod tests {
         ]));
         assert_eq!(names(&found), [("api", "api"), ("billing", "billing")]);
         assert!(discover(&files(&["main.go"])).is_empty());
+    }
+
+    /// A directory some language's toolchain fills, as the registry lists them
+    /// (C#'s `bin` and `obj`, Go's `testdata`, npm's `node_modules`), is no
+    /// component, whichever language the project is in.
+    #[test]
+    fn a_directory_a_toolchain_fills_is_no_component() {
+        let found = discover(&files(&[
+            "api/a.cs",
+            "billing/b.cs",
+            "bin/Debug/app.dll.cs",
+            "obj/project.assets.cs",
+            "testdata/case.go",
+            "node_modules/x/index.ts",
+            "vendor/autoload.php",
+        ]));
+        assert_eq!(names(&found), [("api", "api"), ("billing", "billing")]);
     }
 
     /// A directory such as `@acme` or `[id]` would make a name that reads as a set

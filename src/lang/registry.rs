@@ -749,6 +749,15 @@ pub fn is_third_party(dir: &str) -> bool {
         .any(|language| language.third_party.contains(&dir))
 }
 
+/// Whether a directory of this name is one some language's toolchain fills with
+/// code that is not the project's own: build output (`target`, `bin`), installs
+/// (`vendor`, `node_modules`), fixtures it ignores (`testdata`).
+pub fn is_toolchain_dir(dir: &str) -> bool {
+    LANGUAGES
+        .iter()
+        .any(|language| language.foreign_dirs.contains(&dir) || language.third_party.contains(&dir))
+}
+
 /// The kind of manifest a file is, by its name.
 pub fn manifest_of(file: &str) -> Option<Manifest> {
     let name = crate::relpath::file_name(file);
