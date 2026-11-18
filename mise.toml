@@ -19,7 +19,7 @@ dotnet = "10.0.404"
 # Reads an index an indexer wrote: `scip snapshot` prints each occurrence beside its source line.
 "github:scip-code/scip" = "0.10.0"
 pnpm = "12.21.0"
-hk = { version = "2.12.0", workflow = "release.yml" }
+hk = { version = "2.13.0", workflow = "release.yml" }
 pkl = "0.33.0"
 cargo-deny = "0.21.0"
 "github:bnjbvr/cargo-machete" = "0.10.1"
