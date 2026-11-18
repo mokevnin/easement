@@ -84,6 +84,9 @@ pub struct Scan {
     /// excluded): no check judges their dependencies, so these are no gap, but
     /// `unused` cannot follow them.
     pub unread_unresolved_imports: Vec<Unresolved>,
+    /// Checked files whose symbols carry a scheme no entry declares, one entry for
+    /// each scheme: none of those symbols was read.
+    pub unknown_schemes: Vec<crate::check::Unjudged>,
     /// Files whose test code a finder of parts could not tell from the file's.
     pub parts_doubts: Vec<(String, lang::parts::Doubt)>,
     /// Manifests, or dependencies of one, that `packages` could not judge as declared.
@@ -121,6 +124,7 @@ impl Scan {
     pub fn indexed_whole(&self) -> bool {
         self.uncovered.is_empty()
             && self.unresolved_imports.is_empty()
+            && self.unknown_schemes.is_empty()
             && self.unnamed_uses.is_empty()
             && self.known_symbols_whole
             && self.paths.iter().all(|f| indexer::indexed(f))
@@ -655,6 +659,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
         unnamed_uses,
         unresolved_imports: checked_imports.unresolved,
         unread_unresolved_imports: unread_imports.unresolved,
+        unknown_schemes: names.unknown_schemes(),
         parts_doubts,
         packages_problems,
         declarations_problems: {

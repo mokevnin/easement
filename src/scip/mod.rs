@@ -23,7 +23,7 @@ use anyhow::{Context, Result, bail};
 use protobuf::Message;
 use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 
-use crate::check::SymbolRef;
+use crate::check::{SymbolRef, Unjudged};
 use crate::flow::{Edge, Flow, Node, Use};
 use crate::lang::language::Language;
 use crate::lang::parts::Part;
@@ -717,22 +717,31 @@ pub struct Names<'a> {
     excluded: &'a [Document],
     /// Symbol -> what it names; a symbol [`read`] cannot make out is missing.
     read: HashMap<&'a str, Name>,
+    /// The schemes no entry declares, with the checked files whose symbols carry
+    /// one: none of those symbols was read.
+    unknown: BTreeMap<String, BTreeSet<&'a str>>,
 }
 
 impl<'a> Names<'a> {
     /// The checked `documents` and the `excluded` ones, whose symbols are read here.
     pub fn of(documents: &'a [Document], excluded: &'a [Document]) -> Self {
         let mut names = HashMap::new();
-        for document in documents.iter().chain(excluded) {
+        let mut unknown: BTreeMap<String, BTreeSet<&'a str>> = BTreeMap::new();
+        let checked = documents.iter().map(|document| (document, true));
+        for (document, checked) in checked.chain(excluded.iter().map(|document| (document, false)))
+        {
             let symbols = document
                 .definitions
                 .iter()
                 .chain(document.references.iter().map(|r| &r.symbol));
             for symbol in symbols {
-                if !names.contains_key(symbol.as_str())
-                    && let Some(name) = read(symbol)
-                {
+                if names.contains_key(symbol.as_str()) {
+                    continue;
+                }
+                if let Some(name) = read(symbol) {
                     names.insert(symbol.as_str(), name);
+                } else if checked && let Some(scheme) = unknown_scheme(symbol) {
+                    unknown.entry(scheme).or_default().insert(&document.path);
                 }
             }
         }
@@ -740,7 +749,23 @@ impl<'a> Names<'a> {
             documents,
             excluded,
             read: names,
+            unknown,
         }
+    }
+
+    /// The checked files whose symbols carry a scheme no entry declares, one gap
+    /// for each scheme: their dependencies and uses of names are not in the graph.
+    pub fn unknown_schemes(&self) -> Vec<Unjudged> {
+        self.unknown
+            .iter()
+            .map(|(scheme, files)| {
+                Unjudged::new(format!(
+                    "{} files hold symbols of the scheme `{scheme}`, which no language's entry declares, so easement read none of them: the dependencies and uses of names they hold were not checked",
+                    files.len()
+                ))
+                .in_files(files.iter().map(|file| (*file).to_string()))
+            })
+            .collect()
     }
 
     /// What `symbol` names, when [`read`] makes it out.
@@ -1854,6 +1879,15 @@ pub(crate) fn read(symbol: &str) -> Option<Name> {
     })
 }
 
+/// The scheme of `symbol` when it splits but no entry declares its scheme. A local
+/// symbol (`local 1`) does not split, and is none.
+fn unknown_scheme(symbol: &str) -> Option<String> {
+    let parsed = split(symbol)?;
+    registry::of_scheme(&parsed.scheme)
+        .is_none()
+        .then(|| parsed.scheme.into_owned())
+}
+
 /// The qualifier of the name as the symbol rules write it: as the index spells it,
 /// else the module path of `file`, the file that defines it, when one does.
 fn qualifier_in(called: &Called, file: Option<&str>) -> String {
@@ -1889,6 +1923,39 @@ mod tests {
     }
 
     const DB: &str = "scip-go gomod example.com/app . `example.com/app/internal/db`/";
+
+    /// A symbol of a scheme no entry declares is not read, and the checked files
+    /// that hold one are a gap of that scheme; a local symbol, an excluded file and a
+    /// known scheme are none.
+    #[test]
+    fn a_symbol_of_a_scheme_no_entry_declares_is_a_gap_of_its_files() {
+        let unknown = "scip-nowhere npm pkg 1.0 `a.ts`/X#";
+        let documents = [
+            doc("src/a.ts", &[unknown], &[(1, "local 1")]),
+            doc("src/b.ts", &[], &[(2, unknown), (3, DB)]),
+            doc("src/c.go", &[DB], &[]),
+        ];
+        let excluded = [doc("vendor/d.ts", &[unknown], &[])];
+        let names = Names::of(&documents, &excluded);
+        assert!(names.get(unknown).is_none());
+        assert!(names.get(DB).is_some());
+        let gaps = names.unknown_schemes();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].files, ["src/a.ts", "src/b.ts"]);
+        assert!(
+            gaps[0]
+                .reason
+                .starts_with("2 files hold symbols of the scheme `scip-nowhere`"),
+            "{}",
+            gaps[0].reason
+        );
+        assert!(
+            Names::of(&documents[2..], &excluded)
+                .unknown_schemes()
+                .is_empty()
+        );
+    }
+
     const FMT: &str = "scip-go gomod github.com/golang/go/src go1.25 fmt/";
 
     /// The case of #104 in one scheme: `blob` defines `Block` with a field and a

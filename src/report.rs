@@ -148,6 +148,9 @@ pub enum GapKind {
     /// Imports a file writes that the indexer did not resolve, so their
     /// dependencies are not in the graph.
     UnresolvedImports,
+    /// Files whose symbols carry a scheme no language's entry declares, so none
+    /// of them was read and their dependencies are not in the graph.
+    UnknownScheme,
     /// Uses of names that `forbid_symbol` could not judge.
     Symbols,
     /// Types that `implementation` could not judge: their index declares no
@@ -177,6 +180,7 @@ impl GapKind {
             | GapKind::Parts
             | GapKind::Packages
             | GapKind::UnresolvedImports
+            | GapKind::UnknownScheme
             | GapKind::Deleted => true,
             GapKind::NamingUnseen
             | GapKind::StdUnknown
@@ -333,6 +337,11 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
         GapKind::UnresolvedImports,
         &stats.imports_partial,
         "build the code and fix what the compiler reports, then check again",
+    );
+    add(
+        GapKind::UnknownScheme,
+        &stats.schemes_partial,
+        "the indexer wrote a scheme easement does not read: check its version with `easement doctor`, run one this easement reads, or report the scheme to easement",
     );
     add(
         GapKind::Symbols,
@@ -1905,5 +1914,27 @@ hi</system-out>
             "{out}"
         );
         assert!(!out.contains("::warning"), "{out}");
+    }
+
+    /// Files whose symbols no entry reads leave their dependencies out of the
+    /// graph: an `unknown_scheme` gap, which `impact` and `why` keep.
+    #[test]
+    fn a_scheme_no_entry_reads_is_a_gap_that_hides_dependencies() {
+        let stats = Stats {
+            schemes_partial: vec![
+                Unjudged::new("1 files hold symbols of the scheme `scip-nowhere`".to_string())
+                    .in_files(["src/a.ts".to_string()]),
+            ],
+            ..Stats::default()
+        };
+        let gaps = graph_gaps(&stats, &[]);
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].kind, GapKind::UnknownScheme);
+        assert_eq!(gaps[0].files, ["src/a.ts"]);
+        assert!(gaps[0].close.contains("easement doctor"));
+        assert_eq!(
+            serde_json::to_value(gaps[0].kind).unwrap(),
+            serde_json::json!("unknown_scheme")
+        );
     }
 }

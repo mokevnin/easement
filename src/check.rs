@@ -551,6 +551,9 @@ pub struct Stats {
     /// Imports a file writes that the indexer did not resolve.
     #[serde(skip)]
     pub imports_partial: Vec<Unjudged>,
+    /// Files whose symbols carry a scheme no entry declares, so none was read.
+    #[serde(skip)]
+    pub schemes_partial: Vec<Unjudged>,
     /// Why `forbid_symbol` left some uses of names unchecked.
     #[serde(skip)]
     pub symbols_partial: Vec<Unjudged>,
