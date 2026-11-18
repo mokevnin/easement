@@ -142,6 +142,62 @@ fn a_change_to_vendored_code_misses_the_cache() {
     assert_eq!(after["indexed"], 1, "{after}");
 }
 
+/// A file `.gitignore` hides is still one the indexer reads (generated code an
+/// import names), so it keys the index: changing it, or generating it later,
+/// misses the cache, and the verdict is the one a fresh index gives.
+#[test]
+fn a_file_gitignore_hides_that_the_indexer_reads_keys_the_index() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\n  b: { in: src/b }\n  c: { in: src/c }\nrules:\n  app: { may_depend_on: [b] }\n",
+        ),
+        ("package.json", "{\"name\": \"app\", \"private\": true}\n"),
+        (".gitignore", "src/gen/\n"),
+        ("src/b/x.ts", "export const x = 1;\n"),
+        ("src/c/x.ts", "export const x = 2;\n"),
+        (
+            "src/app/a.ts",
+            "import { x } from \"../gen/index\";\nexport const a = x;\n",
+        ),
+    ]);
+    let cache = TempDir::new().unwrap();
+    let messages = |root: &Path| -> Vec<String> {
+        let (violations, _) = verdict(root, cache.path());
+        violations
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["message"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let to_c = ["app -> c is not allowed (written as src/c/x.ts)".to_string()];
+    let generated = root.join("src/gen/index.ts");
+    // Generated after a first check: nothing to reach yet.
+    assert_eq!(messages(&root), Vec::<String>::new());
+    fs::create_dir_all(generated.parent().unwrap()).unwrap();
+    fs::write(&generated, "export { x } from \"../c/x\";\n").unwrap();
+    assert_eq!(messages(&root), to_c);
+    // Generated again, from another component.
+    fs::write(&generated, "export { x } from \"../b/x\";\n").unwrap();
+    assert_eq!(messages(&root), Vec::<String>::new());
+    fs::write(&generated, "export { x } from \"../c/x\";\n").unwrap();
+    assert_eq!(messages(&root), to_c);
+    // What the indexer never reads there keys nothing, nor does an install, which a
+    // lock file keys.
+    fs::write(root.join("src/gen/build.log"), "built\n").unwrap();
+    let (_, stats) = verdict(&root, cache.path());
+    assert_eq!(stats["from_cache"], 1, "{stats}");
+    fs::create_dir_all(root.join("node_modules/kit")).unwrap();
+    fs::write(
+        root.join("node_modules/kit/index.d.ts"),
+        "export declare const kit: number;\n",
+    )
+    .unwrap();
+    let (_, stats) = verdict(&root, cache.path());
+    assert_eq!(stats["from_cache"], 1, "{stats}");
+}
+
 #[test]
 fn jobs_index_languages_at_once_with_the_same_report() {
     let (_tmp, root) = project(&[

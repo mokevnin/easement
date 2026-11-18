@@ -279,7 +279,8 @@ pub static PYTHON: Language = Language {
         env: super::python::env,
         hints: &[],
     }),
-    foreign_dirs: &[],
+    // Its virtual environments, where an install puts third-party code.
+    foreign_dirs: &[".venv", "venv", ".tox", ".nox"],
     third_party: &[],
     module_separators: &["."],
     member_separator: ".",
