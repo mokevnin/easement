@@ -70,6 +70,9 @@ pub enum Form {
 pub enum Cause {
     /// The index holds no module on it.
     NoTarget,
+    /// The index takes it to a file of the project that the walk leaves out (one
+    /// `.gitignore`, `.ignore` or git's excludes hide), which easement never reads.
+    Unwalked,
     /// The index holds only a wildcard declaration on it (`declare module "*.css"`).
     Wildcard,
     /// The index holds nothing of an import for its side effects alone ([`Form::SideEffect`]).

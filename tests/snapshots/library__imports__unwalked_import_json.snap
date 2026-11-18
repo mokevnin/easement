@@ -1,0 +1,43 @@
+---
+source: tests/library/imports.rs
+expression: "report[\"evidence_gaps\"]"
+---
+[
+  {
+    "close": "fix the path, or the `paths` it goes through, or generate the missing config (`svelte-kit sync`), then check again",
+    "count": 1,
+    "files": [
+      "src/app/a.ts"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the indexer did not resolve 1 import(s), so the dependencies they write were not checked (for example, a missing file, broken `paths`, or a generated config that is missing, such as the one `svelte-kit sync` writes): src/app/a.ts:3 (`../lib/missing`)",
+    "places": [
+      {
+        "file": "src/app/a.ts",
+        "line": 3,
+        "specifier": "../lib/missing"
+      }
+    ]
+  },
+  {
+    "close": "stop hiding the file (generated code the project imports belongs in `target_only`), or review those dependencies by hand",
+    "count": 1,
+    "files": [
+      "src/app/a.ts"
+    ],
+    "kind": "unresolved_imports",
+    "message": "the index takes 2 import(s) to a file of the project that easement does not read: `.gitignore`, `.ignore` or git's excludes hide it, so the dependencies they write were not checked: src/app/a.ts:1 (`../gen/api`), src/app/a.ts:2 (`@/gen/api`)",
+    "places": [
+      {
+        "file": "src/app/a.ts",
+        "line": 1,
+        "specifier": "../gen/api"
+      },
+      {
+        "file": "src/app/a.ts",
+        "line": 2,
+        "specifier": "@/gen/api"
+      }
+    ]
+  }
+]

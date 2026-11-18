@@ -224,6 +224,9 @@ pub enum Resolution {
     /// Only a declaration that stands for modules it does not name (`"*.css"`):
     /// the file the import means is not in the index.
     Wildcard,
+    /// A module that only a file the walk leaves out defines (one `.gitignore`
+    /// hides): the index resolved it, to a file easement does not read.
+    Unwalked,
     /// No module: the indexer did not resolve it.
     Nothing,
 }
@@ -676,6 +679,10 @@ pub struct Indexed<'a> {
     own: BTreeSet<String>,
     /// Every alias the checked and excluded documents define, with its file.
     aliases: HashMap<&'a str, (&'a str, &'a Alias)>,
+    /// What the documents of files the walk leaves out define, which only tells
+    /// where an import that no file of the project resolves goes
+    /// ([`Indexed::resolution`]).
+    unwalked: HashSet<&'a str>,
 }
 
 /// The checked and the excluded documents of an index, with every symbol they
@@ -767,7 +774,19 @@ impl<'a> Indexed<'a> {
             hidden,
             own,
             aliases,
+            unwalked: HashSet::new(),
         }
+    }
+
+    /// With the documents of files the walk leaves out: none of their names is a
+    /// dependency or a use, but an import of one of their modules is told from an
+    /// import the indexer did not resolve.
+    pub fn leaving_out(mut self, documents: &'a [Document]) -> Self {
+        self.unwalked = documents
+            .iter()
+            .flat_map(|document| document.definitions.iter().map(String::as_str))
+            .collect();
+        self
     }
 
     /// The files that define the names `document` writes on `lines`, and the names
@@ -1003,6 +1022,11 @@ impl<'a> Indexed<'a> {
                     return Resolution::Target;
                 }
                 Shape::TopLevel if file.is_some() => return Resolution::Target,
+                Shape::Module | Shape::TopLevel
+                    if file.is_none() && self.unwalked.contains(name.symbol.as_str()) =>
+                {
+                    found = Resolution::Unwalked;
+                }
                 Shape::Wildcard => found = Resolution::Wildcard,
                 _ => {}
             }

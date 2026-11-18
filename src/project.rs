@@ -420,6 +420,9 @@ fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
             let n = places.len();
             let what = match cause {
                 lang::Cause::NoTarget => format!("the indexer did not resolve {n} import(s)"),
+                lang::Cause::Unwalked => format!(
+                    "the index takes {n} import(s) to a file of the project that easement does not read: `.gitignore`, `.ignore` or git's excludes hide it"
+                ),
                 lang::Cause::Wildcard => format!(
                     "the index ties {n} import(s) only to a wildcard declaration, and none names a file of the project or a package"
                 ),
@@ -441,7 +444,14 @@ fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
             ))
             .in_files(imports.iter().map(|unresolved| unresolved.file.as_str()))
             .at(places);
-            match explained.and_then(|explained| explained.close) {
+            let close = match cause {
+                // What the walk leaves out is the project's to say, in every language.
+                lang::Cause::Unwalked => Some(
+                    "stop hiding the file (generated code the project imports belongs in `target_only`), or review those dependencies by hand",
+                ),
+                _ => explained.and_then(|explained| explained.close),
+            };
+            match close {
                 Some(close) => unjudged.closed_by(close),
                 None => unjudged,
             }

@@ -9,7 +9,7 @@ use easement::commands::{Checked, Outcome};
 use easement::{CacheUse, EvidenceGap, GapKind};
 use tempfile::TempDir;
 
-use crate::common::{fixture, write_all};
+use crate::common::{fixture, project, write_all};
 use crate::run::{cannot_index_here, check, check_in, check_with, config, json, pinned, text};
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
@@ -174,6 +174,60 @@ fn each_cause_of_an_unresolved_import_is_pinned() {
         insta::assert_json_snapshot!("unresolved_import_causes_json", report["evidence_gaps"]);
         insta::assert_snapshot!("unresolved_import_causes_text", &said[start..]);
     });
+}
+
+/// An import of a file the walk leaves out (one .gitignore hides), which the index
+/// resolves, is a gap that says so, whether its path is relative or goes through
+/// `paths`; an import of a file that does not exist still did not resolve. Tracking
+/// the file closes the gap.
+#[test]
+fn an_import_of_a_file_the_walk_leaves_out_is_a_gap_that_says_so() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\n",
+        ),
+        ("package.json", "{\"name\": \"app\", \"private\": true}\n"),
+        (
+            "tsconfig.json",
+            r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler","baseUrl":".","paths":{"@/*":["src/*"]}},"include":["src"]}"#,
+        ),
+        (".gitignore", "src/gen/\n"),
+        ("src/gen/api.ts", "export const api = 1;\n"),
+        (
+            "src/app/a.ts",
+            "import { api } from \"../gen/api\";\nimport { api as again } from \"@/gen/api\";\nimport { gone } from \"../lib/missing\";\nexport const all = [api, again, gone];\n",
+        ),
+    ]);
+    // Indexed afresh: the cases differ only in what the walk leaves out.
+    let fresh = || {
+        let own = TempDir::new().unwrap();
+        check_in(&root, own.path(), CacheUse::Off).unwrap()
+    };
+    let checked = fresh();
+    assert_eq!(
+        places(&checked, "the index takes"),
+        at(&[(1, "../gen/api"), (2, "@/gen/api")])
+    );
+    assert_eq!(
+        places(&checked, "the indexer did not resolve"),
+        at(&[(3, "../lib/missing")])
+    );
+    let report = json(&checked);
+    pinned(|| {
+        insta::assert_json_snapshot!("unwalked_import_json", report["evidence_gaps"]);
+    });
+    std::fs::remove_file(root.join(".gitignore")).unwrap();
+    let checked = fresh();
+    assert_eq!(
+        unresolved(&checked)
+            .iter()
+            .map(|gap| gap.places.len())
+            .sum::<usize>(),
+        1,
+        "{:?}",
+        unresolved(&checked)
+    );
 }
 
 /// Every form of a Python import the index resolves is no gap; the module of a
