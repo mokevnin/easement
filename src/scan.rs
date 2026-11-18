@@ -205,6 +205,7 @@ fn compare(
                 )));
             }
             match (resolution, form) {
+                (scip::Resolution::Unwalked, _) => Cause::Unwalked,
                 (scip::Resolution::Wildcard, _) => Cause::Wildcard,
                 (_, Form::SideEffect) => Cause::SideEffect,
                 (_, Form::ImportCall { .. }) => Cause::ImportCall,
@@ -407,12 +408,15 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
     )?;
     let project: HashSet<&str> = all_files.iter().map(String::as_str).collect();
     // Excluded files are never read as sources, but what they define stays
-    // resolvable, so an import of one is seen and fails as `excluded`.
-    let (mut documents, hidden): (Vec<scip::Document>, Vec<scip::Document>) = indexed
-        .documents
-        .0
+    // resolvable, so an import of one is seen and fails as `excluded`. What files the
+    // walk leaves out define only tells an import of one from one the indexer did not
+    // resolve.
+    let (walked, unwalked): (Vec<scip::Document>, Vec<scip::Document>) =
+        indexed.documents.0.into_iter().partition(|d| {
+            project.contains(d.path.as_str()) || excluded.binary_search(&d.path).is_ok()
+        });
+    let (mut documents, hidden): (Vec<scip::Document>, Vec<scip::Document>) = walked
         .into_iter()
-        .filter(|d| project.contains(d.path.as_str()) || excluded.binary_search(&d.path).is_ok())
         .partition(|d| project.contains(d.path.as_str()));
     let mut parts_doubts: Vec<(String, lang::parts::Doubt)> = Vec::new();
     // (the parts of the language, the file that declares them, the files its test code
@@ -472,7 +476,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
     }
     // Every pass over the index reads each symbol once and shares who defines what.
     let names = scip::Names::of(&documents, &hidden);
-    let index = scip::Indexed::of(&names);
+    let index = scip::Indexed::of(&names).leaving_out(&unwalked);
     let mut types: Vec<TypeDef> = Vec::new();
     let mut unrelated_declarations: Vec<lang::UnrelatedDeclaration> = Vec::new();
     // What the comparison of written imports found, in checked files and in unread ones.
