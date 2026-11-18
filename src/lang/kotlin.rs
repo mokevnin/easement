@@ -4,7 +4,12 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, tree};
+use super::language::has_extension;
+use super::syntax::{captured_nodes, tree};
+use super::{Adapter, Import, Target};
+
+/// The extensions of its files.
+pub const EXTENSIONS: &[&str] = &["kt", "kts"];
 
 const QUERY: &str = "(import) @node";
 
@@ -68,7 +73,7 @@ impl Kotlin {
         let mut declarations: BTreeMap<String, BTreeMap<String, DeclKind>> = BTreeMap::new();
         let mut packages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for rel in files {
-            if !super::registry::is(rel, &super::registry::KOTLIN) {
+            if !has_extension(rel, EXTENSIONS) {
                 continue;
             }
             let Some(stem) = rel.file_stem() else {
@@ -259,7 +264,7 @@ impl Adapter for Kotlin {
     }
 
     fn handles(&self, path: &Path) -> bool {
-        super::registry::is(path, &super::registry::KOTLIN)
+        has_extension(path, EXTENSIONS)
     }
 
     fn imports(&self, _path: &Path, source: &str) -> Result<Vec<Import>> {
@@ -324,7 +329,7 @@ impl Adapter for Kotlin {
 /// Whether a module is Kotlin's standard library: `kotlin` and what is below it,
 /// or a package of the JDK, which Kotlin on the JVM imports as its own.
 pub fn std(module: &str) -> bool {
-    super::registry::KOTLIN.first_segment(module) == "kotlin" || super::java::jdk(module)
+    module.split('.').next() == Some("kotlin") || super::java::jdk(module)
 }
 
 #[cfg(test)]
@@ -433,7 +438,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
+        let kt = Kotlin::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let go = |spec: &str| kt.resolve(Path::new("A.kt"), spec).target;
         assert_eq!(
             go("com.acme.model.User"),
@@ -470,7 +475,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "package com.acme.thing\n\nclass Thing\n").unwrap();
         }
-        let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
+        let kt = Kotlin::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let resolution = kt.resolve(Path::new("A.kt"), "com.acme.thing.Thing");
         assert_eq!(resolution.target, Target::Internal("one/Thing.kt".into()));
         assert_eq!(resolution.candidates, ["one/Thing.kt", "two/Thing.kt"]);

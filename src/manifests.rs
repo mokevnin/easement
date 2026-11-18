@@ -10,8 +10,9 @@ use crate::components::ComponentMap;
 use crate::config::Config;
 use crate::lang::Dep;
 use crate::lang::Target;
-use crate::lang::registry::{self, Manifest};
-use crate::packages::{Declares, Named};
+use crate::lang::registry;
+use crate::packages::manifest::Manifest;
+use crate::packages::manifest::{Declares, Named};
 use crate::relpath;
 
 pub struct Undeclared {

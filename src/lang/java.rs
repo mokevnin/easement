@@ -1,6 +1,6 @@
 //! Java beyond its index: what changes what scip-java writes.
 
-use super::registry::starts_with_any;
+use super::language::starts_with_any;
 
 /// scip-java runs Maven or Gradle with the JDK of `JAVA_HOME`: `MAVEN_ARGS`
 /// can skip the build, `ORG_GRADLE_PROJECT_*` sets project properties. Not

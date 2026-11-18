@@ -11,6 +11,7 @@ use crate::decision;
 use crate::diff::{Changes, Touch};
 use crate::explain::DependencyDecision;
 use crate::flow::{Flow, Node};
+use crate::lang::language;
 use crate::lang::{Aliased, Dep, Mention, Qualified, Unit, registry};
 use crate::policy::Policy;
 use crate::relpath;
@@ -127,7 +128,7 @@ pub fn touched(
     };
     let mut touched = Vec::new();
     let mut removed = BTreeSet::new();
-    let mut whole: BTreeMap<&str, (&registry::Language, BTreeSet<String>)> = BTreeMap::new();
+    let mut whole: BTreeMap<&str, (&language::Language, BTreeSet<String>)> = BTreeMap::new();
     for file in changed {
         let (Some(touch), Some(language)) = (changes.touch(file), registry::of(file)) else {
             continue;

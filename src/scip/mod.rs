@@ -25,8 +25,9 @@ use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 
 use crate::check::SymbolRef;
 use crate::flow::{Edge, Flow, Node, Use};
+use crate::lang::language::Language;
 use crate::lang::parts::Part;
-use crate::lang::registry::{self, Language};
+use crate::lang::registry;
 use crate::lang::{
     AliasDefinition, Aliased, Dep, Elsewhere, Hop, Import, Mention, Scope, Through, Written,
 };
@@ -35,7 +36,8 @@ use crate::relpath;
 
 pub mod symbol;
 
-use symbol::{Kind, Name, Shape, read, split};
+use crate::lang::language::Symbols;
+use symbol::{Called, Kind, Name, Qualifier, Shape, classes, modules, split};
 
 /// `SymbolRole::Definition` in the bitset of an occurrence.
 const DEFINITION: i32 = 1;
@@ -51,7 +53,7 @@ pub struct Reference {
     pub symbol: String,
     /// For a reference into a package the index left unnamed that stands on the
     /// string of an import: the module the string spells, as the entry of its
-    /// language reads it ([`registry::UnnamedPackages`]).
+    /// language reads it ([`crate::lang::language::UnnamedPackages`]).
     pub spelled: Option<String>,
 }
 
@@ -1083,7 +1085,7 @@ impl<'a> Indexed<'a> {
                     }
                     None => Some(Target::External(name.external.clone())),
                 };
-                let specifier = called.qualifier_in(found);
+                let specifier = qualifier_in(called, found);
                 uses.push(SymbolRef {
                     file: PathBuf::from(&document.path),
                     from: unit_at(document, line),
@@ -1502,7 +1504,7 @@ fn called_in(name: &Name, file: &str) -> Option<crate::lang::Qualified> {
         .as_ref()
         .filter(|_| name.shape != Shape::Module)?;
     Some(crate::lang::Qualified {
-        qualifier: called.qualifier_in(Some(file)),
+        qualifier: qualifier_in(called, Some(file)),
         name: called.name.clone(),
     })
 }
@@ -1817,6 +1819,48 @@ impl Indexed<'_> {
             }
         }
         flow
+    }
+}
+
+/// `symbol` in the shape every language shares, as the entry of the language whose
+/// indexer writes its scheme reads it. `None` for a symbol that does not split, or
+/// of a scheme no entry declares: nothing is made of it.
+pub(crate) fn read(symbol: &str) -> Option<Name> {
+    let parsed = split(symbol)?;
+    let language = registry::of_scheme(&parsed.scheme)?;
+    Some(match language.indexer()?.symbols {
+        Symbols::Modules {
+            qualifier,
+            external,
+        } => modules(
+            symbol,
+            &parsed,
+            language.member_separator,
+            qualifier,
+            external,
+        ),
+        Symbols::Classes {
+            separator,
+            constructor,
+            owned,
+        } => classes(
+            symbol,
+            &parsed,
+            separator,
+            constructor,
+            owned.then(|| parsed.owner()),
+        ),
+        Symbols::Own(read) => read(symbol, &parsed),
+    })
+}
+
+/// The qualifier of the name as the symbol rules write it: as the index spells it,
+/// else the module path of `file`, the file that defines it, when one does.
+fn qualifier_in(called: &Called, file: Option<&str>) -> String {
+    match (&called.qualifier, file) {
+        (Qualifier::Spelled(qualifier), _) => qualifier.clone(),
+        (Qualifier::File(_), Some(file)) => registry::module_path(file).to_string(),
+        (Qualifier::File(otherwise), None) => otherwise.clone(),
     }
 }
 

@@ -3,7 +3,7 @@
 
 use tree_sitter::Node;
 
-use super::registry::{Explained, Spelled};
+use super::language::{Explained, Spelled};
 use super::{Cause, Form, Import};
 use crate::scip::symbol::{self, Parsed, Qualifier};
 
@@ -39,8 +39,8 @@ pub const EXPLAINED: &[Explained] = &[
 ///
 /// `from __future__ import …` is a directive of the compiler, no module.
 pub fn written_imports(_file: &str, text: &str) -> Vec<Import> {
-    let tree = super::tree(&tree_sitter_python::LANGUAGE.into(), text);
-    super::preorder(tree.root_node())
+    let tree = super::syntax::tree(&tree_sitter_python::LANGUAGE.into(), text);
+    super::syntax::preorder(tree.root_node())
         .flat_map(|node| imports_at(node, text))
         .collect()
 }
@@ -60,7 +60,7 @@ fn imports_at(node: Node, text: &str) -> Vec<Import> {
             };
             let names = children_by_field(node, "name");
             let dots_alone = module.kind() == "relative_import"
-                && !super::has_child(module, "dotted_name")
+                && !super::syntax::has_child(module, "dotted_name")
                 && !names.is_empty();
             if !dots_alone {
                 return vec![module_at(module, source(module))];
@@ -133,7 +133,7 @@ fn squeezed(text: &str) -> String {
 /// What a string holds, when nothing is interpolated in it and it is no
 /// concatenation of several.
 fn literal(node: Node, text: &str) -> Option<String> {
-    if node.kind() != "string" || super::has_child(node, "interpolation") {
+    if node.kind() != "string" || super::syntax::has_child(node, "interpolation") {
         return None;
     }
     let mut cursor = node.walk();

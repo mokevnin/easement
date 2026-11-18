@@ -1,12 +1,10 @@
 //! Reads a SCIP symbol into the shape every language shares ([`Name`]). What
 //! differs by scheme is said by the entry of the language whose indexer writes it
-//! ([`registry::Symbols`]): data, or a hook in `lang/<language>.rs`. This module
+//! ([`crate::lang::language::Symbols`]): data, or a hook in `lang/<language>.rs`. This module
 //! holds what every scheme shares: the symbol split into its fields and
 //! descriptors, and the readings of modules and of classes those entries choose.
 
 use std::borrow::Cow;
-
-use crate::lang::registry::{self, Symbols};
 
 /// How a descriptor of a symbol ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,16 +244,6 @@ pub enum Through {
 }
 
 impl Called {
-    /// The qualifier of the name as the symbol rules write it: as the index spells it,
-    /// else the module path of `file`, the file that defines it, when one does.
-    pub fn qualifier_in(&self, file: Option<&str>) -> String {
-        match (&self.qualifier, file) {
-            (Qualifier::Spelled(qualifier), _) => qualifier.clone(),
-            (Qualifier::File(_), Some(file)) => registry::module_path(file).to_string(),
-            (Qualifier::File(otherwise), None) => otherwise.clone(),
-        }
-    }
-
     /// The member used, as `forbid_symbol` names it: what it is called through, and
     /// its name. `specifier` is the qualifier of the name as the use spells it.
     pub fn method(&self, specifier: &str) -> Option<(String, String)> {
@@ -287,40 +275,8 @@ pub struct Reading {
     /// matched by the ending of its path.
     pub by_ending: bool,
     /// The index does not say which package the symbol is in; only the string of
-    /// the import does (see [`registry::UnnamedPackages`]).
+    /// the import does (see [`crate::lang::language::UnnamedPackages`]).
     pub unnamed: bool,
-}
-
-/// `symbol` in the shape every language shares, as the entry of the language whose
-/// indexer writes its scheme reads it. `None` for a symbol that does not split, or
-/// of a scheme no entry declares: nothing is made of it.
-pub fn read(symbol: &str) -> Option<Name> {
-    let parsed = split(symbol)?;
-    let language = registry::of_scheme(&parsed.scheme)?;
-    Some(match language.indexer()?.symbols {
-        Symbols::Modules {
-            qualifier,
-            external,
-        } => modules(
-            symbol,
-            &parsed,
-            language.member_separator,
-            qualifier,
-            external,
-        ),
-        Symbols::Classes {
-            separator,
-            constructor,
-            owned,
-        } => classes(
-            symbol,
-            &parsed,
-            separator,
-            constructor,
-            owned.then(|| parsed.owner()),
-        ),
-        Symbols::Own(read) => read(symbol, &parsed),
-    })
 }
 
 /// The names of the descriptors.
@@ -508,6 +464,7 @@ pub fn shown_name(symbol: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scip::read;
 
     #[test]
     fn a_type_is_the_last_descriptor_ending_in_a_hash() {

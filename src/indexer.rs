@@ -13,7 +13,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 
 use crate::check::{self, Platform};
-use crate::lang::registry::{self, Indexer, Language};
+use crate::lang::language::{Indexer, Language};
+use crate::lang::registry;
 use crate::relpath;
 use crate::scip::{self, Document, Documents};
 

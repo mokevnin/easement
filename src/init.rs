@@ -157,11 +157,11 @@ pub fn run(root: &Path, force: bool, cache: &mut scan::Cache) -> Result<String> 
         .filter(|e| e.file_type().is_some_and(|t| !t.is_dir()))
         .filter_map(|e| {
             let is_file = e.file_type().is_some_and(|t| t.is_file());
-            Some((lang::relative(root, e.path())?, is_file))
+            Some((crate::relpath::relative(root, e.path())?, is_file))
         })
         .collect();
     let targets: Vec<std::path::PathBuf> = walked.iter().map(|(p, _)| p.clone()).collect();
-    let adapters = lang::adapters(root, &targets)?;
+    let adapters = lang::adapters::build(root, &targets)?;
     let files: Vec<String> = walked
         .iter()
         .filter(|(_, is_file)| *is_file)

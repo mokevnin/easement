@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use gomod_parser::{GoMod, Replacement};
 
-use super::{Declared, Declares, Listed, Source, line_at, path_source};
-use crate::lang::registry::ManifestFile;
+use super::manifest::{Declared, Declares, Listed, Source, line_at, path_source};
+use crate::packages::manifest::ManifestFile;
 
 /// What easement reads of a `go.mod`, with every path as Go reads it.
 struct Mod {
@@ -133,8 +133,8 @@ pub(crate) fn covers(names: &BTreeSet<String>, package: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Source;
     use super::*;
+    use crate::packages::manifest::Source;
 
     type Row = (usize, String, String, Source);
 

@@ -9,11 +9,14 @@ use regex::Regex;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
-use super::{Declared, Declares, Listed, Reach, Source, line_at, manifest_in, path_source};
+use super::manifest::{Declared, Declares, Listed, Reach, Source, line_at, path_source};
 use crate::check::Unjudged;
 use crate::lang::parts::{Kind, Part};
-use crate::lang::registry::{CARGO_TOML, ManifestFile};
+use crate::packages::manifest::ManifestFile;
 use crate::relpath::{self, parent};
+
+/// The name of its file.
+pub const FILE_NAME: &str = "Cargo.toml";
 
 /// The table of dependencies only the crate's tests, examples and benchmarks build with.
 const DEV: &str = "dev-dependencies";
@@ -155,7 +158,7 @@ impl<'r> Workspaces<'r> {
     fn dependency(&mut self, dir: &str, name: &str) -> Result<Option<WorkspaceEntry>, String> {
         let mut here = Some(dir);
         while let Some(current) = here {
-            let manifest = manifest_in(&CARGO_TOML, current);
+            let manifest = relpath::join(current, FILE_NAME);
             let read = self.read;
             let said = self
                 .by_manifest
@@ -165,7 +168,7 @@ impl<'r> Workspaces<'r> {
                 });
             match said {
                 Said::Nothing => {}
-                Said::Unreadable => return Err(manifest_in(&CARGO_TOML, current)),
+                Said::Unreadable => return Err(relpath::join(current, FILE_NAME)),
                 Said::Workspace(dependencies) => return Ok(dependencies.get(name).cloned()),
             }
             here = (!current.is_empty()).then(|| parent(current));
@@ -511,8 +514,9 @@ pub(crate) fn named_in_source(_file: &str, source: &str) -> BTreeSet<String> {
 mod tests {
     use super::*;
     use crate::lang::Target;
-    use crate::packages::declared_by;
-    use crate::packages::tests::importable;
+    use crate::lang::registry::CARGO_TOML;
+    use crate::packages::declared::declared_by;
+    use crate::packages::declared::tests::importable;
 
     /// What the `Cargo.toml` at `path` holding `text` lists, in a project whose other
     /// files are `project`.

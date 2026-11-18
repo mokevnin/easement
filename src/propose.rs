@@ -383,7 +383,7 @@ pub fn std_unknown(map: &ComponentMap, judged: &[Judged]) -> Vec<String> {
 }
 
 /// What a reader must know of how the proposals were judged: a source whose
-/// language has test-only parts (see [`registry::Language::parts`]) is judged
+/// language has test-only parts (see [`crate::lang::language::Language::parts`]) is judged
 /// as the code of the whole file, since only a path tells test code here.
 pub fn notes(config: &Config, map: &ComponentMap, proposals: &[Proposal]) -> Vec<String> {
     if config.tests.is_none() {

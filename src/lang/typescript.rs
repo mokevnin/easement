@@ -8,24 +8,27 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::Node;
 
-use super::registry::{
-    Explained, Language, Spelled, TYPESCRIPT, UnindexedUse, UnnamedPackages, UnrelatedSpan,
-};
+use super::language::module_path_in;
+use super::language::{Explained, Language, Spelled, UnindexedUse, UnnamedPackages, UnrelatedSpan};
 use super::{Cause, Form, Import};
-use crate::packages::npm_name;
+use crate::packages::npm::npm_name;
 use crate::relpath::{self, parent};
 use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
+
+/// The extensions of its files.
+pub const EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// The suffixes of its declaration files (`a.d.ts`).
+pub const DECLARATIONS: &[&str] = &["d.ts", "d.mts", "d.cts"];
+
+/// Where its package managers install third-party packages.
+pub const THIRD_PARTY: &[&str] = &["node_modules"];
 
 /// The file a relative specifier names, as the bundlers resolve it: the path
 /// itself, with an extension, or its index.
 pub fn resolve(from_dir: &str, spec: &str, files: &BTreeSet<&str>) -> Option<String> {
     let base = relpath::resolve(from_dir, spec)?;
-    let exts: Vec<&str> = TYPESCRIPT
-        .extensions
-        .iter()
-        .copied()
-        .chain(["d.ts"])
-        .collect();
+    let exts: Vec<&str> = EXTENSIONS.iter().copied().chain(["d.ts"]).collect();
     std::iter::once(base.clone())
         .chain(exts.iter().map(|e| format!("{base}.{e}")))
         .chain(exts.iter().map(|e| format!("{base}/index.{e}")))
@@ -101,12 +104,12 @@ pub const EXPLAINED: &[Explained] = &[
 /// with `@types/node`, so there it is an import call ([`Form::ImportCall`]).
 pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
     let extension = relpath::extension(file);
-    let tree = super::tree(&grammar(file), text);
+    let tree = super::syntax::tree(&grammar(file), text);
     let require = match extension {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
         _ => Form::ImportCall { as_import: true },
     };
-    let mut imports: Vec<Import> = super::preorder(tree.root_node())
+    let mut imports: Vec<Import> = super::syntax::preorder(tree.root_node())
         .filter_map(|node| import_at(node, text, require))
         .collect();
     imports.sort_by_key(|import| import.line);
@@ -118,10 +121,10 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
 /// declarations and class expressions, and the `implements` clause of a class
 /// declaration, which counts only when it names a type alias.
 pub fn unrelated(file: &str, text: &str) -> Vec<UnrelatedSpan> {
-    let tree = super::tree(&grammar(file), text);
+    let tree = super::syntax::tree(&grammar(file), text);
     let lines = |node: Node| node.start_position().row + 1..=node.end_position().row + 1;
     let mut found = Vec::new();
-    for node in super::preorder(tree.root_node()) {
+    for node in super::syntax::preorder(tree.root_node()) {
         if matches!(node.kind(), "interface_declaration" | "class") {
             found.push(UnrelatedSpan {
                 lines: lines(node),
@@ -169,7 +172,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
                 .find(|child| child.kind() == "import_require_clause");
             let form = match (clause, node.child_by_field_name("source")) {
                 (Some(_), _) => Form::Static,
-                (None, Some(_)) if super::has_child(node, "import_clause") => Form::Static,
+                (None, Some(_)) if super::syntax::has_child(node, "import_clause") => Form::Static,
                 (None, _) => Form::SideEffect,
             };
             let string = clause
@@ -209,7 +212,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
 fn literal(node: Node, text: &str) -> Option<String> {
     match node.kind() {
         "string" => {}
-        "template_string" if !super::has_child(node, "template_substitution") => {}
+        "template_string" if !super::syntax::has_child(node, "template_substitution") => {}
         _ => return None,
     }
     let quoted = node.utf8_text(text.as_bytes()).ok()?;
@@ -228,7 +231,7 @@ pub fn spelled(specifier: &str) -> Spelled {
             .map_or(specifier, |(path, _)| path);
         return Spelled::Paths(vec![path.to_string()]);
     }
-    match crate::lang::registry::PACKAGE_JSON.named_by(specifier) {
+    match crate::packages::npm::named_by(specifier) {
         Some(package) => Spelled::Package(package),
         None => Spelled::Neither,
     }
@@ -314,8 +317,7 @@ fn unnamed_spelled(string: &str, file: &Path) -> Option<String> {
     file.ancestors()
         .skip(1)
         .any(|dir| {
-            TYPESCRIPT
-                .third_party
+            THIRD_PARTY
                 .iter()
                 .any(|installs| dir.join(installs).join(&package).is_dir())
         })
@@ -339,7 +341,7 @@ pub fn external(parsed: &Parsed<'_>) -> String {
         .map(|(name, _)| name.clone())
         .collect();
     if let Some(last) = parts.last_mut() {
-        *last = TYPESCRIPT.module_path(last).to_string();
+        *last = module_path_in(last, DECLARATIONS, EXTENSIONS).to_string();
         if last == "index" {
             parts.pop();
         }
@@ -353,6 +355,7 @@ pub fn external(parsed: &Parsed<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::registry::TYPESCRIPT;
 
     #[test]
     fn an_npm_package_is_named_as_its_imports_spell_it() {

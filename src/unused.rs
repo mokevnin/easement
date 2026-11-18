@@ -12,7 +12,8 @@ use crate::check::{self, Place, RecognisedFramework, RuleId, Unjudged, Violation
 use crate::components::ComponentMap;
 use crate::config::{Config, TESTS};
 use crate::lang::Dep;
-use crate::lang::registry::{self, LANGUAGES, Language, UnindexedUse};
+use crate::lang::language::{Language, UnindexedUse};
+use crate::lang::registry::{self, LANGUAGES};
 use crate::packages;
 use crate::relpath::{self, extension, glob_set, parent};
 use crate::scan::Unresolved;
@@ -81,7 +82,7 @@ pub fn unused(input: &Input) -> Result<Unused> {
     // Files that could not be read: each is taken as used, or as what makes
     // others used, and the report says so.
     let mut unreadable: BTreeSet<String> = BTreeSet::new();
-    let packaged = packages::entries(input.all_files, input.unread, &|file| {
+    let packaged = packages::entries::entries(input.all_files, input.unread, &|file| {
         std::fs::read_to_string(input.root.join(file)).ok()
     });
 
@@ -431,7 +432,7 @@ mod tests {
                 used(2, "./legacy", "src/legacy.js"),
             ]
         );
-        let entries = packages::entries(&files, &[], &|file| {
+        let entries = packages::entries::entries(&files, &[], &|file| {
             std::fs::read_to_string(dir.path().join(file)).ok()
         });
         assert!(entries.files.contains("bin/tool.js") && entries.files.contains("src/main.ts"));

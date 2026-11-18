@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::check::{self, HonouredSuppression, Place, RuleId, Violation};
-use crate::lang::registry::{self, Comments};
+use crate::lang::language::Comments;
+use crate::lang::registry;
 
 const NEXT_LINE: &str = "easement:disable-next-line";
 const SAME_LINE: &str = "easement:disable-line";
