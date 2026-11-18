@@ -409,7 +409,7 @@ const IMPORTS_SHOWN: usize = 3;
 /// the first few by file and line, the place of every one of them and, where the
 /// language says it, how to close it.
 fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
-    type Key = (lang::Cause, Option<&'static lang::registry::Explained>);
+    type Key = (lang::Cause, Option<&'static lang::language::Explained>);
     let mut by_cause: std::collections::BTreeMap<Key, Vec<&scan::Unresolved>> =
         std::collections::BTreeMap::new();
     for unresolved in imports {

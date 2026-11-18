@@ -8,11 +8,10 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::Node;
 
-use super::registry::{
-    Explained, Language, Spelled, TYPESCRIPT, UnindexedUse, UnnamedPackages, UnrelatedSpan,
-};
+use super::language::{Explained, Language, Spelled, UnindexedUse, UnnamedPackages, UnrelatedSpan};
+use super::registry::TYPESCRIPT;
 use super::{Cause, Form, Import};
-use crate::packages::npm_name;
+use crate::packages::npm::npm_name;
 use crate::relpath::{self, parent};
 use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 
@@ -101,12 +100,12 @@ pub const EXPLAINED: &[Explained] = &[
 /// with `@types/node`, so there it is an import call ([`Form::ImportCall`]).
 pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
     let extension = relpath::extension(file);
-    let tree = super::tree(&grammar(file), text);
+    let tree = super::syntax::tree(&grammar(file), text);
     let require = match extension {
         "js" | "jsx" | "mjs" | "cjs" => Form::Static,
         _ => Form::ImportCall { as_import: true },
     };
-    let mut imports: Vec<Import> = super::preorder(tree.root_node())
+    let mut imports: Vec<Import> = super::syntax::preorder(tree.root_node())
         .filter_map(|node| import_at(node, text, require))
         .collect();
     imports.sort_by_key(|import| import.line);
@@ -118,10 +117,10 @@ pub fn written_imports(file: &str, text: &str) -> Vec<Import> {
 /// declarations and class expressions, and the `implements` clause of a class
 /// declaration, which counts only when it names a type alias.
 pub fn unrelated(file: &str, text: &str) -> Vec<UnrelatedSpan> {
-    let tree = super::tree(&grammar(file), text);
+    let tree = super::syntax::tree(&grammar(file), text);
     let lines = |node: Node| node.start_position().row + 1..=node.end_position().row + 1;
     let mut found = Vec::new();
-    for node in super::preorder(tree.root_node()) {
+    for node in super::syntax::preorder(tree.root_node()) {
         if matches!(node.kind(), "interface_declaration" | "class") {
             found.push(UnrelatedSpan {
                 lines: lines(node),
@@ -169,7 +168,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
                 .find(|child| child.kind() == "import_require_clause");
             let form = match (clause, node.child_by_field_name("source")) {
                 (Some(_), _) => Form::Static,
-                (None, Some(_)) if super::has_child(node, "import_clause") => Form::Static,
+                (None, Some(_)) if super::syntax::has_child(node, "import_clause") => Form::Static,
                 (None, _) => Form::SideEffect,
             };
             let string = clause
@@ -209,7 +208,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
 fn literal(node: Node, text: &str) -> Option<String> {
     match node.kind() {
         "string" => {}
-        "template_string" if !super::has_child(node, "template_substitution") => {}
+        "template_string" if !super::syntax::has_child(node, "template_substitution") => {}
         _ => return None,
     }
     let quoted = node.utf8_text(text.as_bytes()).ok()?;

@@ -6,8 +6,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use super::language::starts_with_any;
 use super::parts::{Doubt, Found, Module, Span};
-use super::registry::starts_with_any;
 use crate::relpath;
 use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 

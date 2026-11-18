@@ -4,7 +4,7 @@
 use tree_sitter::{Node, Tree};
 
 use super::Import;
-use super::registry::{Inherited, Language};
+use super::language::{Inherited, Language};
 use crate::relpath;
 use crate::scip::symbol::{self, Parsed, Qualifier};
 
@@ -13,7 +13,7 @@ use crate::scip::symbol::{self, Parsed, Qualifier};
 /// code above all, costs nothing past its imports. Any text has a tree: a syntax
 /// error is a node of it.
 fn head_tree(text: &str) -> Tree {
-    super::tree(&tree_sitter_go::LANGUAGE.into(), &text[..head_end(text)])
+    super::syntax::tree(&tree_sitter_go::LANGUAGE.into(), &text[..head_end(text)])
 }
 
 /// Where the head of Go source ends: at the first `func`, `type`, `var` or

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, tree};
+use super::syntax::{captured_nodes, tree};
+use super::{Adapter, Import, Target};
 
 const QUERY: &str = "(import) @node";
 
@@ -433,7 +434,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
+        let kt = Kotlin::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let go = |spec: &str| kt.resolve(Path::new("A.kt"), spec).target;
         assert_eq!(
             go("com.acme.model.User"),
@@ -470,7 +471,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "package com.acme.thing\n\nclass Thing\n").unwrap();
         }
-        let kt = Kotlin::new(root, &crate::lang::walked(root)).unwrap();
+        let kt = Kotlin::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let resolution = kt.resolve(Path::new("A.kt"), "com.acme.thing.Thing");
         assert_eq!(resolution.target, Target::Internal("one/Thing.kt".into()));
         assert_eq!(resolution.candidates, ["one/Thing.kt", "two/Thing.kt"]);

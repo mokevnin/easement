@@ -135,7 +135,7 @@ pub struct Unresolved {
     pub import: Import,
     pub cause: lang::Cause,
     /// What the language of the file says of the cause; `None` when it says nothing.
-    pub explained: Option<&'static lang::registry::Explained>,
+    pub explained: Option<&'static lang::language::Explained>,
 }
 
 impl Unresolved {
@@ -176,11 +176,11 @@ struct Written {
 fn compare(
     file: &str,
     import: Import,
-    written: &lang::registry::WrittenImports,
+    written: &lang::language::WrittenImports,
     resolved: impl Fn(&Import) -> scip::Resolution,
     exists: impl Fn(&str) -> bool,
 ) -> Compared {
-    use lang::registry::Spelled;
+    use lang::language::Spelled;
     use lang::{Cause, Form};
     // A target computed at run time is no one file, whatever the index holds.
     let unspelled = match import.form {
@@ -272,7 +272,7 @@ pub fn project_files(root: &Path, policy: &ScanPolicy) -> Result<ProjectFiles> {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if let Some(rel) = lang::relative(root, entry.path()) {
+        if let Some(rel) = crate::relpath::relative(root, entry.path()) {
             if exclude.is_match(&rel) {
                 excluded.insert(slash(&rel));
             } else {
@@ -311,7 +311,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
         if entry.file_type().is_none_or(|t| t.is_dir()) {
             continue;
         }
-        let Some(rel) = lang::relative(root, entry.path()) else {
+        let Some(rel) = crate::relpath::relative(root, entry.path()) else {
             continue;
         };
         targets.push(rel.clone());
@@ -319,7 +319,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
             walked.push((entry, rel));
         }
     }
-    let adapters = lang::adapters(root, &targets)?;
+    let adapters = lang::adapters::build(root, &targets)?;
     let mut paths = Vec::new();
     let mut all_files = Vec::new();
     // Excluded files the walk sees (not the ones .gitignore hides).
@@ -420,7 +420,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
     let mut parts_doubts: Vec<(String, lang::parts::Doubt)> = Vec::new();
     // (the parts of the language, the file that declares them, the files its test code
     // may be in)
-    let mut declared_files: Vec<(&lang::registry::Parts, String, Vec<String>)> = Vec::new();
+    let mut declared_files: Vec<(&lang::language::Parts, String, Vec<String>)> = Vec::new();
     // The other files each file declares as its own code, test code too if the file turns
     // out to be.
     let mut modules: HashMap<String, Vec<lang::parts::Module>> = HashMap::new();
@@ -513,7 +513,7 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
         }
         if checked
             && policy.implementations
-            && let Some(lang::registry::Relations::Declared {
+            && let Some(lang::language::Relations::Declared {
                 unrelated,
                 anonymous,
             }) = lang::registry::of(&document.path).map(|language| &language.relations)
@@ -581,8 +581,9 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
     add_spelled(&mut deps, checked_imports.spelled);
     let mut packages_problems = Vec::new();
     if policy.packages {
-        let declared =
-            crate::packages::declared_by(root, &all_files, |file| !target_only.is_match(file));
+        let declared = crate::packages::declared::declared_by(root, &all_files, |file| {
+            !target_only.is_match(file)
+        });
         paths.extend(declared.manifests);
         deps.extend(declared.deps);
         packages_problems = declared.problems;

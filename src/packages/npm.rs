@@ -5,10 +5,12 @@ use std::collections::BTreeSet;
 
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 
-use super::{Declared, Declares, Framework, Listed, Setting, Source, line_at, path_source};
+use super::manifest::{
+    Declared, Declares, Framework, Listed, Setting, Source, line_at, path_source,
+};
 use crate::lang::parts::{Kind, Part};
-use crate::lang::registry::ManifestFile;
 use crate::lang::{Form, typescript};
+use crate::packages::manifest::ManifestFile;
 
 /// The table whose dependencies only the package's tests and tools need.
 const DEV: &str = "devDependencies";
@@ -294,8 +296,8 @@ pub(crate) fn named_in_source(file: &str, source: &str) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Source;
     use super::*;
+    use crate::packages::manifest::Source;
 
     type Row = (usize, String, String, Source, Option<String>);
 

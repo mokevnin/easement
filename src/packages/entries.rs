@@ -8,31 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
-use super::Declares;
+use super::manifest::{Declares, Framework};
 use crate::check::{self, Unjudged};
-use crate::lang::registry::{self, Manifest};
+use crate::lang::registry;
+use crate::packages::manifest::Manifest;
 use crate::relpath::{self, parent};
-
-/// A framework that loads files of a package by convention.
-pub struct Framework {
-    pub name: &'static str,
-    /// The dependency, in `dependencies` or `devDependencies`, that tells it.
-    pub dependency: &'static str,
-    /// The files it loads, as globs relative to the directory of the package.
-    pub entries: &'static [&'static str],
-    /// Its config files, as globs relative to the directory of the package.
-    pub configs: &'static [&'static str],
-    /// The settings of a config file that move its conventions.
-    pub moves: &'static [Setting],
-}
-
-/// A setting of a framework's config file: its name as the framework's docs
-/// spell it, and the key that writes it, found in the text as a whole word. A
-/// key found where it means something else only leaves files unjudged.
-pub struct Setting {
-    pub name: &'static str,
-    pub key: &'static str,
-}
 
 /// What the manifests make entries of.
 #[derive(Debug, Default)]

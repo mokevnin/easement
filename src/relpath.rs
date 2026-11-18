@@ -102,6 +102,11 @@ pub fn walker(root: &Path) -> WalkBuilder {
     builder
 }
 
+/// Path relative to `root` with `/` separators, if `path` is inside `root`.
+pub fn relative(root: &Path, path: &Path) -> Option<PathBuf> {
+    path.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

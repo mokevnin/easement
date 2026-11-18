@@ -9,10 +9,13 @@ use regex::Regex;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
-use super::{Declared, Declares, Listed, Reach, Source, line_at, manifest_in, path_source};
+use super::manifest::{
+    Declared, Declares, Listed, Reach, Source, line_at, manifest_in, path_source,
+};
 use crate::check::Unjudged;
 use crate::lang::parts::{Kind, Part};
-use crate::lang::registry::{CARGO_TOML, ManifestFile};
+use crate::lang::registry::CARGO_TOML;
+use crate::packages::manifest::ManifestFile;
 use crate::relpath::{self, parent};
 
 /// The table of dependencies only the crate's tests, examples and benchmarks build with.
@@ -511,8 +514,8 @@ pub(crate) fn named_in_source(_file: &str, source: &str) -> BTreeSet<String> {
 mod tests {
     use super::*;
     use crate::lang::Target;
-    use crate::packages::declared_by;
-    use crate::packages::tests::importable;
+    use crate::packages::declared::declared_by;
+    use crate::packages::declared::tests::importable;
 
     /// What the `Cargo.toml` at `path` holding `text` lists, in a project whose other
     /// files are `project`.

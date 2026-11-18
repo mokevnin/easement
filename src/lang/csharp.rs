@@ -1,6 +1,6 @@
 //! C# beyond its index: what changes what scip-dotnet writes.
 
-use super::registry::starts_with_any;
+use super::language::starts_with_any;
 
 /// MSBuild reads every environment variable as a property, by a name of any
 /// case (`DefineConstants=X` turns on `#if X`). Keying all of them would miss on

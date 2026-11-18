@@ -10,7 +10,8 @@ use crate::check::{Place, RuleId, Unjudged, Violation};
 use crate::components::ComponentMap;
 use crate::config::Config;
 use crate::decision;
-use crate::lang::registry::{self, Relations};
+use crate::lang::language::Relations;
+use crate::lang::registry;
 use crate::lang::{Dep, Implementation, Target, TypeDef, UnrelatedDeclaration};
 use crate::relpath::slash;
 

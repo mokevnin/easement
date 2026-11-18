@@ -13,7 +13,7 @@ components:
   core:
     in: [src/config, src/components.rs, src/check.rs, src/decision.rs, src/baseline.rs, src/diff.rs, src/flow.rs, src/policy.rs, src/scope.rs, src/relpath.rs, src/symbols.rs, src/chains.rs, src/matching.rs, src/implementations.rs]
   # What easement knows of each language, as data.
-  registry: { in: [src/lang/mod.rs, src/lang/registry.rs] }
+  registry: { in: [src/lang/mod.rs, src/lang/registry.rs, src/lang/model.rs, src/lang/syntax.rs, src/lang/language.rs, src/lang/adapters.rs] }
   # The parts of a file every language shares; the finder of one language is a hook,
   # and a hook's code goes in src/lang/<language>.rs (AGENTS.md).
   parts:

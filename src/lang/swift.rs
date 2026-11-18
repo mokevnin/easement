@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::{Language, Query};
 
-use super::{Adapter, Import, Target, captured_nodes, tree};
+use super::syntax::{captured_nodes, tree};
+use super::{Adapter, Import, Target};
 
 const QUERY: &str = "(import_declaration) @node";
 
@@ -232,7 +233,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "").unwrap();
         }
-        let swift = Swift::new(root, &crate::lang::walked(root)).unwrap();
+        let swift = Swift::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let go = |spec: &str| swift.resolve(Path::new("A.swift"), spec).target;
         assert_eq!(go("Core"), Target::Internal("Sources/Core".into()));
         assert_eq!(go("Core.User"), Target::Internal("Sources/Core".into()));
@@ -257,7 +258,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "").unwrap();
         }
-        let swift = Swift::new(root, &crate::lang::walked(root)).unwrap();
+        let swift = Swift::new(root, &crate::lang::syntax::walked(root)).unwrap();
         let resolution = swift.resolve(Path::new("A.swift"), "Core");
         assert_eq!(
             resolution.target,
