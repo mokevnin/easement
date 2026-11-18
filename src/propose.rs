@@ -21,7 +21,6 @@ use crate::lang::{Target, Unit, registry};
 use crate::policy::Policy;
 use crate::relpath;
 use crate::report::{self, Coverage};
-use crate::stdlib;
 
 /// What a proposed dependency would import, written as a plan writes it: `to`
 /// or `external`.
@@ -377,7 +376,7 @@ pub fn std_unknown(map: &ComponentMap, judged: &[Judged]) -> Vec<String> {
         .iter()
         .filter(|j| j.external.is_some())
         .filter(|j| j.component.as_deref().is_some_and(|c| map.uses_std(c)))
-        .filter(|j| !stdlib::knows(&j.from))
+        .filter(|j| !registry::knows_std(&j.from))
         .map(|j| relpath::extension(&j.from).to_string())
         .collect();
     found.into_iter().collect()

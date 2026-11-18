@@ -661,7 +661,7 @@ pub fn evaluate(
                 } else if external
                     && why == decision::Outside::Unowned
                     && map.forbids_std()
-                    && !crate::stdlib::knows(&file)
+                    && !crate::lang::registry::knows_std(&file)
                 {
                     // `$std` at the top level judges the files of no component too.
                     let ext = relpath::extension(&file).to_string();
@@ -672,7 +672,7 @@ pub fn evaluate(
                 continue;
             }
         };
-        if external && map.uses_std(decision.from) && !crate::stdlib::knows(&file) {
+        if external && map.uses_std(decision.from) && !crate::lang::registry::knows_std(&file) {
             let ext = relpath::extension(&file).to_string();
             if !stats.std_unknown.contains(&ext) {
                 stats.std_unknown.push(ext);

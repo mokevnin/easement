@@ -1,4 +1,5 @@
-//! Rust beyond its index: the parts of a source that only a test build has.
+//! Rust beyond its index: the parts of a source that only a test build has, and
+//! what its indexer reads.
 
 use std::ops::RangeInclusive;
 use std::sync::LazyLock;
@@ -10,14 +11,42 @@ use super::registry::starts_with_any;
 use crate::relpath;
 use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
 
+/// The part of a source that only a test build has.
+pub const TEST: &str = "cfg(test)";
+
+/// The source is not valid UTF-8, or cannot be read.
+pub const UNREADABLE: Doubt = Doubt {
+    why: "not valid UTF-8, so their `#[cfg(test)]` code is judged as the file's, not as `tests`",
+};
+
+/// An item whose end was not found (the braces do not match).
+pub const UNBALANCED: Doubt = Doubt {
+    why: "easement could not find the end of a `#[cfg(test)]` item (the braces do not match), so it is judged as the file's, not as `tests`",
+};
+
+/// An inner `#![cfg(test)]`, or a test-only `mod name;`, inside an inline module.
+pub const INSIDE_MODULE: Doubt = Doubt {
+    why: "a `#![cfg(test)]`, or a test-only `mod name;`, inside an inline module is not placed, so it is judged as the file's, not as `tests`",
+};
+
+/// A `#[path]` puts the file of a test-only `mod name;` somewhere else.
+pub const MODULE_PATH: Doubt = Doubt {
+    why: "a `#[path]` puts the file of a test-only `mod name;` somewhere easement does not look, so it is judged as its component's, not as `tests`",
+};
+
+/// A test-only `mod name;` names a file the project does not have.
+pub const MODULE_IN_ANOTHER_FILE: Doubt = Doubt {
+    why: "a test-only `mod name;` names a file that is not in the project, so it is not judged as `tests`; the file is expected next to the module or under a directory of its name",
+};
+
 /// The test-only items of a Rust source: the attribute, then the item up to its closing
 /// brace (or its `;`), and the whole file for `#![cfg(test)]`. `mod tests;` is no part
-/// of this file: its code is in another, which `files` names.
+/// of this file: its code is in another, which `test_files` names.
 pub fn parts(path: &str, source: &str) -> Found {
     let masked = mask_rust(source.as_bytes());
     let Ok(text) = std::str::from_utf8(&masked) else {
         return Found {
-            doubts: vec![Doubt::Unreadable],
+            doubts: vec![UNREADABLE],
             ..Found::default()
         };
     };
@@ -40,11 +69,11 @@ pub fn parts(path: &str, source: &str) -> Found {
         // `#![cfg(test)]`: the file is test code from its first line to its last.
         if !attribute[1].is_empty() {
             if inside_module {
-                found.doubts.push(Doubt::InsideModule);
+                found.doubts.push(INSIDE_MODULE);
             } else {
                 found
                     .spans
-                    .push(Span::test(1..=text.lines().count().max(1)));
+                    .push(Span::test(TEST, 1..=text.lines().count().max(1)));
                 test_code.push(0..=masked.len());
             }
             continue;
@@ -55,17 +84,18 @@ pub fn parts(path: &str, source: &str) -> Found {
         }
         match item_end(&masked, attribute_end) {
             Item::Ends(end) => {
-                found
-                    .spans
-                    .push(Span::test(line_of(&masked, start)..=line_of(&masked, end)));
+                found.spans.push(Span::test(
+                    TEST,
+                    line_of(&masked, start)..=line_of(&masked, end),
+                ));
                 test_code.push(start..=end);
             }
             Item::Module(name) => {
                 let module = place(path, &name, inside_module, &attributes_before(text, start));
                 test_module(&mut found, module);
             }
-            Item::ModulePath => found.doubts.push(Doubt::ModulePath),
-            Item::Unbalanced => found.doubts.push(Doubt::Unbalanced),
+            Item::ModulePath => found.doubts.push(MODULE_PATH),
+            Item::Unbalanced => found.doubts.push(UNBALANCED),
             Item::Member => {}
         }
     }
@@ -112,9 +142,9 @@ fn other_modules(
 /// Where the code of the module `name`, declared in `path` after `attributes`, is.
 fn place(path: &str, name: &str, inside_module: bool, attributes: &[&str]) -> Module {
     if inside_module {
-        Module::Unplaced(Doubt::InsideModule)
+        Module::Unplaced(INSIDE_MODULE)
     } else if attributes.iter().any(|a| is_path(a)) {
-        Module::Unplaced(Doubt::ModulePath)
+        Module::Unplaced(MODULE_PATH)
     } else {
         Module::Files(module_files(path, name))
     }
@@ -245,7 +275,7 @@ fn only_a_test_build(predicate: &str) -> bool {
 /// A test-only `mod name;`: its file is test code as a whole, or it is a doubt.
 fn test_module(found: &mut Found, module: Module) {
     match module {
-        Module::Files(candidates) => found.files.push(candidates),
+        Module::Files(candidates) => found.test_files.push(candidates),
         Module::Unplaced(doubt) => found.doubts.push(doubt),
     }
 }
@@ -632,6 +662,15 @@ pub fn external(parsed: &Parsed<'_>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_std_and_proc_macro() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("a.rs", "std::collections"));
+        assert!(is_std("a.rs", "proc_macro"));
+        assert!(!is_std("a.rs", "serde::Deserialize"));
+        assert!(!is_std("a.rs", "stdx::fmt"));
+    }
+
     use super::*;
     use crate::lang::parts::Kind;
 
@@ -760,7 +799,7 @@ mod tests {
     fn what_the_finder_could_not_tell_it_says() {
         assert_eq!(
             parts("src/lib.rs", "#[cfg(test)]\nmod tests {\n    fn a() {\n}\n").doubts,
-            [Doubt::Unbalanced]
+            [UNBALANCED]
         );
         assert!(
             parts("src/lib.rs", "#[cfg(test)]\nmod tests {\n}\n")
@@ -784,7 +823,7 @@ mod tests {
             "#[cfg(test)]\nmod tests;\n\n#[cfg(test)]\npub(crate) mod helpers;\nmod real;\n",
         );
         assert_eq!(
-            found.files,
+            found.test_files,
             [
                 ["src/tests.rs", "src/tests/mod.rs"],
                 ["src/helpers.rs", "src/helpers/mod.rs"]
@@ -810,13 +849,13 @@ mod tests {
                     "src/store/db/b.rs".into(),
                     "src/store/db/b/mod.rs".into()
                 ]),
-                Module::Unplaced(Doubt::ModulePath),
-                Module::Unplaced(Doubt::InsideModule),
+                Module::Unplaced(MODULE_PATH),
+                Module::Unplaced(INSIDE_MODULE),
             ]
         );
         // `mod t;` is test code whatever its file is: it is in `files`, not here.
         assert_eq!(
-            found.files,
+            found.test_files,
             [["src/store/db/t.rs", "src/store/db/t/mod.rs"]]
         );
         assert!(found.doubts.is_empty());
@@ -829,8 +868,8 @@ mod tests {
             "src/lib.rs",
             "#![cfg(test)]\nmod a;\n#[path = \"x.rs\"]\nmod b;\nmod inline {\n    mod c;\n}\n",
         );
-        assert_eq!(found.files, [["src/a.rs", "src/a/mod.rs"]]);
-        assert_eq!(found.doubts, [Doubt::ModulePath, Doubt::InsideModule]);
+        assert_eq!(found.test_files, [["src/a.rs", "src/a/mod.rs"]]);
+        assert_eq!(found.doubts, [MODULE_PATH, INSIDE_MODULE]);
         assert!(found.modules.is_empty());
         // A declaration after a test item on its line is not in it.
         let after = parts("src/lib.rs", "#[cfg(test)] mod x {} mod same;\n");
@@ -841,11 +880,11 @@ mod tests {
                 "src/same/mod.rs".into()
             ])]
         );
-        assert!(after.files.is_empty());
+        assert!(after.test_files.is_empty());
         // An inline test module: the file of what it declares is not placed.
         let inline = parts("src/lib.rs", "#[cfg(test)]\nmod tests {\n    mod sub;\n}\n");
-        assert_eq!(inline.doubts, [Doubt::InsideModule]);
-        assert!(inline.files.is_empty() && inline.modules.is_empty());
+        assert_eq!(inline.doubts, [INSIDE_MODULE]);
+        assert!(inline.test_files.is_empty() && inline.modules.is_empty());
     }
 
     #[test]
@@ -871,7 +910,7 @@ mod tests {
 
     #[test]
     fn a_module_file_is_next_to_its_declaring_file_or_under_it() {
-        let files = |path: &str| parts(path, "#[cfg(test)]\nmod t;\n").files;
+        let files = |path: &str| parts(path, "#[cfg(test)]\nmod t;\n").test_files;
         // A `mod.rs`, `lib.rs` or `main.rs` owns its directory.
         assert_eq!(
             files("src/store/mod.rs"),
@@ -904,7 +943,7 @@ mod tests {
             "src/lib.rs",
             "#[cfg(test)]\nmod r#type;\n#[cfg(test)]\npub(in crate::a) mod scoped;\n#[cfg(test)]\npub  mod  spaced ;\n",
         );
-        let names: Vec<_> = found.files.iter().map(|f| f[0].clone()).collect();
+        let names: Vec<_> = found.test_files.iter().map(|f| f[0].clone()).collect();
         assert_eq!(names, ["src/type.rs", "src/scoped.rs", "src/spaced.rs"]);
     }
 
@@ -917,14 +956,14 @@ mod tests {
             "mod m {\n    #![cfg(test)]\n    fn a() {}\n}\n",
         );
         assert!(nested.spans.is_empty());
-        assert_eq!(nested.doubts, [Doubt::InsideModule]);
+        assert_eq!(nested.doubts, [INSIDE_MODULE]);
         let declared = parts("src/lib.rs", "mod a {\n    #[cfg(test)]\n    mod t;\n}\n");
-        assert!(declared.files.is_empty());
-        assert_eq!(declared.doubts, [Doubt::InsideModule]);
+        assert!(declared.test_files.is_empty());
+        assert_eq!(declared.doubts, [INSIDE_MODULE]);
         let before = parts("src/lib.rs", "#[path = \"x.rs\"]\n#[cfg(test)]\nmod t;\n");
-        assert!(before.files.is_empty());
-        assert_eq!(before.doubts, [Doubt::ModulePath]);
+        assert!(before.test_files.is_empty());
+        assert_eq!(before.doubts, [MODULE_PATH]);
         let after = parts("src/lib.rs", "#[cfg(test)]\n#[path = \"x.rs\"]\nmod t;\n");
-        assert_eq!(after.doubts, [Doubt::ModulePath]);
+        assert_eq!(after.doubts, [MODULE_PATH]);
     }
 }

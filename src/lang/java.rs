@@ -19,8 +19,38 @@ pub fn env(name: &str) -> bool {
     ) || starts_with_any(name, &["MAVEN_", "ORG_GRADLE_PROJECT_"])
 }
 
+/// Whether a module is Java's standard library: a package of the JDK.
+pub fn std(module: &str) -> bool {
+    jdk(module)
+}
+
+/// The packages of the JDK: `java.util`, `javax.crypto`, `org.w3c.dom`.
+pub fn jdk(module: &str) -> bool {
+    [
+        "java.",
+        "javax.",
+        "jdk.",
+        "sun.",
+        "com.sun.",
+        "org.w3c.",
+        "org.xml.sax",
+        "org.ietf.jgss",
+    ]
+    .iter()
+    .any(|prefix| module.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_the_jdk() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("A.java", "java.util.List"));
+        assert!(is_std("A.java", "org.w3c.dom.Node"));
+        assert!(!is_std("A.java", "com.google.common.Lists"));
+        assert!(!is_std("A.java", "org.apache.commons.Lang"));
+    }
+
     use super::*;
 
     #[test]

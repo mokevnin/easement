@@ -79,6 +79,38 @@ fn propose(root: &Path, proposed: &Proposed, no_graph: bool) -> anyhow::Result<A
     })
 }
 
+/// An external proposal judged by a rule that names `$std` says when `$std` cannot
+/// tell the standard library of its source's language, as `check` does, and says
+/// nothing of a language it can tell.
+#[test]
+fn an_external_proposal_says_when_std_cannot_tell_its_standard_library() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  ui: { in: src/ui }\nrules:\n  ui: { may_use_external: [$std, lodash] }\n",
+        ),
+        ("src/ui/a.ts", "export const a = 1;\n"),
+    ]);
+    let said = |source: &str, module: &str| {
+        propose(
+            &root,
+            &Proposed::One {
+                source: root.join(source),
+                target: None,
+                external: Some(module.into()),
+            },
+            true,
+        )
+        .unwrap()
+        .text
+    };
+    let gap = "`$std` cannot tell the standard library of .ts files";
+    let ts = said("src/ui/b.ts", "lodash");
+    assert!(ts.contains(gap), "{ts}");
+    let go = said("src/ui/b.go", "fmt");
+    assert!(!go.contains("`$std` cannot tell"), "{go}");
+}
+
 /// The proposal of an import of the file `to` from the file `from`, both
 /// relative to `root`.
 fn one(root: &Path, from: &str, to: &str) -> Proposed {

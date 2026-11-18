@@ -275,6 +275,43 @@ fn a_top_level_std_ban_over_a_file_of_no_component_it_cannot_judge_is_a_gap() {
     );
 }
 
+/// Only a policy that names `$std` needs to tell the standard library: without it, a
+/// file of no component that imports a package of a language `$std` cannot tell
+/// leaves no gap about it; nor does a file `target_only` keeps out of the checks.
+#[test]
+fn a_file_no_std_ban_judges_leaves_no_std_gap() {
+    let gaps = |policy: &str| {
+        let (_tmp, root) = project(&[
+            ("easement.yml", policy),
+            ("src/ui/a.ts", "export const a = 1;\n"),
+            (
+                "scripts/seed.ts",
+                "import lodash from \"lodash\";\nexport const seed = lodash;\n",
+            ),
+        ]);
+        stub_packages(&root, &["lodash"]);
+        let report = json(&check(&root));
+        report["evidence_gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|gap| gap["message"].as_str().unwrap().contains("`$std`"))
+            .count()
+    };
+    assert_eq!(
+        gaps("version: 1\ncomponents:\n  ui: { in: src/ui }\n"),
+        0,
+        "no `$std` in the policy"
+    );
+    assert_eq!(
+        gaps(
+            "version: 1\ncomponents:\n  ui: { in: src/ui }\ntarget_only: [scripts/**]\nforbid_external: [{ name: $std, allow: [ui] }]\n"
+        ),
+        0,
+        "a target_only file"
+    );
+}
+
 /// `$std` at the top level is the standard library of each importing file, and
 /// `allow` lifts it for a component as for any module.
 #[test]

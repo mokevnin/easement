@@ -25,6 +25,15 @@ pub fn env(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_standard_library_is_system() {
+        use crate::lang::registry::is_std;
+        assert!(is_std("A.cs", "System.Text.Json"));
+        assert!(is_std("A.cs", "System"));
+        assert!(!is_std("A.cs", "SystemX.Text"));
+        assert!(!is_std("A.cs", "Newtonsoft.Json"));
+    }
+
     use super::*;
 
     #[test]
