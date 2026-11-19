@@ -308,7 +308,7 @@ fn item(text: &str) -> Item<'_> {
 
 /// The dependencies of the tables, put where the features say they belong: an optional
 /// one is a dependency of what turns it on, and of its implicit feature when nothing
-/// names it with `dep:`; and the items of the features, which are edges of their own.
+/// names it with `dep:`; and the items of the features, which are dependencies of their own.
 fn with_features(declared: Vec<Entry>, items: &[(usize, String, String)]) -> Vec<Entry> {
     let named = |name: &str| {
         items
@@ -371,8 +371,8 @@ fn with_features(declared: Vec<Entry>, items: &[(usize, String, String)]) -> Vec
                 ..d.clone()
             })
         };
-        let mut edge = |name: &str, feature: Option<&str>| {
-            // A name no table declares is a mistake Cargo reports; it is no edge.
+        let mut add_dep = |name: &str, feature: Option<&str>| {
+            // A name no table declares is a mistake Cargo reports; it is no dependency.
             if let Some(base) = base(name) {
                 out.push(Entry {
                     part: from.clone(),
@@ -382,16 +382,16 @@ fn with_features(declared: Vec<Entry>, items: &[(usize, String, String)]) -> Vec
             }
         };
         match item(text) {
-            Item::Dependency(name) => edge(name, None),
+            Item::Dependency(name) => add_dep(name, None),
             Item::Reaches {
                 name,
                 feature,
                 weak,
             } => {
                 if !weak {
-                    edge(name, None);
+                    add_dep(name, None);
                 }
-                edge(name, Some(feature));
+                add_dep(name, Some(feature));
             }
             Item::Feature(name) => out.push(Entry {
                 line: *line,
@@ -756,7 +756,7 @@ mod tests {
     );
 
     /// The dependencies of a crate at the root of the project, alone in it.
-    fn edges_of(text: &str) -> Vec<Row> {
+    fn deps_of(text: &str) -> Vec<Row> {
         listed_in("Cargo.toml", text, &[])
             .declared
             .into_iter()
@@ -791,7 +791,7 @@ mod tests {
         let n = |x: &str| x.to_string();
         let own = || Source::Path(String::new());
         assert_eq!(
-            edges_of(text),
+            deps_of(text),
             [
                 // `default` is the package itself; `fake` is a feature of it.
                 (2, n("fake"), None, reaches("feature/fake"), own()),
@@ -844,7 +844,7 @@ mod tests {
     /// `default` is no part: a feature item that names it reaches the package itself.
     #[test]
     fn the_default_feature_is_the_whole_package() {
-        let rows = edges_of("[features]\ndefault = []\nfull = [\"default\"]\n");
+        let rows = deps_of("[features]\ndefault = []\nfull = [\"default\"]\n");
         assert_eq!(
             rows,
             [(
@@ -859,7 +859,7 @@ mod tests {
 
     #[test]
     fn a_literal_string_is_an_item_too() {
-        let rows = edges_of(
+        let rows = deps_of(
             "[features]\nfake = ['dep:serde']\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
         );
         assert_eq!(
@@ -886,7 +886,7 @@ mod tests {
             "[features]\n",
             "f = [\"x/g\"]\n",
         );
-        let items: Vec<_> = edges_of(text).into_iter().filter(|r| r.0 == 8).collect();
+        let items: Vec<_> = deps_of(text).into_iter().filter(|r| r.0 == 8).collect();
         let f = Some("feature/f".to_string());
         assert_eq!(
             items,
@@ -905,7 +905,7 @@ mod tests {
 
     #[test]
     fn an_item_that_names_no_dependency_declares_none() {
-        let rows = edges_of("[features]\nf = [\"typo/g\", \"dep:typo\"]\n");
+        let rows = deps_of("[features]\nf = [\"typo/g\", \"dep:typo\"]\n");
         assert!(rows.is_empty(), "{rows:?}");
     }
 
@@ -961,7 +961,7 @@ mod tests {
     }
 
     /// (line, the part it leaves, what it reaches and the part of it) for each dependency.
-    fn edge_list(files: &[(&str, &str)]) -> Vec<(usize, Option<String>, String, Option<String>)> {
+    fn dep_list(files: &[(&str, &str)]) -> Vec<(usize, Option<String>, String, Option<String>)> {
         let dir = tempfile::TempDir::new().unwrap();
         let mut names = Vec::new();
         for (path, text) in files {
@@ -995,7 +995,7 @@ mod tests {
     fn a_feature_item_reaches_the_feature_of_another_manifest_of_the_project() {
         let s = |x: &str| Some(x.to_string());
         let n = |x: &str| x.to_string();
-        let got = edge_list(&[
+        let got = dep_list(&[
             (
                 "Cargo.toml",
                 "[workspace]\n\n[workspace.dependencies]\nstorage-api = { path = \"crates/storage-api\" }\n",
@@ -1037,7 +1037,7 @@ mod tests {
     #[test]
     fn default_as_a_target_is_the_package_itself() {
         let own = "crates/telegram/Cargo.toml".to_string();
-        let got = edge_list(&[(
+        let got = dep_list(&[(
             "crates/telegram/Cargo.toml",
             "[features]\ndefault = []\nfull = [\"default\"]\n",
         )]);
