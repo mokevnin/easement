@@ -188,7 +188,12 @@ impl Diff {
                 .base_keys
                 .as_ref()
                 .is_some_and(|base| !base.contains(&violation.key()))
-            || (attribution.manifests_in_full() && reads_a_manifest(violation))
+            || (MANIFEST_KEYS
+                .iter()
+                .any(|key| attribution.judges_in_full(key))
+                && reads_a_manifest(violation))
+            || (violation.rule == RuleId::Unused
+                && attribution.judges_in_full(RuleId::Unused.as_str()))
     }
 
     /// Whether the suppression belongs to the change: a violation it excused
@@ -215,7 +220,8 @@ pub struct Attribution {
 /// A part of the project judged in full in a diff run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InFull {
-    /// The policy keys whose violations were judged in full; every rule when empty.
+    /// The policy keys or rules whose violations were judged in full; every
+    /// rule when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<String>,
     pub reason: String,
@@ -247,6 +253,16 @@ impl Attribution {
                 keys: MANIFEST_KEYS.map(str::to_string).to_vec(),
                 reason: format!(
                     "{manifest} changed, so the `manifests` and `packages` rules were judged in full: they read the manifest, not a line of it"
+                ),
+            });
+        }
+        if !head.config.entry.is_empty()
+            && let Some(manifest) = manifest
+        {
+            attribution.in_full.push(InFull {
+                keys: vec![RuleId::Unused.as_str().to_string()],
+                reason: format!(
+                    "{manifest} changed, so the `unused` rule was judged in full: it takes entries from manifests, so an edit to one can leave a file unreachable without touching it"
                 ),
             });
         }
@@ -316,12 +332,11 @@ impl Attribution {
         self.in_full.iter().any(|part| part.keys.is_empty())
     }
 
-    fn manifests_in_full(&self) -> bool {
-        self.in_full.iter().any(|part| {
-            part.keys
-                .iter()
-                .any(|k| MANIFEST_KEYS.contains(&k.as_str()))
-        })
+    /// Whether `key` was judged in full, apart from the whole project.
+    fn judges_in_full(&self, key: &str) -> bool {
+        self.in_full
+            .iter()
+            .any(|part| part.keys.iter().any(|k| k == key))
     }
 }
 

@@ -12,7 +12,8 @@ use crate::common::{
     WEB_AND_STORAGE, commit_all, fixture, git, on_feature, project, stub_packages, web_and_storage,
 };
 use crate::run::{
-    cache_in, check, check_with, config, error, json, leaves_out, pinned, text, try_check_with,
+    by_rule, cache_in, check, check_with, config, error, json, leaves_out, pinned, text,
+    try_check_with,
 };
 
 /// Sets the options of a run of `check --diff main`.
@@ -334,7 +335,7 @@ fn diff_mode_judges_the_manifests_rule_in_full_when_a_manifest_changed() {
     let (_tmp, root) = project(&[
         (
             "easement.yml",
-            "version: 1\nmanifests: true\ncomponents:\n  web: { in: src/web }\n",
+            "version: 1\nmanifests: true\ncomponents:\n  web: { in: src/web }\nentry: [src/web/a.ts]\n",
         ),
         (
             "package.json",
@@ -371,9 +372,18 @@ fn diff_mode_judges_the_manifests_rule_in_full_when_a_manifest_changed() {
         })
         .collect();
     assert_eq!(found, [("src/web/a.ts", 1, "undeclared")], "{report}");
+    let keys: Vec<&serde_json::Value> = report["diff"]["in_full"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|part| &part["keys"])
+        .collect();
     assert_eq!(
-        report["diff"]["in_full"][0]["keys"],
-        serde_json::json!(["manifests", "packages"]),
+        keys,
+        [
+            &serde_json::json!(["manifests", "packages"]),
+            &serde_json::json!(["unused"])
+        ],
         "{report}"
     );
     // The rest is still judged by the change.
@@ -384,5 +394,132 @@ fn diff_mode_judges_the_manifests_rule_in_full_when_a_manifest_changed() {
         ),
         "{}",
         text(&checked)
+    );
+}
+
+/// The `unused` files of a report, by path.
+fn unused_files(report: &serde_json::Value) -> Vec<String> {
+    by_rule(report)
+        .into_iter()
+        .filter(|(_, _, rule)| rule == "unused")
+        .map(|(file, _, _)| file)
+        .collect()
+}
+
+/// `unused` takes the files a framework a manifest lists loads as entries: a
+/// manifest that drops the framework leaves them unreachable, although none of
+/// their lines changed, so the rule is judged in full.
+#[test]
+fn diff_mode_judges_unused_in_full_when_a_manifest_drops_a_framework() {
+    let (_tmp, root) = fixture("sveltekit");
+    commit_all(&root);
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"web\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+    )
+    .unwrap();
+
+    let checked = check_with(&root, diff_main);
+    assert_eq!(checked.outcome(), Outcome::Failed);
+    let report = json(&checked);
+    let found = unused_files(&report);
+    for loaded in [
+        "src/routes/+page.ts",
+        "src/hooks.server.ts",
+        "src/params/integer.ts",
+    ] {
+        assert!(found.iter().any(|f| f == loaded), "{loaded}: {report}");
+    }
+    // Judged in full: what the whole project reports, the old `src/lib/x.ts` too.
+    assert_eq!(found, unused_files(&json(&check(&root))), "{report}");
+}
+
+/// What a package runs or exports is an entry too: a manifest that drops its
+/// `main`, `bin` and `exports` leaves their files unreachable, and `in_full` says why, with the
+/// `manifests` and `packages` rules off. Other rules stay judged by the change.
+#[test]
+fn diff_mode_judges_unused_in_full_when_a_manifest_changes_what_its_package_runs() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  web: { in: src/web }\n  storage: { in: src/storage }\nrules:\n  storage: { must_not_depend_on: [web] }\nentry: [src/main.ts]\n",
+        ),
+        (
+            "package.json",
+            "{\n  \"name\": \"m\",\n  \"main\": \"src/web/lib.ts\",\n  \"bin\": { \"m\": \"src/web/cli.ts\" },\n  \"exports\": { \"./x\": \"./src/web/x.ts\" }\n}\n",
+        ),
+        (
+            "src/main.ts",
+            "import { save } from \"./storage/db\";\nconsole.log(save);\n",
+        ),
+        ("src/web/page.ts", "export const page = 1;\n"),
+        ("src/web/cli.ts", "console.log(1);\n"),
+        ("src/web/lib.ts", "export const lib = 1;\n"),
+        ("src/web/x.ts", "export const x = 1;\n"),
+        // An old violation of another rule, on a line the change leaves alone.
+        (
+            "src/storage/db.ts",
+            "import { page } from \"../web/page\";\nexport const save = page;\n",
+        ),
+    ]);
+    commit_all(&root);
+    let old = json(&check(&root));
+    assert_eq!(by_rule(&old).len(), 1, "{old}");
+    assert_eq!(check_with(&root, diff_main).outcome(), Outcome::Passed);
+
+    fs::write(root.join("package.json"), "{\n  \"name\": \"m\"\n}\n").unwrap();
+    let checked = check_with(&root, diff_main);
+    assert_eq!(checked.outcome(), Outcome::Failed);
+    let report = json(&checked);
+    assert_eq!(
+        by_rule(&report),
+        ["src/web/cli.ts", "src/web/lib.ts", "src/web/x.ts"].map(|file| (
+            file.to_string(),
+            1,
+            "unused".to_string()
+        )),
+        "{report}"
+    );
+    assert_eq!(
+        report["diff"]["in_full"],
+        serde_json::json!([{
+            "keys": ["unused"],
+            "reason": "package.json changed, so the `unused` rule was judged in full: it takes entries from manifests, so an edit to one can leave a file unreachable without touching it",
+        }]),
+        "{report}"
+    );
+    assert!(
+        text(&checked).contains(
+            "Judged in full: package.json changed, so the `unused` rule was judged in full"
+        ),
+        "{}",
+        text(&checked)
+    );
+}
+
+/// No changed line points at a file left dead by removing its last import, and
+/// no manifest changed: `--diff` does not report it, the full check does.
+#[test]
+fn diff_mode_misses_a_file_left_dead_by_removing_its_last_import() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\nentry: [src/main.ts]\n",
+        ),
+        (
+            "src/main.ts",
+            "import { a } from \"./app/a\";\nconsole.log(a);\n",
+        ),
+        ("src/app/a.ts", "export const a = 1;\n"),
+    ]);
+    commit_all(&root);
+    fs::write(root.join("src/main.ts"), "console.log(1);\n").unwrap();
+
+    let checked = check_with(&root, diff_main);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+    assert_eq!(json(&checked)["diff"]["in_full"], serde_json::json!([]));
+    assert_eq!(
+        by_rule(&json(&check(&root))),
+        [("src/app/a.ts".to_string(), 1, "unused".to_string())]
     );
 }
