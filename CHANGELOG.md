@@ -5,7 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **report:** GitHub annotations of a narrowing or an evidence gap are titled `easement narrowed` and `easement evidence-gap` instead of `easement partial`; SARIF notifications carry a descriptor and JUnit's `<system-out>` lines open with their kind; `propose` no longer ends with `(partial)`; `graph` prints its gaps on stderr as a block instead of
+* **report:** GitHub annotations of a narrowing or an evidence gap are titled `easement narrowed` and `easement evidence-gap` instead of `easement partial`; SARIF notifications carry a descriptor and JUnit's `<system-out>` lines open with their kind; `propose` no longer ends with `(partial)`; `graph` prints its gaps on stderr as a block instead of `easement: partial: ...` lines ([#249](https://github.com/mokevnin/easement/issues/249))
 * hold what easement knows of languages in four tiers ([#233](https://github.com/mokevnin/easement/issues/233))
 * **lang:** keep each language's test parts and standard library in its entry ([#231](https://github.com/mokevnin/easement/issues/231))
 * **suppress:** write a suppression in a comment of the file's language ([#230](https://github.com/mokevnin/easement/issues/230))
