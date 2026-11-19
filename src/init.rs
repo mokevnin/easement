@@ -176,10 +176,12 @@ pub fn run(root: &Path, force: bool, cache: &mut scan::Cache) -> Result<String> 
     let config: Config = serde_norway::from_str(&draft)?;
     let scanned = scan::scan(root, &config.scan_policy(), cache)?;
     let map = ComponentMap::new(&config)?;
-    let (_, edges, _) = check::evaluate(&config, &map, &scanned.deps);
+    let (_, component_deps, _) = check::evaluate(&config, &map, &scanned.deps);
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for e in &edges {
-        deps.entry(e.from.clone()).or_default().insert(e.to.clone());
+    for dep in &component_deps {
+        deps.entry(dep.from.clone())
+            .or_default()
+            .insert(dep.to.clone());
     }
     std::fs::write(&path, render(&found, &deps))?;
     let mut out = format!(

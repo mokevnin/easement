@@ -460,7 +460,7 @@ fn a_function_of_one_name_in_two_components_is_ambiguous_but_no_gap() {
 }
 
 /// `impact` of a copy that `decide` did not pick still names the importer: the
-/// file graph keeps an edge to every candidate.
+/// file graph keeps a dependency on every candidate.
 #[test]
 fn impact_of_an_alternative_copy_names_the_importer() {
     let (_tmp, root) = project_of(&[
@@ -599,7 +599,7 @@ fn a_dependency_of_only_unowned_candidates_is_judged_by_no_rule() {
 }
 
 /// A cycle between components that only the alternative candidate closes is
-/// reported: the graph keeps an edge to every candidate of a component.
+/// reported: the graph keeps a dependency on the component of every candidate.
 #[test]
 fn a_cycle_through_an_alternative_candidate_is_reported() {
     let (_tmp, root) = project_with(
@@ -636,10 +636,10 @@ fn a_cycle_through_an_alternative_candidate_is_reported() {
     );
 }
 
-/// A candidate outside every component adds no edge to the graph of the
+/// A candidate outside every component adds no dependency to the graph of the
 /// components: no cycle comes of it.
 #[test]
-fn a_candidate_outside_the_components_adds_no_edge() {
+fn a_candidate_outside_the_components_adds_no_dependency() {
     let (_tmp, root) = project_with(
         &policy(
             &["a", "b"],

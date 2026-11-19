@@ -68,7 +68,7 @@ struct Pair<'a> {
     to_component: Option<&'a str>,
     line: usize,
     /// Whether every line of the pair is a changed one: the import is new, as
-    /// `new_dependencies` tells a new edge between components.
+    /// `new_dependencies` tells a new dependency between components.
     new: bool,
 }
 

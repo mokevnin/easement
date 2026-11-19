@@ -95,7 +95,7 @@ impl Project {
         let config = &policy.config;
         let map = ComponentMap::new(config)?;
         symbols::contradicted_grants(config, &map, &scan.all_files, &scan.symbols)?;
-        let (mut violations, edges, mut stats) = check::evaluate(config, &map, &scan.deps);
+        let (mut violations, component_deps, mut stats) = check::evaluate(config, &map, &scan.deps);
         violations.extend(symbols::symbols(config, &map, &scan.symbols));
         violations.extend(check::naming(config, &map, &scan.types)?);
         violations.extend(implementations::violations(
@@ -125,9 +125,9 @@ impl Project {
             &config_file,
         ));
         violations.extend(examples::check(policy, &map, &self.root));
-        violations.extend(chains::cycles(config, &edges));
+        violations.extend(chains::cycles(config, &component_deps));
         let mut unread_diagram = None;
-        match diagram::check(policy, &edges) {
+        match diagram::check(policy, &component_deps) {
             Ok(drawn) => violations.extend(drawn),
             Err(err) if unread_diagram_fails => return Err(err),
             Err(err) => unread_diagram = Some(format!("{err:#}")),
@@ -139,7 +139,7 @@ impl Project {
             &scan.all_files,
             scan.reach_flow(config),
         ));
-        violations.extend(check::metrics(config, &edges));
+        violations.extend(check::metrics(config, &component_deps));
         violations.extend(matching::orphans(config, &map, &scan.paths));
         violations.extend(check::forbidden_files(config, &map, &scan.all_files));
         violations.extend(check::required(
@@ -174,7 +174,7 @@ impl Project {
         Ok(Judgment {
             violations,
             suppressions: honoured,
-            edges,
+            component_deps,
             stats,
             map,
             unread_diagram,
@@ -201,7 +201,7 @@ impl Project {
         let Judgment {
             violations,
             suppressions,
-            edges,
+            component_deps,
             mut stats,
             map,
             unread_diagram,
@@ -257,7 +257,7 @@ impl Project {
             violations,
             suppressions,
             all_files: scan.all_files,
-            edges,
+            component_deps,
             deps: scan.deps,
             files: scan.paths,
             stats,
@@ -298,7 +298,7 @@ pub struct Judgment {
     /// The inline suppressions that excused violations, with them: the
     /// violations the policy produces besides `violations`.
     pub suppressions: Vec<check::HonouredSuppression>,
-    pub edges: Vec<check::Edge>,
+    pub component_deps: Vec<check::ComponentDep>,
     pub stats: check::Stats,
     pub map: ComponentMap,
     /// Why the diagram the policy names could not be read, when the judging
@@ -327,7 +327,7 @@ pub struct Analysis {
     pub accepted: Vec<components::AcceptedGap>,
     /// Every file that is not excluded, source or not.
     pub all_files: Vec<String>,
-    pub edges: Vec<check::Edge>,
+    pub component_deps: Vec<check::ComponentDep>,
     pub deps: Vec<lang::Dep>,
     pub files: Vec<String>,
     pub stats: check::Stats,

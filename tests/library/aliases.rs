@@ -361,7 +361,7 @@ fn why_shows_each_alias_behind_a_dependency_as_a_hop() {
         "{}",
         why.text()
     );
-    // A use of the alias is a use of the name it stands for: one name of the edge.
+    // A use of the alias is a use of the name it stands for: one name of the dependency.
     assert_eq!(
         data["names"],
         serde_json::json!([{

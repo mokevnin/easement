@@ -183,9 +183,9 @@ fn a_new_import_inside_one_component_is_not_compared() {
     assert_eq!(unplanned(&report), Vec::<String>::new(), "{report}");
 }
 
-/// An import is new as an edge is new in `new_dependencies`: when every line of
-/// it changed. An edited import line is all of it, so it is reported, since the
-/// imports of the merge-base are not read.
+/// An import is new as a dependency between components is new in
+/// `new_dependencies`: when every line of it changed. An edited import line is
+/// all of it, so it is reported, since the imports of the merge-base are not read.
 #[test]
 fn an_edited_import_line_is_new_as_new_dependencies_tells_it() {
     let (_tmp, root) = web_and_core();

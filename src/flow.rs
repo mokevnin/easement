@@ -4,11 +4,12 @@
 //! file reaches everything the file imports. With `reach: symbols` a chain follows
 //! the definitions a call references instead: a node is a method or function (a
 //! symbol with the lines it spans) or what a file holds outside any of them (its
-//! class bodies, constants, top-level code), and an edge is a reference at a line.
+//! class bodies, constants, top-level code), and a dependency of one node on another
+//! ([`NodeDep`]) is a reference at a line.
 //!
-//! A dependency that no reference accounts for stays an edge to everything in its
-//! target, and so does a class or constant used with no method named, so no import
-//! is dropped for want of a range. The index is read into a flow in `scip::Indexed::flow`.
+//! A dependency that no reference accounts for stays a dependency on everything in
+//! its target, and so does a class or constant used with no method named, so no
+//! import is dropped for want of a range. The index is read into a flow in `scip::Indexed::flow`.
 //!
 //! `impact --diff` reads the flow whatever `reach` says: the uses of a definition the
 //! change touched are the places worth re-checking ([`Flow::callers`]).
@@ -48,9 +49,10 @@ pub fn file_of(key: &str) -> &str {
     key.split_once(SEPARATOR).map_or(key, |(file, _)| file)
 }
 
-/// A reference at `line` of the source node's file to the target node.
+/// A dependency of one node on another: a reference at `line` of the source node's
+/// file to the target node.
 #[derive(Debug, Clone)]
-pub struct Edge {
+pub struct NodeDep {
     pub from: Node,
     pub to: Node,
     pub line: usize,
@@ -58,7 +60,7 @@ pub struct Edge {
 
 /// A reference the index records at `line` of `file` to a definition: to the method
 /// it names, or to the own code of the file that defines the class or constant it
-/// names. Unlike an [`Edge`], it is never widened to every method of a file, and a
+/// names. Unlike a [`NodeDep`], it is never widened to every method of a file, and a
 /// module named on its own (an import) is none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Use {
@@ -71,7 +73,7 @@ pub struct Use {
 pub struct Flow {
     /// The methods of each file that the index gave a range.
     pub scopes: BTreeMap<String, Vec<Scope>>,
-    pub edges: Vec<Edge>,
+    pub node_deps: Vec<NodeDep>,
     /// Every reference of the index to a definition, as [`Flow::callers`] reads them.
     pub uses: Vec<Use>,
     /// The name of each method of `scopes` as its symbol spells it, without the
