@@ -435,7 +435,7 @@ fn diff_mode_judges_unused_in_full_when_a_manifest_drops_a_framework() {
 }
 
 /// What a package runs or exports is an entry too: a manifest that drops its
-/// `bin` leaves the file unreachable, and `in_full` says why, with the
+/// `main`, `bin` and `exports` leaves their files unreachable, and `in_full` says why, with the
 /// `manifests` and `packages` rules off. Other rules stay judged by the change.
 #[test]
 fn diff_mode_judges_unused_in_full_when_a_manifest_changes_what_its_package_runs() {
@@ -446,7 +446,7 @@ fn diff_mode_judges_unused_in_full_when_a_manifest_changes_what_its_package_runs
         ),
         (
             "package.json",
-            "{\n  \"name\": \"m\",\n  \"bin\": { \"m\": \"src/web/cli.ts\" }\n}\n",
+            "{\n  \"name\": \"m\",\n  \"main\": \"src/web/lib.ts\",\n  \"bin\": { \"m\": \"src/web/cli.ts\" },\n  \"exports\": { \"./x\": \"./src/web/x.ts\" }\n}\n",
         ),
         (
             "src/main.ts",
@@ -454,6 +454,8 @@ fn diff_mode_judges_unused_in_full_when_a_manifest_changes_what_its_package_runs
         ),
         ("src/web/page.ts", "export const page = 1;\n"),
         ("src/web/cli.ts", "console.log(1);\n"),
+        ("src/web/lib.ts", "export const lib = 1;\n"),
+        ("src/web/x.ts", "export const x = 1;\n"),
         // An old violation of another rule, on a line the change leaves alone.
         (
             "src/storage/db.ts",
@@ -471,14 +473,18 @@ fn diff_mode_judges_unused_in_full_when_a_manifest_changes_what_its_package_runs
     let report = json(&checked);
     assert_eq!(
         by_rule(&report),
-        [("src/web/cli.ts".to_string(), 1, "unused".to_string())],
+        ["src/web/cli.ts", "src/web/lib.ts", "src/web/x.ts"].map(|file| (
+            file.to_string(),
+            1,
+            "unused".to_string()
+        )),
         "{report}"
     );
     assert_eq!(
         report["diff"]["in_full"],
         serde_json::json!([{
             "keys": ["unused"],
-            "reason": "package.json changed, so the `unused` rule was judged in full: it takes entries from the manifest, what its package runs or exports and the files a framework it lists loads",
+            "reason": "package.json changed, so the `unused` rule was judged in full: it takes entries from manifests, so an edit to one can leave a file unreachable without touching it",
         }]),
         "{report}"
     );

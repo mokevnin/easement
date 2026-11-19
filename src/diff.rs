@@ -188,8 +188,12 @@ impl Diff {
                 .base_keys
                 .as_ref()
                 .is_some_and(|base| !base.contains(&violation.key()))
-            || (attribution.manifests_in_full() && reads_a_manifest(violation))
-            || (violation.rule == RuleId::Unused && attribution.unused_in_full())
+            || (MANIFEST_KEYS
+                .iter()
+                .any(|key| attribution.judges_in_full(key))
+                && reads_a_manifest(violation))
+            || (violation.rule == RuleId::Unused
+                && attribution.judges_in_full(RuleId::Unused.as_str()))
     }
 
     /// Whether the suppression belongs to the change: a violation it excused
@@ -224,7 +228,6 @@ pub struct InFull {
 }
 
 const MANIFEST_KEYS: [&str; 2] = ["manifests", "packages"];
-const UNUSED_KEY: &str = "unused";
 
 impl Attribution {
     /// What `head`, the policy of the working tree, is held responsible for
@@ -257,9 +260,9 @@ impl Attribution {
             && let Some(manifest) = manifest
         {
             attribution.in_full.push(InFull {
-                keys: vec![UNUSED_KEY.to_string()],
+                keys: vec![RuleId::Unused.as_str().to_string()],
                 reason: format!(
-                    "{manifest} changed, so the `unused` rule was judged in full: it takes entries from the manifest, what its package runs or exports and the files a framework it lists loads"
+                    "{manifest} changed, so the `unused` rule was judged in full: it takes entries from manifests, so an edit to one can leave a file unreachable without touching it"
                 ),
             });
         }
@@ -329,18 +332,11 @@ impl Attribution {
         self.in_full.iter().any(|part| part.keys.is_empty())
     }
 
-    fn manifests_in_full(&self) -> bool {
-        self.in_full.iter().any(|part| {
-            part.keys
-                .iter()
-                .any(|k| MANIFEST_KEYS.contains(&k.as_str()))
-        })
-    }
-
-    fn unused_in_full(&self) -> bool {
+    /// Whether `key` was judged in full, apart from the whole project.
+    fn judges_in_full(&self, key: &str) -> bool {
         self.in_full
             .iter()
-            .any(|part| part.keys.iter().any(|k| k == UNUSED_KEY))
+            .any(|part| part.keys.iter().any(|k| k == key))
     }
 }
 
