@@ -50,7 +50,7 @@ pub(super) fn config_schema_extras(schema: &mut Schema) {
     schema.insert(
         "patternProperties".into(),
         serde_json::json!({ "^x-": {
-            "description": "Free keys that only hold YAML anchors: `x-ban: &ban {...}`, then `<<: *ban` in a rule."
+            "description": "Free keys that only hold YAML anchors: `x-forbidden: &forbidden {...}`, then `<<: *forbidden` in a rule."
         }}),
     );
     if let Some(properties) = schema

@@ -198,7 +198,7 @@ rules:
     because: a use case depends on the repository contract, never on its implementation
 ```
 
-Or, where use cases may use `data` for other things, ban the implementation by name: `forbid_symbol: [{ name: "lib/data/sql_order_repository.SqlOrderRepository" }]`, in the Dart spelling PR #71's README gives (an internal file without `.dart`). For Dart both depend on PR #71 landing with `symbols: true`, and neither was run on a Dart index here (**unverified**).
+Or, where use cases may use `data` for other things, forbid the implementation by name: `forbid_symbol: [{ name: "lib/data/sql_order_repository.SqlOrderRepository" }]`, in the Dart spelling PR #71's README gives (an internal file without `.dart`). For Dart both depend on PR #71 landing with `symbols: true`, and neither was run on a Dart index here (**unverified**).
 
 ### `dart-contract-api-types`: already expressible at component level; position-aware form is a spike
 
@@ -231,7 +231,7 @@ The finer rule, "a type may be used in the body but not in the public signature"
 
 ### `dart-domain-type-boundaries`: expressible at component level; position-aware form is the same spike
 
-"The domain does not use Flutter" is `forbid_external` (or a `may_use_external` allow-list) on the domain component, and "the domain does not name `Widget`" is `forbid_symbol`. How PR #71 spells a Pub package in `forbid_external` is not shown in its README (**unverified**); its symbol form is `package:dio/dio.dart.Dio`. This is the same reach as saropa_lints' `avoid_ui_in_domain_layer`, which selects domain files by path and matches a fixed list of type names. "Exposes a `Widget` in a forbidden position, but may use one internally" is the §10 spike above. For a domain layer the whole-component ban is the usual policy; judgment call: the position-aware form is worth little here.
+"The domain does not use Flutter" is `forbid_external` (or a `may_use_external` allow-list) on the domain component, and "the domain does not name `Widget`" is `forbid_symbol`. How PR #71 spells a Pub package in `forbid_external` is not shown in its README (**unverified**); its symbol form is `package:dio/dio.dart.Dio`. This is the same reach as saropa_lints' `avoid_ui_in_domain_layer`, which selects domain files by path and matches a fixed list of type names. "Exposes a `Widget` in a forbidden position, but may use one internally" is the §10 spike above. For a domain layer, forbidding `Widget` to the whole component is the usual policy; judgment call: the position-aware form is worth little here.
 
 ### `dart-repository-implementation`: candidate general capability, without generic arguments
 

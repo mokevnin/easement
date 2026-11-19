@@ -233,7 +233,7 @@
   "additionalProperties": false,
   "patternProperties": {
     "^x-": {
-      "description": "Free keys that only hold YAML anchors: `x-ban: &ban {...}`, then `<<: *ban` in a rule."
+      "description": "Free keys that only hold YAML anchors: `x-forbidden: &forbidden {...}`, then `<<: *forbidden` in a rule."
     }
   },
   "definitions": {

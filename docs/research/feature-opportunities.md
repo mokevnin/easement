@@ -36,7 +36,7 @@ Assessed on 2026-11-04 against the local README and selected implementation file
 
 **Primary precedent:** Sonargraph-Build compares reports with a baseline report. That establishes the value of result-state differences; the narrower proposal above intentionally isolates policy changes on a fixed graph. [Reporting Changes](https://eclipse.hello2morrow.com/doc/build/content/reporting_changes.html).
 
-**Acceptance example:** a PR changes only YAML to forbid `web -> storage`; unchanged offending imports appear as newly forbidden. Removing that ban reports a permission expansion even if storage currently has no web caller. No baseline regeneration is needed to explain the change.
+**Acceptance example:** a PR changes only YAML to forbid `web -> storage`; unchanged offending imports appear as newly forbidden. Removing that prohibition reports a permission expansion even if storage currently has no web caller. No baseline regeneration is needed to explain the change.
 
 ## 3. Give different consumers different APIs of one component
 
