@@ -11,7 +11,7 @@ The README documents these distinct contracts; collapsing them into one feature 
 | Contract | Easement semantics |
 | --- | --- |
 | Instances and named slices | `isolated` separates instances of a glob. Matching `<feature>` placeholders on both ends require equal captures; plain `*` deliberately permits any slice. |
-| Public interface | `public` restricts target paths; `public_symbols` restricts resolved names. Symbol bans follow resolved definitions, aliases and typed receiver uses. Symbol rules cover Go, TS, Python, Rust and Ruby, with documented language limits. |
+| Public interface | `public` restricts target paths; `public_symbols` restricts resolved names. Forbidden names follow resolved definitions, aliases and typed receiver uses. Symbol rules cover Go, TS, Python, Rust and Ruby, with documented language limits. |
 | Directed policy | Default deny between components, outgoing allow/deny, `allow_importers` on a target, ordered/sibling/closed layers. Explicit deny wins. |
 | Graph policy | Component cycles, transitive `must_not_reach`, and entry-reachability `unused`. `strict` means component ownership, not graph connectivity. |
 | Structure | Per-directory required internal/external import, file glob and comment directive; forbidden files; `defines` claims matching type names for one or more components. |
@@ -35,7 +35,7 @@ These are native rules, not custom JavaScript predicates. [Rule reference](https
 | Contract | Documented equivalent and limit |
 | --- | --- |
 | Allow/deny, incoming, closed layers | **E:** `allowed`, `forbidden`, `from` and `to` selectors express outgoing restrictions, target-side importer restrictions and allowed adjacent layer pairs. No dedicated ordered/closed-layer syntax was verified. Explicit forbidden rules remain independent. |
-| Public paths / symbols | **E** for path boundaries via source/target selectors. **NV** for resolved symbol-use bans or symbol allowlists. The rule schema describes modules/paths/dependency attributes, not a symbol identity model. |
+| Public paths / symbols | **E** for path boundaries via source/target selectors. **NV** for forbidding uses of resolved names or symbol allowlists. The rule schema describes modules/paths/dependency attributes, not a symbol identity model. |
 | Required imports | **N:** `required` uses `module` and `to`; checks each selected module, with optional transitive reachability. This is not easement's per-directory existential requirement. |
 | File/directive/naming ownership | **NV** for arbitrary required files/comment patterns and type-definition ownership. Path matching alone does not inspect definitions or prove a sibling file exists. |
 
@@ -68,7 +68,7 @@ See [selectors and captures](https://www.jsboundaries.dev/docs/selectors/), [pol
 
 | Contract | Documented equivalent and limit |
 | --- | --- |
-| Symbol/import names | **N:** `dependency.specifiers` matches imported/exported names. **Not equivalent** to definition-resolved `public_symbols` or typed receiver-use bans: metadata is derived from import/export syntax. Namespace-member and downstream typed uses were not established. |
+| Symbol/import names | **N:** `dependency.specifiers` matches imported/exported names. **Not equivalent** to definition-resolved `public_symbols` or forbidding uses through typed receivers: metadata is derived from import/export syntax. Namespace-member and downstream typed uses were not established. |
 | External imports | **N:** policies can target module origin/source, including external/core modules; enable the documented broader origin checks. |
 | Unknown / ignored files | **N:** no-unknown-files, no-unknown-dependencies and no-ignored-dependencies establish architectural coverage of the linted files. They do not establish coverage of files ESLint never linted. |
 
@@ -83,7 +83,7 @@ See [dependency selector](https://www.jsboundaries.dev/docs/selectors/dependency
 | Feature slices | **N:** `<domain>/<type>` path placeholders populate tags. Shipped `sameTag` with wildcard tag rules enforces same-domain dependencies; a custom predicate is optional, not required. |
 | Directed boundaries / layers | **N/E:** tag allowlists express outgoing allowed edges, inverse importer constraints, adjacent-only layers and siblings. Explicit deny precedence and a dedicated closed-layer construct were **NV**. |
 | Public API | **N:** barrel modules expose exported files; barrel-less modules hide an `internal` folder (configurable). The docs permit direct imports of an exported file: it is inaccurate to describe Sheriff as requiring every external import to go through `index.ts`. |
-| Symbol identity policy | **NV:** arbitrary definition-resolved symbol allowlists and typed receiver-use bans. Barrel export visibility is a different contract. |
+| Symbol identity policy | **NV:** arbitrary definition-resolved symbol allowlists and forbidding uses through typed receivers. Barrel export visibility is a different contract. |
 
 See [tag placeholders and sameTag](https://sheriff.softarc.io/docs/dependency-rules), [module visibility](https://sheriff.softarc.io/docs/module_boundaries), [configuration](https://sheriff.softarc.io/docs/configuration).
 
@@ -109,4 +109,4 @@ Required imports/files/comment directives, Mermaid input, manifest declaration e
 
 ## Consequences for positioning
 
-Inference: defend the **shared model across languages, fine-grained semantic policies where supported, maintenance workflow and explicit trust contract**. Do not claim that slices, public interfaces, closed dependency sets, transitive bans, unused-code detection, baselines, stale checking, JSON or change-impact analysis are individually unique. In particular, dependency-cruiser's configurable ratchet substantially overlaps easement's baseline; the defensible distinction is defaults and exact behavior. The strongest unverified gaps in this comparator set are comment/file requirements, semantic name ownership, manifests-as-policy edges, input Mermaid policy and conservative automatic allowance pruning. A documentation survey cannot prove those gaps across all implementations or extensions.
+Inference: defend the **shared model across languages, fine-grained semantic policies where supported, maintenance workflow and explicit trust contract**. Do not claim that slices, public interfaces, closed dependency sets, transitive prohibitions, unused-code detection, baselines, stale checking, JSON or change-impact analysis are individually unique. In particular, dependency-cruiser's configurable ratchet substantially overlaps easement's baseline; the defensible distinction is defaults and exact behavior. The strongest unverified gaps in this comparator set are comment/file requirements, semantic name ownership, manifests-as-policy edges, input Mermaid policy and conservative automatic allowance pruning. A documentation survey cannot prove those gaps across all implementations or extensions.

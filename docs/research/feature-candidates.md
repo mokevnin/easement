@@ -133,7 +133,7 @@ The first five can advance without inventing new language semantics. The baselin
 
 ## 10. Public API type boundaries
 
-**User problem:** a service may use an ORM entity internally but should return a domain DTO. A whole-component dependency ban cannot allow internal use while rejecting an exposed return or parameter type.
+**User problem:** a service may use an ORM entity internally but should return a domain DTO. A prohibition on the whole component cannot allow internal use while rejecting an exposed return or parameter type.
 
 **First step:** validate a shared model of signature relationships and visibility across real indexer outputs. Include aliases, generic arguments, inferred returns, re-exports and inherited signatures; unknown facts must remain unknown. SCIP has optional signature/relationship data, but it does not guarantee universally structured public API edges. [SCIP protocol](https://github.com/sourcegraph/scip/blob/main/scip.proto).
 
