@@ -452,7 +452,7 @@ pub fn symbols_unverified(
 /// name sits deeper under their qualifier (`I18n.locale`, defined as
 /// `I18n::Base.locale`): misspelled, they can never fire, so they fail as
 /// `unmatched` at their line, as an `in` pattern that matches no file does. A name the
-/// index has never seen is left alone: banning what the code does not use yet is
+/// index has never seen is left alone: forbidding what the code does not use yet is
 /// what the rule is for. Only a whole index can tell; `complete` says it is one.
 pub fn unmatched_symbols(
     policy: &Policy,
@@ -547,7 +547,7 @@ pub fn may_name_the_same(a: &str, b: &str) -> bool {
 /// Whether `pattern` (`path.Name`, its qualifier the module path or its end:
 /// `tags.DeleteIn`, `client::Client.query`) names the symbol `name` used through
 /// the import `specifier`. The end is cut at the separators of every language, as
-/// [`never_firing`] has no file to tell one by: both must agree, or a ban could
+/// [`never_firing`] has no file to tell one by: both must agree, or an item could
 /// match there and never fire here.
 fn names_symbol(pattern: &str, specifier: &str, name: &str) -> bool {
     let Some((qualifier, wanted)) = pattern.rsplit_once('.') else {
@@ -702,7 +702,7 @@ forbid_symbol: [{ name: d.T, allow_in: [web/b, web/a] }]
         for pattern in [
             // Matches exactly.
             "I18n::Base.locale",
-            // Banned before anyone uses it, with another package of the same name around.
+            // Forbidden before anyone uses it, with another package of the same name around.
             "fmt.Println",
             // Not a nested namespace of the qualifier.
             "Time.locale",

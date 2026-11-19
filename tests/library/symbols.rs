@@ -28,7 +28,7 @@ fn symbol_gaps(report: &serde_json::Value) -> Vec<&serde_json::Value> {
 }
 
 #[test]
-fn a_banned_java_member_is_an_evidence_gap_not_a_violation() {
+fn a_forbidden_java_member_is_an_evidence_gap_not_a_violation() {
     if cannot_index_here(&["java"]) {
         return;
     }
@@ -219,13 +219,13 @@ fn explain_lists_the_own_forbidden_names_and_the_public_symbols_open_to_a_file()
 }
 
 /// A member of a type (a method here) is named after the type it is used through,
-/// in every language whose uses of names easement reads: the ban fires on that
+/// in every language whose uses of names easement reads: the item fires on that
 /// member and on no other of the type.
 #[test]
 fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
-    let policy = |db: &str, web: &str, banned: &str| {
+    let policy = |db: &str, web: &str, forbidden: &str| {
         format!(
-            "version: 1\ncomponents:\n  db: {{ in: {db} }}\n  web: {{ in: {web} }}\nrules:\n  web: {{ may_depend_on: [db], forbid_symbol: [{banned}] }}\n"
+            "version: 1\ncomponents:\n  db: {{ in: {db} }}\n  web: {{ in: {web} }}\nrules:\n  web: {{ may_depend_on: [db], forbid_symbol: [{forbidden}] }}\n"
         )
     };
     let go = project(&[
@@ -276,7 +276,7 @@ fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
             &policy("app/db", "app/web", "app.db.client.Client.query"),
         ),
     ]);
-    for ((_tmp, root), language, (file, line, banned)) in [
+    for ((_tmp, root), language, (file, line, forbidden)) in [
         (go, "go", ("internal/web/web.go", 7, "db.Client.Query")),
         (
             ts,
@@ -309,7 +309,11 @@ fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
             .collect();
         assert_eq!(
             found,
-            [(file.to_string(), line, format!("web must not use {banned}"))],
+            [(
+                file.to_string(),
+                line,
+                format!("web must not use {forbidden}")
+            )],
             "{report}"
         );
     }
@@ -321,9 +325,9 @@ fn forbid_symbol_names_a_member_of_a_type_in_each_language() {
 /// `app.db.client.Client.query` does (ADR 0009).
 #[test]
 fn forbid_symbol_names_a_module_by_the_end_of_its_path_in_each_language() {
-    let policy = |db: &str, web: &str, banned: &str| {
+    let policy = |db: &str, web: &str, forbidden: &str| {
         format!(
-            "version: 1\ncomponents:\n  db: {{ in: {db} }}\n  web: {{ in: {web} }}\nrules:\n  web: {{ may_depend_on: [db], forbid_symbol: [\"{banned}\"] }}\n"
+            "version: 1\ncomponents:\n  db: {{ in: {db} }}\n  web: {{ in: {web} }}\nrules:\n  web: {{ may_depend_on: [db], forbid_symbol: [\"{forbidden}\"] }}\n"
         )
     };
     let go = project(&[
@@ -378,7 +382,7 @@ fn forbid_symbol_names_a_module_by_the_end_of_its_path_in_each_language() {
             &policy("src/db", "src/web", "client::Client.query"),
         ),
     ]);
-    for ((_tmp, root), language, (file, line, banned)) in [
+    for ((_tmp, root), language, (file, line, forbidden)) in [
         (
             go,
             "go",
@@ -406,7 +410,11 @@ fn forbid_symbol_names_a_module_by_the_end_of_its_path_in_each_language() {
             .collect();
         assert_eq!(
             found,
-            [(file.to_string(), line, format!("web must not use {banned}"))],
+            [(
+                file.to_string(),
+                line,
+                format!("web must not use {forbidden}")
+            )],
             "{language}: {report}"
         );
         assert_eq!(checked.outcome(), Outcome::Failed, "{language}: {report}");
@@ -414,8 +422,8 @@ fn forbid_symbol_names_a_module_by_the_end_of_its_path_in_each_language() {
 }
 
 /// A TypeScript project whose `app` uses `Foo`, declared in `src/types/types.d.ts`,
-/// and whose policy bans `banned` to `app`.
-fn declared_type_project(banned: &str) -> (TempDir, PathBuf) {
+/// and whose policy forbids `forbidden` to `app`.
+fn declared_type_project(forbidden: &str) -> (TempDir, PathBuf) {
     project(&[
         ("package.json", "{\"name\":\"app\",\"version\":\"1.0.0\"}\n"),
         ("tsconfig.json", "{\"compilerOptions\":{\"strict\":true}}\n"),
@@ -430,7 +438,7 @@ fn declared_type_project(banned: &str) -> (TempDir, PathBuf) {
         (
             "easement.yml",
             &format!(
-                "version: 1\ncomponents:\n  types: {{ in: src/types }}\n  app: {{ in: src/app }}\nrules:\n  app:\n    may_depend_on: [types]\n    forbid_symbol: [{banned}]\n"
+                "version: 1\ncomponents:\n  types: {{ in: src/types }}\n  app: {{ in: src/app }}\nrules:\n  app:\n    may_depend_on: [types]\n    forbid_symbol: [{forbidden}]\n"
             ),
         ),
     ])
@@ -474,7 +482,7 @@ fn a_top_level_forbid_symbol_covers_every_file_unowned_included() {
     let checked = check(&root);
     assert_eq!(checked.outcome(), Outcome::Failed);
     let report = text(&checked);
-    // A component gets the global ban and its own.
+    // A component gets the top-level item and its own.
     assert!(
         report.contains("internal/handlers/books.go:5: handler must not use db.Client [symbol]"),
         "{report}"
@@ -505,16 +513,16 @@ fn a_top_level_forbidden_name_may_be_used_only_by_the_components_it_allows() {
     let checked = check_in(&root, own.path(), CacheUse::Off).unwrap();
     assert_eq!(checked.outcome(), Outcome::Failed);
     let report = text(&checked);
-    let banned = "example.com/app/internal/domain/tags.DeleteIn";
+    let forbidden = "example.com/app/internal/domain/tags.DeleteIn";
     for said in [
         // Another component.
-        format!("internal/web/handler.go:6: web must not use {banned}"),
+        format!("internal/web/handler.go:6: web must not use {forbidden}"),
         // A file of no component.
-        format!("internal/lib/lib.go:6: unowned files must not use {banned}"),
+        format!("internal/lib/lib.go:6: unowned files must not use {forbidden}"),
         // The component that defines the name: a sibling package, and another file
         // of the defining package.
-        format!("internal/domain/contacts/contacts.go:6: domain must not use {banned}"),
-        format!("internal/domain/tags/sweep.go:4: domain must not use {banned}"),
+        format!("internal/domain/contacts/contacts.go:6: domain must not use {forbidden}"),
+        format!("internal/domain/tags/sweep.go:4: domain must not use {forbidden}"),
     ] {
         assert!(report.contains(&said), "{said}: {report}");
     }
@@ -531,7 +539,7 @@ fn a_top_level_forbidden_name_may_be_used_only_by_the_components_it_allows() {
 fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
     let (_tmp, root) = fixture("symbols_allow");
     let explained = |path: &str| commands::explain(&config(&root), &root.join(path)).unwrap();
-    let banned = "example.com/app/internal/domain/tags.DeleteIn";
+    let forbidden = "example.com/app/internal/domain/tags.DeleteIn";
     let because =
         "deleting a Tag is the use case internal/usecase/tagdeletion, which checks its use first";
     // The component `allow` lets in.
@@ -541,7 +549,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
         serde_json::json!({
             "forbidden": [],
             "allowed": [{
-                "name": banned,
+                "name": forbidden,
                 "allow": "usecase",
                 "because": because,
                 "provenance": { "field": "forbid_symbol[0].allow[0]", "input": "easement.yml" },
@@ -551,7 +559,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
     let said = usecase.text().unwrap();
     assert!(
         said.contains(&format!(
-            "  may use, although forbid_symbol forbids it: {banned} (allow `usecase`: {because})\n"
+            "  may use, although forbid_symbol forbids it: {forbidden} (allow `usecase`: {because})\n"
         )),
         "{said}"
     );
@@ -562,7 +570,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
             serde_json::to_value(&other).unwrap()["symbols"],
             serde_json::json!({
                 "forbidden": [{
-                    "name": banned,
+                    "name": forbidden,
                     "only": ["usecase"],
                     "because": because,
                     "provenance": { "field": "forbid_symbol[0]", "input": "easement.yml" },
@@ -574,7 +582,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
         let said = other.text().unwrap();
         assert!(
             said.contains(&format!(
-                "  may not use: {banned} (only usecase may: {because})\n"
+                "  may not use: {forbidden} (only usecase may: {because})\n"
             )),
             "{path}: {said}"
         );
@@ -583,7 +591,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
     let unowned = explained("internal/lib/lib.go");
     assert_eq!(
         serde_json::to_value(&unowned).unwrap()["symbols"]["forbidden"][0]["name"],
-        banned
+        forbidden
     );
     let lib = unowned.text().unwrap();
     assert!(
@@ -591,7 +599,7 @@ fn explain_lists_a_name_a_top_level_allow_lets_in_and_forbids_it_elsewhere() {
         "{lib}"
     );
     assert!(
-        lib.contains(&format!("  may not use: {banned} (only usecase may")),
+        lib.contains(&format!("  may not use: {forbidden} (only usecase may")),
         "{lib}"
     );
     pinned(|| {
@@ -680,9 +688,9 @@ fn explain_names_the_forbidden_names_a_path_is_allowed() {
         "may_depend_on: [store]\n    forbid_symbol: [store.Client]\n    because: modules get a scoped client",
     );
     fs::write(config(&root), policy).unwrap();
-    let banned = explained("internal/modules/mailing/send.go");
+    let forbidden = explained("internal/modules/mailing/send.go");
     assert_eq!(
-        serde_json::to_value(&banned).unwrap()["symbols"],
+        serde_json::to_value(&forbidden).unwrap()["symbols"],
         serde_json::json!({
             "forbidden": [{
                 "name": "store.Client",
@@ -885,10 +893,10 @@ fn a_forbid_symbol_name_under_a_deeper_php_namespace_fails_as_unmatched() {
     );
 }
 
-/// A ban that a deeper namespace shows to be misspelled can never fire: like an
+/// A `forbid_symbol` item that a deeper namespace shows to be misspelled can never fire: like an
 /// `in` pattern that matches no file, it fails as `unmatched` at its line, so a
 /// boundary cannot vanish while the check stays green (#56). A name the index has
-/// never seen stays silent: banning what the code does not use yet is the point.
+/// never seen stays silent: forbidding what the code does not use yet is the point.
 #[test]
 fn a_forbid_symbol_name_that_only_a_deeper_namespace_defines_fails_as_unmatched() {
     if cannot_index_here(&["ruby"]) {
@@ -898,7 +906,7 @@ fn a_forbid_symbol_name_that_only_a_deeper_namespace_defines_fails_as_unmatched(
     let config = root.join("easement.yml");
     let policy = fs::read_to_string(&config).unwrap();
     // `connect` is a method of `Shop::Db::Client`, not of `Shop::Db`; `deploy` is
-    // defined nowhere, which is what a ban on what the code does not use yet looks like.
+    // defined nowhere, which is what forbidding what the code does not use yet looks like.
     let policy = policy.replace(
         "      - { name: \"Shop::Db::Client.connect\"",
         "      - { name: \"Shop::Db.connect\" }\n      - { name: \"Shop::Db.deploy\" }\n      - { name: \"Shop::Db::Client.connect\"",

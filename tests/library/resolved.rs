@@ -226,10 +226,10 @@ fn each_item_names_the_input_that_writes_it() {
     );
 }
 
-/// A top-level ban keeps the components and the paths that may use the name
+/// A top-level `forbid_symbol` item keeps the components and the paths that may use the name
 /// apart, the components expanded from the glob that names them.
 #[test]
-fn a_top_level_ban_lists_who_may_use_the_name() {
+fn a_top_level_item_lists_who_may_use_the_name() {
     let (_tmp, root) = services();
     let policy = policy_json(&root);
     assert_eq!(

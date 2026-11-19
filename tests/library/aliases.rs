@@ -294,16 +294,16 @@ fn an_alias_changed_alone_is_judged_in_a_diff_run() {
     );
 }
 
-/// A ban on `blob.Block` fires on a use of the alias, and one on the alias still does.
+/// Forbidding `blob.Block` fires on a use of the alias, and forbidding the alias still does.
 #[test]
 fn forbid_symbol_sees_a_use_of_an_alias_as_a_use_of_what_it_stands_for() {
     let gw = go_use("Block");
     let (_tmp, root) = go(GO_CHUNK, &[("internal/gw/gw.go", gw.as_str())]);
-    for banned in ["blob.Block", "chunk.Block"] {
+    for forbidden in ["blob.Block", "chunk.Block"] {
         fs::write(
             root.join("easement.yml"),
             format!(
-                "version: 1\ncomponents:\n  blob: {{ in: internal/blob }}\n  chunk: {{ in: internal/chunk }}\n  gw: {{ in: internal/gw }}\nrules:\n  gw: {{ may_depend_on: [chunk, blob], forbid_symbol: [{banned}] }}\n  chunk: {{ may_depend_on: [blob] }}\n"
+                "version: 1\ncomponents:\n  blob: {{ in: internal/blob }}\n  chunk: {{ in: internal/chunk }}\n  gw: {{ in: internal/gw }}\nrules:\n  gw: {{ may_depend_on: [chunk, blob], forbid_symbol: [{forbidden}] }}\n  chunk: {{ may_depend_on: [blob] }}\n"
             ),
         )
         .unwrap();
@@ -315,7 +315,7 @@ fn forbid_symbol_sees_a_use_of_an_alias_as_a_use_of_what_it_stands_for() {
             .filter(|v| v["rule"] == "symbol")
             .map(|v| (v["file"].as_str().unwrap(), v["line"].as_u64().unwrap()))
             .collect();
-        assert_eq!(fired, [("internal/gw/gw.go", 5)], "{banned}: {report}");
+        assert_eq!(fired, [("internal/gw/gw.go", 5)], "{forbidden}: {report}");
     }
 }
 

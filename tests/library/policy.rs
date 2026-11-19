@@ -381,14 +381,14 @@ fn a_directive_in_a_string_or_a_doc_example_is_not_a_suppression() {
     assert!(!said.contains("suppression"), "{said}");
 }
 
-/// A key next to `<<` replaces the merged list: one that drops a shared ban
+/// A key next to `<<` replaces the merged list: one that drops a shared item
 /// stops the command before it judges anything, as a duplicate key does.
 #[test]
-fn a_rule_that_drops_a_shared_ban_next_to_a_merge_stops_the_check() {
+fn a_rule_that_drops_a_shared_item_next_to_a_merge_stops_the_check() {
     let (_tmp, root) = project(&[
         (
             "easement.yml",
-            "version: 1\ncomponents:\n  web: { in: src/web }\nx-bans: &bans\n  forbid_external: [moment]\nrules:\n  web: { <<: *bans, forbid_external: [left-pad] }\n",
+            "version: 1\ncomponents:\n  web: { in: src/web }\nx-forbidden: &forbidden\n  forbid_external: [moment]\nrules:\n  web: { <<: *forbidden, forbid_external: [left-pad] }\n",
         ),
         ("src/web/page.ts", "export const page = 1;\n"),
     ]);
