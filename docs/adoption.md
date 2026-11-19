@@ -134,7 +134,7 @@ A change to the policy is part of the change. `--diff` loads the policy at the m
 Some changes cannot be traced to lines, so the run judges more and says why, in the header and in `diff.in_full`:
 
 - A change to what is scanned (`exclude`, `target_only`, `indexers`, `reach`, `packages`, `tests`, `forbid_symbol`, `public_symbols`, setting or unsetting `allow_implementers`), a policy input outside the repository (its past is unknown) or a policy at the merge-base that cannot be read: the whole project is judged, so old violations the baseline does not cover fail too.
-- A changed `package.json`, `go.mod` or `Cargo.toml`: the `manifests` and `packages` rules are judged in full, since they read the manifest, not a line of it.
+- A changed manifest (`package.json`, `go.mod`, `Cargo.toml`, …): the `manifests` and `packages` rules are judged in full, since they read the manifest, not a line of it, and so is `unused` when `entry` is set, since it takes entries from the manifest: what a package runs or exports, and the files a framework it lists loads.
 
 Violations caused only by deleting code are not traced: an import removed so that a requirement fails, or a file deleted so that another becomes `unused`. The full `easement check` finds them. The baseline still applies, and stale entries are still reported.
 
