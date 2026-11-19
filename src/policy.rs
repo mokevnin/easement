@@ -1458,7 +1458,7 @@ rules:
         );
         commit(repo, "drop the arrow");
 
-        let edges = [crate::check::Edge {
+        let component_deps = [crate::check::ComponentDep {
             from: "web".to_string(),
             to: "db".to_string(),
             file: "web/a.ts".to_string(),
@@ -1466,9 +1466,13 @@ rules:
         }];
         let config = repo.join("easement.yml");
         let old = Policy::load(&config, Some("HEAD~1")).unwrap();
-        assert!(crate::diagram::check(&old, &edges).unwrap().is_empty());
+        assert!(
+            crate::diagram::check(&old, &component_deps)
+                .unwrap()
+                .is_empty()
+        );
         let now = Policy::load(&config, None).unwrap();
-        let violations = crate::diagram::check(&now, &edges).unwrap();
+        let violations = crate::diagram::check(&now, &component_deps).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(
             violations[0]

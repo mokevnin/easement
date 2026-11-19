@@ -126,7 +126,7 @@ fn a_new_file_on_a_baselined_cycle_or_limit_is_not_new_debt() {
         "{}",
         recorded.text()
     );
-    // A file that sorts first now carries the same edge.
+    // A file that sorts first now carries the same dependency between components.
     fs::write(root.join("src/a/A.kt"), "package a\nimport b.N\nclass A\n").unwrap();
     let checked = check(&root);
     assert_eq!(checked.outcome(), Outcome::Passed);

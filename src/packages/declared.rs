@@ -606,7 +606,7 @@ pub(crate) mod tests {
     };
 
     /// (file, line, what it reaches and the part of it) for each dependency.
-    fn fake_edges(found: &Declarations) -> Vec<(String, usize, String, Option<String>)> {
+    fn fake_deps(found: &Declarations) -> Vec<(String, usize, String, Option<String>)> {
         found
             .deps
             .iter()
@@ -647,7 +647,7 @@ pub(crate) mod tests {
         let found = declared_in(&[&DEPS_TXT], &files, &read, |file| file != "c/deps.txt");
         let s = |x: &str| x.to_string();
         assert_eq!(
-            fake_edges(&found),
+            fake_deps(&found),
             [
                 (s("a/deps.txt"), 2, s("b/deps.txt"), None),
                 (s("a/deps.txt"), 3, s("b/deps.txt"), Some(s("fast"))),

@@ -8,7 +8,7 @@ use pathfinding::NodeRefs;
 use pathfinding::directed::bfs::{bfs, bfs_loop};
 use pathfinding::directed::strongly_connected_components::strongly_connected_components;
 
-use crate::check::{Chain, Edge, Hop, Place, RuleId, Violation};
+use crate::check::{Chain, ComponentDep, Hop, Place, RuleId, Violation};
 use crate::components::ComponentMap;
 use crate::config::{Config, Listed};
 use crate::decision::{self, Refusal};
@@ -19,15 +19,21 @@ use crate::relpath::{self, slash};
 
 /// Dependency cycles between the components covered by `no_cycles`: one
 /// violation per strongly connected group, with the shortest cycle through it.
-pub fn cycles(config: &Config, edges: &[Edge]) -> Vec<Violation> {
-    let covered: Vec<&Edge> = edges
+pub fn cycles(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation> {
+    let covered: Vec<&ComponentDep> = component_deps
         .iter()
-        .filter(|e| config.no_cycles.covers(&e.from) && config.no_cycles.covers(&e.to))
+        .filter(|component_dep| {
+            config.no_cycles.covers(&component_dep.from)
+                && config.no_cycles.covers(&component_dep.to)
+        })
         .collect();
     let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for e in &covered {
-        graph.entry(&e.from).or_default().insert(&e.to);
-        graph.entry(&e.to).or_default();
+    for component_dep in &covered {
+        graph
+            .entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
+        graph.entry(&component_dep.to).or_default();
     }
     let nodes: Vec<&str> = graph.keys().copied().collect();
     let mut groups: Vec<BTreeSet<&str>> =
@@ -42,15 +48,17 @@ pub fn cycles(config: &Config, edges: &[Edge]) -> Vec<Violation> {
         .map(|members| {
             let start = *members.first().expect("non-empty group");
             let cycle = shortest_cycle(&graph, &members, start);
-            // The first import of each step of the cycle.
-            let steps: Vec<&&Edge> = cycle
+            // The first line that writes each step of the cycle.
+            let steps: Vec<&&ComponentDep> = cycle
                 .windows(2)
                 .map(|step| {
                     covered
                         .iter()
-                        .filter(|e| e.from == step[0] && e.to == step[1])
+                        .filter(|component_dep| {
+                            component_dep.from == step[0] && component_dep.to == step[1]
+                        })
                         .min_by(|x, y| (&x.file, x.line).cmp(&(&y.file, y.line)))
-                        .expect("cycle edge exists")
+                        .expect("a step of the cycle is a dependency between components")
                 })
                 .collect();
             let first = steps[0];
@@ -67,8 +75,11 @@ pub fn cycles(config: &Config, edges: &[Edge]) -> Vec<Violation> {
             };
             let mut evidence: Vec<Place> = covered
                 .iter()
-                .filter(|e| members.contains(e.from.as_str()) && members.contains(e.to.as_str()))
-                .map(|e| Place::new(e.file.clone(), e.line))
+                .filter(|component_dep| {
+                    members.contains(component_dep.from.as_str())
+                        && members.contains(component_dep.to.as_str())
+                })
+                .map(|component_dep| Place::new(component_dep.file.clone(), component_dep.line))
                 .collect();
             evidence.sort();
             Violation {
@@ -81,11 +92,11 @@ pub fn cycles(config: &Config, edges: &[Edge]) -> Vec<Violation> {
                 chain: Some(Chain::shortest(
                     steps
                         .iter()
-                        .map(|e| Hop {
-                            file: e.file.clone(),
-                            line: e.line,
-                            from_component: Some(e.from.clone()),
-                            to_component: Some(e.to.clone()),
+                        .map(|component_dep| Hop {
+                            file: component_dep.file.clone(),
+                            line: component_dep.line,
+                            from_component: Some(component_dep.from.clone()),
+                            to_component: Some(component_dep.to.clone()),
                         })
                         .collect(),
                 )),
@@ -309,16 +320,16 @@ fn symbol_graph(
     let files = Files::new(files);
     let mut graph: BTreeMap<String, BTreeSet<(String, usize)>> = BTreeMap::new();
     let mut covered: BTreeSet<(&str, usize, &str)> = BTreeSet::new();
-    for edge in &flow.edges {
-        let (from, to) = (edge.from.file.as_str(), edge.to.file.as_str());
+    for node_reach in &flow.node_reaches {
+        let (from, to) = (node_reach.from.file.as_str(), node_reach.to.file.as_str());
         if !files.known.contains(from) || !files.known.contains(to) {
             continue;
         }
-        covered.insert((from, edge.line, to));
+        covered.insert((from, node_reach.line, to));
         graph
-            .entry(edge.from.key())
+            .entry(node_reach.from.key())
             .or_default()
-            .insert((edge.to.key(), edge.line));
+            .insert((node_reach.to.key(), node_reach.line));
     }
     for dep in deps {
         let keys = dep.targets();
@@ -496,8 +507,8 @@ mod tests {
     use super::*;
     use crate::lang::Target;
 
-    fn edge(from: &str, to: &str) -> Edge {
-        Edge {
+    fn component_dep(from: &str, to: &str) -> ComponentDep {
+        ComponentDep {
             from: from.into(),
             to: to.into(),
             file: format!("{from}/x"),
@@ -574,14 +585,14 @@ rules:
     }
     #[test]
     fn reports_each_cycle_group_once_with_shortest_path() {
-        let edges = [
-            edge("a", "b"),
-            edge("b", "c"),
-            edge("c", "a"),
-            edge("b", "a"),
-            edge("c", "d"),
+        let component_deps = [
+            component_dep("a", "b"),
+            component_dep("b", "c"),
+            component_dep("c", "a"),
+            component_dep("b", "a"),
+            component_dep("c", "d"),
         ];
-        let found = cycles(&config("true"), &edges);
+        let found = cycles(&config("true"), &component_deps);
         assert_eq!(found.len(), 1);
         assert_eq!(
             found[0].message,
@@ -595,7 +606,7 @@ rules:
             from_component: Some(from.into()),
             to_component: Some(to.into()),
         };
-        // One witness: the shortest cycle, an import for each step.
+        // One witness: the shortest cycle, a line that writes each step.
         assert_eq!(
             found[0].chain,
             Some(Chain {
@@ -716,13 +727,13 @@ rules:
     }
     #[test]
     fn of_cycles_as_short_the_first_in_name_order_is_shown() {
-        let edges = [
-            edge("a", "c"),
-            edge("c", "a"),
-            edge("a", "b"),
-            edge("b", "a"),
+        let component_deps = [
+            component_dep("a", "c"),
+            component_dep("c", "a"),
+            component_dep("a", "b"),
+            component_dep("b", "a"),
         ];
-        let found = cycles(&config("true"), &edges);
+        let found = cycles(&config("true"), &component_deps);
         assert_eq!(
             found[0].message,
             "component dependency cycle among 3 components: a, b, c (shortest: a -> b -> a)"
@@ -730,14 +741,18 @@ rules:
     }
     #[test]
     fn simple_cycle_and_scoping() {
-        let edges = [edge("a", "b"), edge("b", "c"), edge("c", "a")];
-        let found = cycles(&config("true"), &edges);
+        let component_deps = [
+            component_dep("a", "b"),
+            component_dep("b", "c"),
+            component_dep("c", "a"),
+        ];
+        let found = cycles(&config("true"), &component_deps);
         assert_eq!(
             found[0].message,
             "component dependency cycle: a -> b -> c -> a"
         );
-        assert!(cycles(&config("[a, b]"), &edges).is_empty());
-        assert!(cycles(&config("false"), &edges).is_empty());
+        assert!(cycles(&config("[a, b]"), &component_deps).is_empty());
+        assert!(cycles(&config("false"), &component_deps).is_empty());
     }
     /// `r1` and `r2` are roots and `r2` imports `r1`; `x` imports `r1` at line 7, `y`
     /// imports `r2` at line 8, and `z` imports `y` (line 1) and `x` (line 2).

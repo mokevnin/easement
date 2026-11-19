@@ -11,7 +11,7 @@ use pathfinding::directed::bfs::bfs;
 use serde::{Deserialize, Serialize};
 
 use crate::chains;
-use crate::check::{self, Edge, RuleId, Violation};
+use crate::check::{self, ComponentDep, RuleId, Violation};
 use crate::components::ComponentMap;
 use crate::config::{Config, TESTS};
 use crate::decision::{self, Clause, Outside};
@@ -405,13 +405,13 @@ pub fn notes(config: &Config, map: &ComponentMap, proposals: &[Proposal]) -> Vec
         .collect()
 }
 
-/// One step of a witness: an edge between components, or for a reach chain, an
-/// import between files.
+/// One step of a witness: a dependency between components, or for a reach chain,
+/// a dependency between files.
 #[derive(Debug, Serialize)]
 pub struct Step {
     pub from: String,
     pub to: String,
-    /// The import that makes the step, when the code has it.
+    /// The line of the code that writes the step, when the code has it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -434,15 +434,21 @@ impl Step {
         }
     }
 
-    /// The step of components `from -> to`: its first import in the code, else
-    /// the first proposal that makes it.
-    fn of_edge(from: &str, to: &str, edges: &[Edge]) -> Self {
-        let edge = edges
+    /// The step of components `from -> to`: the first line of the code that
+    /// writes the dependency, else the first proposal that makes it.
+    fn of_component_dep(from: &str, to: &str, component_deps: &[ComponentDep]) -> Self {
+        let component_dep = component_deps
             .iter()
-            .filter(|e| e.from == from && e.to == to)
-            .min_by_key(|e| (proposal_at(e.line).is_some(), &e.file, e.line))
-            .expect("a step of a witness is an edge");
-        Step::at(from, to, &edge.file, edge.line)
+            .filter(|component_dep| component_dep.from == from && component_dep.to == to)
+            .min_by_key(|component_dep| {
+                (
+                    proposal_at(component_dep.line).is_some(),
+                    &component_dep.file,
+                    component_dep.line,
+                )
+            })
+            .expect("a step of a witness is a dependency between components");
+        Step::at(from, to, &component_dep.file, component_dep.line)
     }
 }
 
@@ -481,11 +487,11 @@ pub struct Graph<'a> {
     pub flow: Option<&'a Flow>,
 }
 
-/// The violations of the rules that judge the whole graph, and its edges between components.
-fn graph_rules(graph: &Graph) -> Result<(Vec<Violation>, Vec<Edge>)> {
+/// The violations of the rules that judge the whole graph, and its dependencies between components.
+fn graph_rules(graph: &Graph) -> Result<(Vec<Violation>, Vec<ComponentDep>)> {
     let config = &graph.policy.config;
-    let (_, edges, _) = check::evaluate(config, graph.map, graph.deps);
-    let mut found = chains::cycles(config, &edges);
+    let (_, component_deps, _) = check::evaluate(config, graph.map, graph.deps);
+    let mut found = chains::cycles(config, &component_deps);
     found.extend(chains::reaches(
         config,
         graph.map,
@@ -493,9 +499,9 @@ fn graph_rules(graph: &Graph) -> Result<(Vec<Violation>, Vec<Edge>)> {
         graph.files,
         graph.flow,
     ));
-    found.extend(check::metrics(config, &edges));
-    found.extend(crate::diagram::check(graph.policy, &edges)?);
-    Ok((found, edges))
+    found.extend(check::metrics(config, &component_deps));
+    found.extend(crate::diagram::check(graph.policy, &component_deps)?);
+    Ok((found, component_deps))
 }
 
 /// The cycles, reach chains, crossed limits and missing diagram arrows that the
@@ -528,7 +534,7 @@ pub fn consequences(graph: &Graph, proposals: &[Proposal]) -> Result<Vec<Consequ
             .filter(|f| !known.contains(f))
             .map(str::to_string),
     );
-    let (after, edges) = graph_rules(&Graph {
+    let (after, component_deps) = graph_rules(&Graph {
         deps: &deps,
         files: &files,
         ..*graph
@@ -537,20 +543,20 @@ pub fn consequences(graph: &Graph, proposals: &[Proposal]) -> Result<Vec<Consequ
     Ok(after
         .into_iter()
         .filter(|v| !old.contains(&v.key()))
-        .map(|v| consequence(graph, v, &edges))
+        .map(|v| consequence(graph, v, &component_deps))
         .collect())
 }
 
 /// A new violation of the overlaid graph, told through the proposals in it.
 /// Its own `file`, `line` and `message` may name a proposal's line, so they are
 /// told again from the structure.
-fn consequence(graph: &Graph, v: Violation, edges: &[Edge]) -> Consequence {
+fn consequence(graph: &Graph, v: Violation, component_deps: &[ComponentDep]) -> Consequence {
     let config = &graph.policy.config;
     let mut limit = None;
     let (message, witness) = match v.rule {
         RuleId::Cycle => {
             let members: BTreeSet<&str> = v.components().collect();
-            let witness = cycle_witness(&members, edges);
+            let witness = cycle_witness(&members, component_deps);
             let path: Vec<&str> = witness
                 .iter()
                 .map(|s| s.from.as_str())
@@ -589,33 +595,33 @@ fn consequence(graph: &Graph, v: Violation, edges: &[Edge]) -> Consequence {
         }
         RuleId::Metric => {
             limit = Some(v.target.clone());
-            let targets: BTreeSet<&str> = edges
+            let targets: BTreeSet<&str> = component_deps
                 .iter()
-                .filter(|e| e.from == v.from)
-                .map(|e| e.to.as_str())
+                .filter(|component_dep| component_dep.from == v.from)
+                .map(|component_dep| component_dep.to.as_str())
                 .collect();
             let witness = targets
                 .into_iter()
-                .map(|to| Step::of_edge(&v.from, to, edges))
+                .map(|to| Step::of_component_dep(&v.from, to, component_deps))
                 .collect();
             (v.message.clone(), witness)
         }
         _ => (
             v.message.clone(),
-            vec![Step::of_edge(&v.from, &v.to, edges)],
+            vec![Step::of_component_dep(&v.from, &v.to, component_deps)],
         ),
     };
     let mut proposals: BTreeSet<usize> = witness.iter().filter_map(|s| s.proposal).collect();
     // A group of components holds every cycle among them: each proposal that
-    // makes an edge of it no import makes is in it, not only those of the witness.
+    // makes a dependency of it that no code makes is in it, not only those of the witness.
     if v.rule == RuleId::Cycle {
         let members: BTreeSet<&str> = v.components().collect();
-        for (from, to) in proposed_edges(&members, edges) {
+        for (from, to) in proposed_component_deps(&members, component_deps) {
             proposals.extend(
-                edges
+                component_deps
                     .iter()
-                    .filter(|e| e.from == from && e.to == to)
-                    .filter_map(|e| proposal_at(e.line)),
+                    .filter(|component_dep| component_dep.from == from && component_dep.to == to)
+                    .filter_map(|component_dep| proposal_at(component_dep.line)),
             );
         }
     }
@@ -632,18 +638,24 @@ fn consequence(graph: &Graph, v: Violation, edges: &[Edge]) -> Consequence {
     }
 }
 
-/// The shortest cycle among `members` that takes an edge only the proposals
-/// make, as its steps: the cycle the proposals close.
-fn cycle_witness(members: &BTreeSet<&str>, edges: &[Edge]) -> Vec<Step> {
-    let inside: Vec<&Edge> = edges
+/// The shortest cycle among `members` that takes a dependency only the
+/// proposals make, as its steps: the cycle the proposals close.
+fn cycle_witness(members: &BTreeSet<&str>, component_deps: &[ComponentDep]) -> Vec<Step> {
+    let inside: Vec<&ComponentDep> = component_deps
         .iter()
-        .filter(|e| members.contains(e.from.as_str()) && members.contains(e.to.as_str()))
+        .filter(|component_dep| {
+            members.contains(component_dep.from.as_str())
+                && members.contains(component_dep.to.as_str())
+        })
         .collect();
     let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for e in &inside {
-        graph.entry(&e.from).or_default().insert(&e.to);
+    for component_dep in &inside {
+        graph
+            .entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
     }
-    let cycle = proposed_edges(members, edges)
+    let cycle = proposed_component_deps(members, component_deps)
         .into_iter()
         .filter_map(|(a, b)| {
             let back = bfs(
@@ -654,25 +666,28 @@ fn cycle_witness(members: &BTreeSet<&str>, edges: &[Edge]) -> Vec<Step> {
             Some(std::iter::once(a).chain(back).collect::<Vec<&str>>())
         })
         .min_by_key(Vec::len)
-        .expect("a cycle the proposals add takes an edge only they make");
+        .expect("a cycle the proposals add takes a dependency only they make");
     cycle
         .windows(2)
-        .map(|pair| Step::of_edge(pair[0], pair[1], edges))
+        .map(|pair| Step::of_component_dep(pair[0], pair[1], component_deps))
         .collect()
 }
 
-/// The edges among `members` that only proposals make.
-fn proposed_edges<'a>(members: &BTreeSet<&str>, edges: &'a [Edge]) -> BTreeSet<(&'a str, &'a str)> {
-    let inside = edges
-        .iter()
-        .filter(|e| members.contains(e.from.as_str()) && members.contains(e.to.as_str()));
+/// The dependencies among `members` that only proposals make.
+fn proposed_component_deps<'a>(
+    members: &BTreeSet<&str>,
+    component_deps: &'a [ComponentDep],
+) -> BTreeSet<(&'a str, &'a str)> {
+    let inside = component_deps.iter().filter(|component_dep| {
+        members.contains(component_dep.from.as_str()) && members.contains(component_dep.to.as_str())
+    });
     let real: BTreeSet<(&str, &str)> = inside
         .clone()
-        .filter(|e| proposal_at(e.line).is_none())
-        .map(|e| (e.from.as_str(), e.to.as_str()))
+        .filter(|component_dep| proposal_at(component_dep.line).is_none())
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .collect();
     inside
-        .map(|e| (e.from.as_str(), e.to.as_str()))
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .filter(|pair| !real.contains(pair))
         .collect()
 }
@@ -845,8 +860,8 @@ fn tag(rule: RuleId, warning: bool) -> String {
 mod tests {
     use super::*;
 
-    fn edge(from: &str, to: &str, file: &str, line: usize) -> Edge {
-        Edge {
+    fn component_dep(from: &str, to: &str, file: &str, line: usize) -> ComponentDep {
+        ComponentDep {
             from: from.into(),
             to: to.into(),
             file: file.into(),
@@ -886,19 +901,19 @@ mod tests {
 
     /// `a <-> b` exists; proposal 0 adds `c -> a`, proposals 1 and 2 add
     /// `a -> c` and `b -> c`. The witness is a shortest cycle through a
-    /// proposal, at the import where the code has one; every proposal of the
-    /// group is named.
+    /// proposal, at the line that writes each step where the code has one;
+    /// every proposal of the group is named.
     #[test]
     fn a_cycle_is_told_through_the_proposals_that_make_it() {
-        let edges = vec![
-            edge("a", "b", "a.ts", 3),
-            edge("b", "a", "b.ts", 4),
-            edge("c", "a", "c.ts", FIRST_LINE),
-            edge("a", "c", "a.ts", FIRST_LINE + 1),
-            edge("b", "c", "b.ts", FIRST_LINE + 2),
+        let component_deps = vec![
+            component_dep("a", "b", "a.ts", 3),
+            component_dep("b", "a", "b.ts", 4),
+            component_dep("c", "a", "c.ts", FIRST_LINE),
+            component_dep("a", "c", "a.ts", FIRST_LINE + 1),
+            component_dep("b", "c", "b.ts", FIRST_LINE + 2),
         ];
         let members: BTreeSet<&str> = ["a", "b", "c"].into();
-        let witness = cycle_witness(&members, &edges);
+        let witness = cycle_witness(&members, &component_deps);
         let told: Vec<(&str, &str, Option<usize>, Option<usize>)> = witness
             .iter()
             .map(|s| (s.from.as_str(), s.to.as_str(), s.line, s.proposal))
@@ -908,7 +923,7 @@ mod tests {
             vec![("a", "c", None, Some(1)), ("c", "a", None, Some(0))]
         );
         assert_eq!(
-            proposed_edges(&members, &edges),
+            proposed_component_deps(&members, &component_deps),
             [("a", "c"), ("b", "c"), ("c", "a")].into()
         );
     }

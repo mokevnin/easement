@@ -7,7 +7,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use crate::check::{Edge, Place, RuleId, Violation};
+use crate::check::{ComponentDep, Place, RuleId, Violation};
 use crate::config::Config;
 use crate::policy::Policy;
 
@@ -296,40 +296,43 @@ fn node(text: &str) -> Node {
 }
 
 /// With `diagram`, every dependency between components that the diagram
-/// has no arrow for, reported once per pair at its first import. The diagram
-/// is the one the policy was loaded with.
-pub fn check(policy: &Policy, edges: &[Edge]) -> Result<Vec<Violation>> {
+/// has no arrow for, reported once per pair at the first line that writes it.
+/// The diagram is the one the policy was loaded with.
+pub fn check(policy: &Policy, component_deps: &[ComponentDep]) -> Result<Vec<Violation>> {
     let config = &policy.config;
     let Some((path, drawn)) = drawn_arrows(policy)? else {
         return Ok(Vec::new());
     };
-    let mut missing: BTreeMap<(&str, &str), Vec<&Edge>> = BTreeMap::new();
-    for edge in edges.iter().filter(|e| drawn_needed(config, e)) {
-        if !drawn.contains(&(edge.from.clone(), edge.to.clone())) {
+    let mut missing: BTreeMap<(&str, &str), Vec<&ComponentDep>> = BTreeMap::new();
+    for component_dep in component_deps
+        .iter()
+        .filter(|component_dep| drawn_needed(config, component_dep))
+    {
+        if !drawn.contains(&(component_dep.from.clone(), component_dep.to.clone())) {
             missing
-                .entry((&edge.from, &edge.to))
+                .entry((&component_dep.from, &component_dep.to))
                 .or_default()
-                .push(edge);
+                .push(component_dep);
         }
     }
     Ok(missing
         .into_iter()
-        .map(|((from, to), mut imports)| {
-            imports.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
-            let first = imports[0];
+        .map(|((from, to), mut deps)| {
+            deps.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
+            let first = deps[0];
             Violation {
                 file: first.file.clone(),
                 line: first.line,
                 message: format!(
                     "{from} -> {to} is not in the diagram {} ({} dependency(ies)); draw the arrow, or drop the dependency",
                     path.display(),
-                    imports.len()
+                    deps.len()
                 ),
                 from: from.to_string(),
                 to: to.to_string(),
-                evidence: imports
+                evidence: deps
                     .iter()
-                    .map(|e| Place::new(e.file.clone(), e.line))
+                    .map(|dep| Place::new(dep.file.clone(), dep.line))
                     .collect(),
                 ..Violation::of(RuleId::Diagram)
             }
@@ -360,23 +363,26 @@ fn drawn_arrows(policy: &Policy) -> Result<Option<(&Path, Arrows)>> {
     Ok(Some((path, drawn)))
 }
 
-/// Whether a dependency has to be drawn: not the imports of the `tests`
-/// that `tests: auto` makes, and not those of `common` components, which
+/// Whether a dependency has to be drawn: not the dependencies of the `tests`
+/// that `tests: auto` makes, and not those on `common` components, which
 /// every component may use.
-fn drawn_needed(config: &Config, edge: &Edge) -> bool {
-    let tests = config.tests.is_some() && edge.from == crate::config::TESTS;
-    !tests && !config.common.contains(&edge.to)
+fn drawn_needed(config: &Config, component_dep: &ComponentDep) -> bool {
+    let tests = config.tests.is_some() && component_dep.from == crate::config::TESTS;
+    !tests && !config.common.contains(&component_dep.to)
 }
 
-/// The arrows of the diagram that no import stands for: pictures of
+/// The arrows of the diagram that no dependency stands for: pictures of
 /// dependencies the code does not have.
-pub fn unused_arrows(policy: &Policy, edges: &[Edge]) -> Result<Vec<(String, String)>> {
+pub fn unused_arrows(
+    policy: &Policy,
+    component_deps: &[ComponentDep],
+) -> Result<Vec<(String, String)>> {
     let Some((_, drawn)) = drawn_arrows(policy)? else {
         return Ok(Vec::new());
     };
-    let real: BTreeSet<(&str, &str)> = edges
+    let real: BTreeSet<(&str, &str)> = component_deps
         .iter()
-        .map(|e| (e.from.as_str(), e.to.as_str()))
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .collect();
     Ok(drawn
         .into_iter()

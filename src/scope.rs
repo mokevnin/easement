@@ -8,8 +8,9 @@ use crate::config::Config;
 
 /// What a run reports on: the whole project, or the files of some components
 /// and/or paths. The whole project is still read and judged, because cycles,
-/// limits and every edge need all of it; the scope narrows only the violations
-/// and stale entries reported, never the counters or the evidence gaps.
+/// limits and every dependency between components need all of it; the scope
+/// narrows only the violations and stale entries reported, never the counters
+/// or the evidence gaps.
 #[derive(Default)]
 pub struct Scope {
     components: BTreeSet<String>,

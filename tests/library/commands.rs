@@ -98,7 +98,7 @@ fn explain_and_graph() {
     assert!(mermaid.starts_with("graph LR\n"), "{mermaid}");
     assert!(
         mermaid.contains("-.->"),
-        "the forbidden web -> data edge is dashed: {mermaid}"
+        "the forbidden web -> data arrow is dashed: {mermaid}"
     );
     assert!(mermaid.contains("linkStyle"));
     let dot = commands::graph(&config, GraphFormat::Dot, None, &mut cache())

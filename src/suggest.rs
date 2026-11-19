@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use crate::check::{Edge, RuleId, Violation};
+use crate::check::{ComponentDep, RuleId, Violation};
 use crate::components::{AcceptedGap, ComponentMap};
 use crate::config::Config;
 use crate::decision::{self, Grant, Refusal};
@@ -170,12 +170,12 @@ fn capitalized(text: &str) -> String {
 pub fn unused_allowances(
     policy: &Policy,
     map: &ComponentMap,
-    edges: &[Edge],
+    component_deps: &[ComponentDep],
     unindexed: &[String],
     config_file: &str,
 ) -> (Vec<Violation>, Spared) {
     let config = &policy.config;
-    let counts = counts(map, edges, unindexed);
+    let counts = counts(map, component_deps, unindexed);
     let found = unused(config, &counts.used, &counts.unindexed);
     let removable: Vec<(String, String)> = found
         .removable
@@ -237,13 +237,13 @@ pub struct Isolated {
 pub fn suggest(
     config: &Config,
     map: &ComponentMap,
-    edges: &[Edge],
+    component_deps: &[ComponentDep],
     deps: &[Dep],
     files: &[String],
     uncovered: &[String],
     stale_arrows: &[(String, String)],
 ) -> Suggestions {
-    let Counts { unindexed, used } = counts(map, edges, uncovered);
+    let Counts { unindexed, used } = counts(map, component_deps, uncovered);
     let unread_of = |pair: [&str; 2]| unread_of(&unindexed, pair);
     let Unused {
         removable,
@@ -370,10 +370,10 @@ impl Suggestions {
 pub fn removable(
     config: &Config,
     map: &ComponentMap,
-    edges: &[Edge],
+    component_deps: &[ComponentDep],
     uncovered: &[String],
 ) -> Vec<(String, String)> {
-    let Counts { unindexed, used } = counts(map, edges, uncovered);
+    let Counts { unindexed, used } = counts(map, component_deps, uncovered);
     unused(config, &used, &unindexed)
         .removable
         .into_iter()
@@ -427,14 +427,18 @@ fn unread_of(unindexed: &BTreeMap<&str, usize>, pair: [&str; 2]) -> BTreeMap<Str
 }
 
 /// What `suggest` reads off the graph: the files of each component that no indexer
-/// read, and the imports between each pair of components.
+/// read, and the dependencies between each pair of components.
 struct Counts<'a> {
-    /// Files no indexer saw have no edges: a missing import next to them proves nothing.
+    /// Files no indexer saw have no dependencies: a missing one next to them proves nothing.
     unindexed: BTreeMap<&'a str, usize>,
     used: BTreeMap<(&'a str, &'a str), usize>,
 }
 
-fn counts<'a>(map: &'a ComponentMap, edges: &'a [Edge], uncovered: &[String]) -> Counts<'a> {
+fn counts<'a>(
+    map: &'a ComponentMap,
+    component_deps: &'a [ComponentDep],
+    uncovered: &[String],
+) -> Counts<'a> {
     let mut unindexed: BTreeMap<&str, usize> = BTreeMap::new();
     for file in uncovered {
         if let Some(component) = map.component_of(file) {
@@ -442,8 +446,10 @@ fn counts<'a>(map: &'a ComponentMap, edges: &'a [Edge], uncovered: &[String]) ->
         }
     }
     let mut used: BTreeMap<(&str, &str), usize> = BTreeMap::new();
-    for e in edges {
-        *used.entry((&e.from, &e.to)).or_default() += 1;
+    for component_dep in component_deps {
+        *used
+            .entry((&component_dep.from, &component_dep.to))
+            .or_default() += 1;
     }
     Counts { unindexed, used }
 }
@@ -541,8 +547,8 @@ mod tests {
         Dep::module(file, 1, "", Target::Internal(target.into()))
     }
 
-    fn edge(from: &str, to: &str) -> Edge {
-        Edge {
+    fn component_dep(from: &str, to: &str) -> ComponentDep {
+        ComponentDep {
             from: from.into(),
             to: to.into(),
             file: format!("{from}/x"),
@@ -565,7 +571,7 @@ rules:
         )
         .unwrap();
         let map = ComponentMap::new(&config).unwrap();
-        let edges = [edge("web", "core"), edge("core", "data")];
+        let component_deps = [component_dep("web", "core"), component_dep("core", "data")];
         let deps = [
             dep("src/pages/a/x.ts", "src/core/c.ts"),
             dep("src/pages/b/y.ts", "src/pages/b/z.ts"),
@@ -576,7 +582,7 @@ rules:
             "src/pages/b/z.ts".to_string(),
             "src/pages/c/leaf.ts".to_string(),
         ];
-        let out = suggest(&config, &map, &edges, &deps, &files, &[], &[]).text();
+        let out = suggest(&config, &map, &component_deps, &deps, &files, &[], &[]).text();
         assert!(out.contains("  web -> data\n"), "{out}");
         assert!(!out.contains("web -> core"), "{out}");
         assert!(out.contains("  core: data (1 dependency(ies))\n"), "{out}");
@@ -584,7 +590,7 @@ rules:
 
         let crossing = [dep("src/pages/a/x.ts", "src/pages/b/y.ts")];
         assert!(
-            !suggest(&config, &map, &edges, &crossing, &files, &[], &[])
+            !suggest(&config, &map, &component_deps, &crossing, &files, &[], &[])
                 .text()
                 .contains("pages")
         );
@@ -604,16 +610,16 @@ rules:
         )
         .unwrap();
         let map = ComponentMap::new(&config).unwrap();
-        let edges = [edge("web", "core")];
+        let component_deps = [component_dep("web", "core")];
         let uncovered = ["src/generated/index.ts".to_string()];
-        let out = suggest(&config, &map, &edges, &[], &[], &uncovered, &[]).text();
+        let out = suggest(&config, &map, &component_deps, &[], &[], &uncovered, &[]).text();
         assert!(
             out.contains("  web -> generated (not indexed: 1 file(s) of generated)\n"),
             "{out}"
         );
         // It is not offered as a plain removal.
         assert!(!out.contains("  web -> generated\n"), "{out}");
-        let clean = suggest(&config, &map, &edges, &[], &[], &[], &[]).text();
+        let clean = suggest(&config, &map, &component_deps, &[], &[], &[], &[]).text();
         assert!(clean.contains("  web -> generated\n"), "{clean}");
     }
 

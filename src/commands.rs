@@ -156,7 +156,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         suppressions,
         mut stats,
         map,
-        edges,
+        component_deps,
         deps,
         accepted,
         unindexed,
@@ -167,7 +167,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
         let (unused, left) = suggest::unused_allowances(
             &project.policy,
             &map,
-            &edges,
+            &component_deps,
             &unindexed,
             &project.config_file()?,
         );
@@ -188,7 +188,7 @@ pub fn check(options: &CheckOptions, cache: &mut scan::Cache) -> Result<Checked>
     let mut drift = None;
     if let Some(diff) = &diff {
         stats.new_dependencies =
-            check::new_dependencies(&edges, |f, l| diff.changes.contains(f, l));
+            check::new_dependencies(&component_deps, |f, l| diff.changes.contains(f, l));
         drift = proposals.as_deref().map(|plan| {
             drift::compare(&drift::Compared {
                 plan,
@@ -509,7 +509,7 @@ pub fn graph(
         diagram: graph::render(
             format,
             project.config(),
-            &analysis.edges,
+            &analysis.component_deps,
             &analysis.violations,
             focus,
         ),
@@ -525,11 +525,11 @@ pub fn suggest(config: &Path, cache: &mut scan::Cache) -> Result<suggest::Report
         suggestions: suggest::suggest(
             project.config(),
             &analysis.map,
-            &analysis.edges,
+            &analysis.component_deps,
             &analysis.deps,
             &analysis.files,
             &analysis.unindexed,
-            &diagram::unused_arrows(&project.policy, &analysis.edges)?,
+            &diagram::unused_arrows(&project.policy, &analysis.component_deps)?,
         ),
         evidence_gaps: report::graph_gaps(&analysis.stats, &analysis.unindexed),
         accepted_gaps: analysis.accepted,
@@ -551,7 +551,7 @@ pub fn suggest_patch(config: &Path, cache: &mut scan::Cache) -> Result<Patched> 
     let gone = suggest::removable(
         project.config(),
         &analysis.map,
-        &analysis.edges,
+        &analysis.component_deps,
         &analysis.unindexed,
     );
     let (gone, held) = patch::by_name(project.config(), gone);

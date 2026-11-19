@@ -624,7 +624,7 @@ pub struct SymbolRef {
 
 /// A dependency of one component on another, at the line that writes it.
 #[derive(Debug, Clone)]
-pub struct Edge {
+pub struct ComponentDep {
     pub from: String,
     pub to: String,
     pub file: String,
@@ -632,16 +632,16 @@ pub struct Edge {
 }
 
 /// Checks every internal dependency against the dependency and privacy rules.
-/// Every violating import is returned, one per line, see [`dedupe`]. The edges
-/// between components feed [`cycles`].
+/// Every violating dependency is returned, one per line, see [`dedupe`]. The
+/// dependencies between components feed [`cycles`].
 pub fn evaluate(
     config: &Config,
     map: &ComponentMap,
     deps: &[Dep],
-) -> (Vec<Violation>, Vec<Edge>, Stats) {
+) -> (Vec<Violation>, Vec<ComponentDep>, Stats) {
     let mut stats = Stats::default();
     let mut found = Vec::new();
-    let mut edges = Vec::new();
+    let mut component_deps = Vec::new();
     let mut unmapped = BTreeSet::new();
     // The rejected dependencies, judged once every dependency is decided: what
     // re-exports a name one writes, the dependencies of the re-exporter tell.
@@ -681,17 +681,17 @@ pub fn evaluate(
                 stats.std_unknown.push(ext);
             }
         }
-        // Preferred edge (proven when unambiguous).
+        // The dependency on the preferred target (proven when unambiguous).
         if let Some(to) = decision.to.filter(|to| *to != decision.from) {
-            edges.push(Edge {
+            component_deps.push(ComponentDep {
                 from: decision.from.to_string(),
                 to: to.to_string(),
                 file: file.clone(),
                 line: dep.line,
             });
         }
-        // Over-approximation for ambiguous/same-scope deps: contribute an edge
-        // for every other candidate target so potential paths are not lost.
+        // Over-approximation for ambiguous/same-scope deps: a dependency on
+        // every other candidate target, so potential paths are not lost.
         if decision.resolution != decision::ResolutionStatus::Unambiguous
             && !dep.candidates.is_empty()
         {
@@ -702,7 +702,7 @@ pub fn evaluate(
                         continue;
                     }
                     if to != decision.from {
-                        edges.push(Edge {
+                        component_deps.push(ComponentDep {
                             from: decision.from.to_string(),
                             to: to.to_string(),
                             file: file.clone(),
@@ -729,7 +729,7 @@ pub fn evaluate(
         found.extend(violation(&decision, dep, &reexport));
     }
     stats.unmapped_files = unmapped.len();
-    (found, edges, stats)
+    (found, component_deps, stats)
 }
 
 /// The components that re-export a name a dependency writes through a module of
@@ -915,13 +915,18 @@ pub fn violation(decision: &Decision, dep: &Dep, reexport: &Reexport) -> Option<
     })
 }
 
-/// Component dependencies, as `a -> b`, whose every import sits on a line
-/// that `changed` accepts: the edges that did not exist before the change.
-pub fn new_dependencies(edges: &[Edge], changed: impl Fn(&str, usize) -> bool) -> Vec<String> {
+/// Component dependencies, as `a -> b`, whose every line that writes them
+/// is one `changed` accepts: the dependencies that did not exist before the change.
+pub fn new_dependencies(
+    component_deps: &[ComponentDep],
+    changed: impl Fn(&str, usize) -> bool,
+) -> Vec<String> {
     let mut all_changed: BTreeMap<(&str, &str), bool> = BTreeMap::new();
-    for e in edges {
-        let entry = all_changed.entry((&e.from, &e.to)).or_insert(true);
-        *entry &= changed(&e.file, e.line);
+    for component_dep in component_deps {
+        let entry = all_changed
+            .entry((&component_dep.from, &component_dep.to))
+            .or_insert(true);
+        *entry &= changed(&component_dep.file, component_dep.line);
     }
     all_changed
         .into_iter()
@@ -931,13 +936,18 @@ pub fn new_dependencies(edges: &[Edge], changed: impl Fn(&str, usize) -> bool) -
 }
 
 /// Coupling limits: `max_fan_out` counts the components a component depends
-/// on, `max_instability` is `out / (in + out)` over the same component edges.
-pub fn metrics(config: &Config, edges: &[Edge]) -> Vec<Violation> {
+/// on, `max_instability` is `out / (in + out)` over the same component dependencies.
+pub fn metrics(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation> {
     let mut out: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     let mut incoming: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for e in edges {
-        out.entry(&e.from).or_default().insert(&e.to);
-        incoming.entry(&e.to).or_default().insert(&e.from);
+    for component_dep in component_deps {
+        out.entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
+        incoming
+            .entry(&component_dep.to)
+            .or_default()
+            .insert(&component_dep.from);
     }
     let mut found = Vec::new();
     for (name, rule) in &config.rules {
@@ -947,10 +957,10 @@ pub fn metrics(config: &Config, edges: &[Edge]) -> Vec<Violation> {
         let fan_out = targets.len();
         let fan_in = incoming.get(name.as_str()).map_or(0, BTreeSet::len);
         let instability = fan_out as f64 / (fan_in + fan_out) as f64;
-        let mut evidence: Vec<Place> = edges
+        let mut evidence: Vec<Place> = component_deps
             .iter()
-            .filter(|e| e.from == *name)
-            .map(|e| Place::new(e.file.clone(), e.line))
+            .filter(|component_dep| component_dep.from == *name)
+            .map(|component_dep| Place::new(component_dep.file.clone(), component_dep.line))
             .collect();
         evidence.sort();
         let Place { file, line, .. } = evidence[0].clone();
@@ -1427,8 +1437,8 @@ components:
         assert_eq!(lines, [3, 9]);
     }
 
-    fn edge(from: &str, to: &str) -> Edge {
-        Edge {
+    fn component_dep(from: &str, to: &str) -> ComponentDep {
+        ComponentDep {
             from: from.into(),
             to: to.into(),
             file: format!("{from}/x"),
@@ -1452,43 +1462,56 @@ rules:
 
     #[test]
     fn metrics_report_fan_out_and_instability() {
-        let edges = [edge("a", "b"), edge("a", "c"), edge("b", "a")];
+        let component_deps = [
+            component_dep("a", "b"),
+            component_dep("a", "c"),
+            component_dep("b", "a"),
+        ];
         // a: out 2, in 1 -> instability 0.67
-        let found = metrics(&limits("max_fan_out: 1, max_instability: 0.5"), &edges);
+        let found = metrics(
+            &limits("max_fan_out: 1, max_instability: 0.5"),
+            &component_deps,
+        );
         let targets: Vec<_> = found.iter().map(|v| v.target.as_str()).collect();
         assert_eq!(targets, ["max_fan_out", "max_instability"]);
         assert!(found[0].message.contains("depends on 2 components"));
         assert!(found[1].message.contains("instability 0.67"));
-        assert!(metrics(&limits("max_fan_out: 2, max_instability: 0.7"), &edges).is_empty());
+        assert!(
+            metrics(
+                &limits("max_fan_out: 2, max_instability: 0.7"),
+                &component_deps
+            )
+            .is_empty()
+        );
     }
 
     #[test]
-    fn a_dependency_is_new_only_when_all_its_imports_changed() {
-        let edges = [
-            Edge {
+    fn a_dependency_is_new_only_when_every_line_that_writes_it_changed() {
+        let component_deps = [
+            ComponentDep {
                 line: 1,
-                ..edge("a", "b")
+                ..component_dep("a", "b")
             },
-            Edge {
+            ComponentDep {
                 line: 2,
-                ..edge("a", "b")
+                ..component_dep("a", "b")
             },
-            Edge {
+            ComponentDep {
                 line: 3,
-                ..edge("a", "c")
+                ..component_dep("a", "c")
             },
         ];
         // Line 1 of a/x is old, so a -> b existed before; only a -> c is new.
-        let got = new_dependencies(&edges, |_, line| line != 1);
+        let got = new_dependencies(&component_deps, |_, line| line != 1);
         assert_eq!(got, ["a -> c"]);
     }
 
-    /// The graph keeps an edge to every candidate of a component: a dependency
-    /// on a name several files may declare may reach any of them. A candidate
-    /// of no component has no place in a graph of components, and a candidate
-    /// of the component itself is no edge.
+    /// The graph keeps a dependency on the component of every candidate: a
+    /// dependency on a name several files may declare may reach any of them. A
+    /// candidate of no component has no place in a graph of components, and a
+    /// candidate of the component itself is no dependency between components.
     #[test]
-    fn the_graph_keeps_an_edge_to_every_candidate_of_a_component() {
+    fn the_graph_keeps_a_dependency_on_the_component_of_every_candidate() {
         let config: Config = serde_norway::from_str(
             "version: 1
 components:
@@ -1512,15 +1535,15 @@ rules:
             dep.candidates = candidates.iter().map(|c| c.to_string()).collect();
             dep
         };
-        let pairs = |edges: &[Edge]| {
-            let mut pairs: Vec<(String, String)> = edges
+        let pairs = |component_deps: &[ComponentDep]| {
+            let mut pairs: Vec<(String, String)> = component_deps
                 .iter()
-                .map(|e| (e.from.clone(), e.to.clone()))
+                .map(|component_dep| (component_dep.from.clone(), component_dep.to.clone()))
                 .collect();
             pairs.sort();
             pairs
         };
-        let (violations, edges, _) = evaluate(
+        let (violations, component_deps, _) = evaluate(
             &config,
             &map,
             &[dep_of(&[
@@ -1532,20 +1555,23 @@ rules:
         );
         assert!(violations.is_empty(), "{violations:?}");
         assert_eq!(
-            pairs(&edges),
+            pairs(&component_deps),
             [
                 ("app".to_string(), "lib".to_string()),
                 ("app".to_string(), "other".to_string()),
                 ("app".to_string(), "third".to_string()),
             ]
         );
-        // A candidate of the component itself is no edge.
-        let (violations, edges, _) = evaluate(
+        // A candidate of the component itself is no dependency between components.
+        let (violations, component_deps, _) = evaluate(
             &config,
             &map,
             &[dep_of(&["app/a/Thing.kt", "lib/a/Thing.kt"])],
         );
         assert!(violations.is_empty(), "{violations:?}");
-        assert_eq!(pairs(&edges), [("app".to_string(), "lib".to_string())]);
+        assert_eq!(
+            pairs(&component_deps),
+            [("app".to_string(), "lib".to_string())]
+        );
     }
 }

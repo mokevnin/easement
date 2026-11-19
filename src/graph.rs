@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::check::{Edge, RuleId, Violation};
+use crate::check::{ComponentDep, RuleId, Violation};
 use crate::config::Config;
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -9,23 +9,26 @@ pub enum GraphFormat {
     Dot,
 }
 
-/// One arrow of the component graph: how many imports it stands for, and
+/// One arrow of the component graph: how many dependencies it stands for, and
 /// whether any of them breaks a rule.
 struct Arrow {
-    imports: usize,
+    count: usize,
     violating: bool,
 }
 
-fn arrows(edges: &[Edge], violations: &[Violation]) -> BTreeMap<(String, String), Arrow> {
+fn arrows(
+    component_deps: &[ComponentDep],
+    violations: &[Violation],
+) -> BTreeMap<(String, String), Arrow> {
     let mut arrows: BTreeMap<(String, String), Arrow> = BTreeMap::new();
-    for e in edges {
+    for component_dep in component_deps {
         arrows
-            .entry((e.from.clone(), e.to.clone()))
+            .entry((component_dep.from.clone(), component_dep.to.clone()))
             .or_insert(Arrow {
-                imports: 0,
+                count: 0,
                 violating: false,
             })
-            .imports += 1;
+            .count += 1;
     }
     for v in violations {
         if matches!(v.rule, RuleId::Dependency | RuleId::Privacy)
@@ -42,11 +45,11 @@ fn arrows(edges: &[Edge], violations: &[Violation]) -> BTreeMap<(String, String)
 pub fn render(
     format: GraphFormat,
     config: &Config,
-    edges: &[Edge],
+    component_deps: &[ComponentDep],
     violations: &[Violation],
     focus: Option<&str>,
 ) -> String {
-    let mut arrows = arrows(edges, violations);
+    let mut arrows = arrows(component_deps, violations);
     if let Some(focus) = focus {
         arrows.retain(|(from, to), _| from == focus || to == focus);
     }
@@ -80,10 +83,10 @@ fn mermaid(nodes: &[&str], arrows: &BTreeMap<(String, String), Arrow>) -> String
     for (i, ((from, to), arrow)) in arrows.iter().enumerate() {
         let (from, to) = (&ids[from.as_str()], &ids[to.as_str()]);
         if arrow.violating {
-            out.push_str(&format!("  {from} -.->|{} ✗| {to}\n", arrow.imports));
+            out.push_str(&format!("  {from} -.->|{} ✗| {to}\n", arrow.count));
             red.push(i.to_string());
         } else {
-            out.push_str(&format!("  {from} -->|{}| {to}\n", arrow.imports));
+            out.push_str(&format!("  {from} -->|{}| {to}\n", arrow.count));
         }
     }
     if !red.is_empty() {
@@ -111,7 +114,7 @@ fn dot(nodes: &[&str], arrows: &BTreeMap<(String, String), Arrow>) -> String {
             "  {} -> {} [label=\"{}\"{style}];\n",
             quote(from),
             quote(to),
-            arrow.imports
+            arrow.count
         ));
     }
     out.push_str("}\n");
@@ -124,15 +127,27 @@ mod tests {
 
     #[test]
     fn focus_keeps_a_component_and_its_neighbours() {
-        let (config, edges, violations) = fixture();
-        let dot = render(GraphFormat::Dot, &config, &edges, &violations, Some("b"));
+        let (config, component_deps, violations) = fixture();
+        let dot = render(
+            GraphFormat::Dot,
+            &config,
+            &component_deps,
+            &violations,
+            Some("b"),
+        );
         assert!(dot.contains("\"a\" -> \"b\""));
         assert!(!dot.contains("lone"));
-        let alone = render(GraphFormat::Dot, &config, &edges, &violations, Some("lone"));
+        let alone = render(
+            GraphFormat::Dot,
+            &config,
+            &component_deps,
+            &violations,
+            Some("lone"),
+        );
         assert!(alone.contains("\"lone\";") && !alone.contains("->"));
     }
 
-    fn fixture() -> (Config, Vec<Edge>, Vec<Violation>) {
+    fn fixture() -> (Config, Vec<ComponentDep>, Vec<Violation>) {
         let config: Config = serde_norway::from_str(
             "version: 1
 components:
@@ -142,13 +157,17 @@ components:
 ",
         )
         .unwrap();
-        let edge = |from: &str, to: &str, line| Edge {
+        let component_dep = |from: &str, to: &str, line| ComponentDep {
             from: from.into(),
             to: to.into(),
             file: format!("{from}/x"),
             line,
         };
-        let edges = vec![edge("a", "b", 1), edge("a", "b", 2), edge("b", "a", 1)];
+        let component_deps = vec![
+            component_dep("a", "b", 1),
+            component_dep("a", "b", 2),
+            component_dep("b", "a", 1),
+        ];
         let violation = Violation {
             file: "b/x".into(),
             line: 1,
@@ -156,13 +175,19 @@ components:
             to: "a".into(),
             ..Violation::of(RuleId::Dependency)
         };
-        (config, edges, vec![violation])
+        (config, component_deps, vec![violation])
     }
 
     #[test]
     fn mermaid_marks_violations() {
-        let (config, edges, violations) = fixture();
-        let out = render(GraphFormat::Mermaid, &config, &edges, &violations, None);
+        let (config, component_deps, violations) = fixture();
+        let out = render(
+            GraphFormat::Mermaid,
+            &config,
+            &component_deps,
+            &violations,
+            None,
+        );
         assert_eq!(
             out,
             "graph LR\n  c0[\"a\"]\n  c1[\"b\"]\n  c2[\"lone\"]\n  c0 -->|2| c1\n  c1 -.->|1 ✗| c0\n  linkStyle 1 stroke:#d00,stroke-width:2px,color:#d00\n"
@@ -171,8 +196,14 @@ components:
 
     #[test]
     fn dot_marks_violations() {
-        let (config, edges, violations) = fixture();
-        let out = render(GraphFormat::Dot, &config, &edges, &violations, None);
+        let (config, component_deps, violations) = fixture();
+        let out = render(
+            GraphFormat::Dot,
+            &config,
+            &component_deps,
+            &violations,
+            None,
+        );
         assert!(out.contains("\"a\" -> \"b\" [label=\"2\"];"));
         assert!(
             out.contains("\"b\" -> \"a\" [label=\"1\", color=red, fontcolor=red, style=dashed];")
