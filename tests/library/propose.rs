@@ -107,8 +107,14 @@ fn an_external_proposal_says_when_std_cannot_tell_its_standard_library() {
     let gap = "`$std` cannot tell the standard library of .ts files";
     let ts = said("src/ui/b.ts", "lodash");
     assert!(ts.contains(gap), "{ts}");
+    // The summary names what the answer leaves out by kind.
+    assert!(
+        ts.ends_with("graph not judged (narrowed: --no-graph; 1 evidence gap)\n"),
+        "{ts}"
+    );
     let go = said("src/ui/b.go", "fmt");
     assert!(!go.contains("`$std` cannot tell"), "{go}");
+    assert!(go.ends_with("(narrowed: --no-graph)\n"), "{go}");
 }
 
 /// The proposal of an import of the file `to` from the file `from`, both

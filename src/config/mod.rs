@@ -105,8 +105,7 @@ pub struct Config {
     #[serde(default)]
     pub unowned: Vec<String>,
     /// Source files that no indexer covers and that may stay that way (globs, each with the
-    /// reason). Others are listed in the report as not covered, and the result is marked
-    /// partial.
+    /// reason): accepted gaps, still listed in the report. Others are evidence gaps.
     #[serde(default)]
     pub uncovered_ok: Vec<Accepted>,
     /// Settings of an indexer, by the language it reads: `go: { tags: [race] }` indexes Go

@@ -63,15 +63,6 @@ struct DiffInfo<'a> {
     in_full: &'a [InFull],
 }
 
-/// How much of the project an answer covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Confidence {
-    Full,
-    /// It rests on code no indexer read, or judges only a part by design.
-    Partial,
-}
-
 /// What an answer leaves out: the part it was asked to judge, the code it could
 /// not read or judge, and the gaps the policy accepts. A cache hit is none of them.
 #[derive(Debug, Default, Serialize)]
@@ -196,6 +187,18 @@ impl GapKind {
     }
 }
 
+impl Narrowing {
+    /// The flag that asked for it, as it is written: `--diff main`, `--no-graph`.
+    fn flag(&self) -> String {
+        match self.kind {
+            NarrowingKind::Diff => format!("--diff {}", self.limited_to),
+            NarrowingKind::Component => format!("--component {}", self.limited_to),
+            NarrowingKind::Scope => format!("--scope {}", self.limited_to),
+            NarrowingKind::NoGraph => "--no-graph".to_string(),
+        }
+    }
+}
+
 /// The parts that `--diff`, `--component` and `--scope` narrow a check to.
 pub fn narrowed(
     changes: Option<&Changes>,
@@ -256,7 +259,7 @@ pub fn evidence_gaps(stats: &Stats) -> Vec<EvidenceGap> {
 }
 
 /// The evidence gaps of a run that leave dependencies out of its graph, for an
-/// answer about the graph (`impact`, `why`). `unread` is every file no indexer
+/// answer about the graph (`impact`, `why`, `suggest`, `graph`). `unread` is every file no indexer
 /// read, `uncovered_ok` or not: accepting a file settles the verdict of `check`,
 /// but nobody saw its imports.
 pub fn graph_gaps(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
@@ -415,14 +418,22 @@ impl Coverage {
         }
     }
 
-    /// `partial` when the answer is narrowed or has an evidence gap; an
-    /// accepted gap alone leaves it `full`.
-    pub fn confidence(&self) -> Confidence {
-        if self.narrowed.is_empty() && self.evidence_gaps.is_empty() {
-            Confidence::Full
-        } else {
-            Confidence::Partial
+    /// What the answer leaves out, in one clause for a summary line: the
+    /// narrowing by the flags that asked for it, then how many evidence gaps
+    /// (`narrowed: --no-graph; 1 evidence gap`); empty when it leaves out
+    /// nothing. Accepted gaps are said apart, with their reasons.
+    pub fn summary(&self) -> String {
+        let mut reasons = Vec::new();
+        if !self.narrowed.is_empty() {
+            let flags: Vec<String> = self.narrowed.iter().map(Narrowing::flag).collect();
+            reasons.push(format!("narrowed: {}", flags.join(", ")));
         }
+        match self.evidence_gaps.len() {
+            0 => {}
+            1 => reasons.push("1 evidence gap".to_string()),
+            n => reasons.push(format!("{n} evidence gaps")),
+        }
+        reasons.join("; ")
     }
 
     /// One sentence for `--diff`, and one for `--component` and `--scope` together.
@@ -486,8 +497,8 @@ fn diff_header(diff: &Diff) -> String {
     out
 }
 
-/// What a verdict over cached indexes rests on. Not a reason for `partial`: the
-/// key holds what decides an index, but not dependencies outside the project.
+/// What a verdict over cached indexes rests on. Neither a narrowing nor a gap:
+/// the key holds what decides an index, but not dependencies outside the project.
 pub fn cache_note(stats: &Stats) -> Option<String> {
     cache_note_of(stats.from_cache)
 }
@@ -918,16 +929,96 @@ fn stale_message(k: &Key) -> String {
     )
 }
 
+/// The kind of a note a run makes of itself beside its results. Every format
+/// names it the same way: the GitHub annotation title (`easement evidence-gap`),
+/// the SARIF notification descriptor, the prefix in JUnit's `<system-out>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum NoteKind {
+    Narrowed,
+    EvidenceGap,
+    AcceptedGap,
+    UnusedAllowance,
+    Cache,
+}
+
+impl NoteKind {
+    fn id(self) -> &'static str {
+        match self {
+            NoteKind::Narrowed => "narrowed",
+            NoteKind::EvidenceGap => "evidence-gap",
+            NoteKind::AcceptedGap => "accepted-gap",
+            NoteKind::UnusedAllowance => "unused-allowance",
+            NoteKind::Cache => "cache",
+        }
+    }
+
+    /// The title of its GitHub annotation, and the description of its SARIF descriptor.
+    fn title(self) -> String {
+        format!("easement {}", self.id())
+    }
+}
+
+/// A note a run makes of itself: its kind, its level, its text and the files it names.
+struct Note<'a> {
+    kind: NoteKind,
+    level: ResultLevel,
+    text: String,
+    files: &'a [String],
+    /// Its line in JUnit's `<system-out>`, which opens with its kind.
+    out: String,
+}
+
+impl<'a> Note<'a> {
+    fn new(kind: NoteKind, level: ResultLevel, text: String, files: &'a [String]) -> Self {
+        let out = format!("{}: {text}", kind.id().replace('-', " "));
+        Note {
+            kind,
+            level,
+            text,
+            files,
+            out,
+        }
+    }
+
+    /// An `uncovered_ok` entry: its globs, its reason and its files.
+    fn accepted(gap: &'a AcceptedGap) -> Self {
+        let globs = gap.uncovered_ok.join(", ");
+        let files = gap.files.join(", ");
+        let because = gap.because.as_deref().map(|b| format!(" because {b}"));
+        let because = because.as_deref().unwrap_or_default();
+        Note {
+            out: format!("accepted gap (uncovered_ok: {globs}){because}; files: {files}"),
+            ..Note::new(
+                NoteKind::AcceptedGap,
+                ResultLevel::Note,
+                accepted_message(gap),
+                &gap.files,
+            )
+        }
+    }
+}
+
+/// What an `uncovered_ok` entry accepts, in one line.
+fn accepted_message(gap: &AcceptedGap) -> String {
+    let because = gap.because.as_deref().map(|b| format!(", because {b}"));
+    format!(
+        "uncovered_ok: {} accepts files no indexer read{}; their dependencies were not checked; files: {}",
+        gap.uncovered_ok.join(", "),
+        because.as_deref().unwrap_or_default(),
+        gap.files.join(", ")
+    )
+}
+
 impl Report<'_> {
     /// What a run says of itself beside its results, in the order the text gives
     /// it: the narrowing, the evidence gaps (errors under `--require-evidence`),
-    /// and the cache. Each is (level, text, files).
-    fn notes(&self) -> Vec<(ResultLevel, String, &[String])> {
-        let mut notes: Vec<(ResultLevel, String, &[String])> = self
+    /// the accepted gaps, the unused allowances and the cache.
+    fn notes(&self) -> Vec<Note<'_>> {
+        let mut notes: Vec<Note<'_>> = self
             .coverage
             .narrowed_reasons()
             .into_iter()
-            .map(|reason| (ResultLevel::Note, reason, &[][..]))
+            .map(|reason| Note::new(NoteKind::Narrowed, ResultLevel::Note, reason, &[]))
             .collect();
         let level = gap_level(self.require_evidence);
         for gap in &self.coverage.evidence_gaps {
@@ -935,16 +1026,17 @@ impl Report<'_> {
             if !gap.files.is_empty() {
                 text.push_str(&format!("; files: {}", gap.files.join(", ")));
             }
-            notes.push((level, text, &gap.files));
+            notes.push(Note::new(NoteKind::EvidenceGap, level, text, &gap.files));
         }
+        notes.extend(self.coverage.accepted_gaps.iter().map(Note::accepted));
         notes.extend(
             self.spared
                 .notes()
                 .into_iter()
-                .map(|note| (ResultLevel::Note, note, &[][..])),
+                .map(|note| Note::new(NoteKind::UnusedAllowance, ResultLevel::Note, note, &[])),
         );
         if let Some(note) = cache_note(self.stats) {
-            notes.push((ResultLevel::Note, note, &[][..]));
+            notes.push(Note::new(NoteKind::Cache, ResultLevel::Note, note, &[]));
         }
         notes
     }
@@ -952,27 +1044,12 @@ impl Report<'_> {
     /// SARIF 2.1.0, the format GitHub Code Scanning ingests: the violations as
     /// results, and what the run leaves out as notifications of its invocation.
     pub fn sarif(&self) -> String {
-        let notifications: Vec<_> = self
-            .notes()
-            .into_iter()
-            .map(|(level, text, files)| {
-                sarif::Notification::builder()
-                    .level(serde_json::Value::from(level.to_string()))
-                    .message(sarif_message(text))
-                    .locations(
-                        files
-                            .iter()
-                            .map(|file| sarif_location(file, None))
-                            .collect::<Vec<_>>(),
-                    )
-                    .build()
-            })
-            .collect();
-        sarif(self.verdict, notifications)
+        sarif(self.verdict, self.notes())
     }
 
     /// JUnit XML: one failed test case per violation, and under `--require-evidence`
-    /// per evidence gap; what the run leaves out also in `<system-out>`.
+    /// per evidence gap; what the run leaves out also in `<system-out>`, each
+    /// note opening with its kind. An accepted gap is never a failed test case.
     pub fn junit(&self) -> String {
         let gaps: Vec<(String, String)> = if self.require_evidence {
             self.coverage
@@ -983,13 +1060,50 @@ impl Report<'_> {
         } else {
             Vec::new()
         };
-        let out: Vec<String> = self.notes().into_iter().map(|(_, text, _)| text).collect();
+        let out: Vec<String> = self.notes().into_iter().map(|note| note.out).collect();
         junit(self.verdict, &gaps, &out)
     }
 }
 
-/// SARIF 2.1.0 of a verdict, with what the run says of itself.
-fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
+/// SARIF 2.1.0 of a verdict, with what the run says of itself: each note a
+/// notification whose descriptor is its kind, each kind declared once.
+fn sarif(verdict: &Verdict, notes: Vec<Note<'_>>) -> String {
+    let mut kinds: Vec<NoteKind> = notes.iter().map(|note| note.kind).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let declared: Vec<_> = kinds
+        .into_iter()
+        .map(|kind| {
+            sarif::ReportingDescriptor::builder()
+                .id(kind.id())
+                .short_description(
+                    sarif::MultiformatMessageString::builder()
+                        .text(kind.title())
+                        .build(),
+                )
+                .build()
+        })
+        .collect();
+    let notifications: Vec<_> = notes
+        .into_iter()
+        .map(|note| {
+            sarif::Notification::builder()
+                .level(serde_json::Value::from(note.level.to_string()))
+                .message(sarif_message(note.text))
+                .descriptor(
+                    sarif::ReportingDescriptorReference::builder()
+                        .id(note.kind.id())
+                        .build(),
+                )
+                .locations(
+                    note.files
+                        .iter()
+                        .map(|file| sarif_location(file, None))
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+        })
+        .collect();
     let mut ids: Vec<&str> = verdict
         .new
         .iter()
@@ -1049,12 +1163,14 @@ fn sarif(verdict: &Verdict, notifications: Vec<sarif::Notification>) -> String {
             .message(sarif_message(stale_message(k)))
             .build()
     }));
-    let driver = sarif::ToolComponent::builder()
+    let mut driver = sarif::ToolComponent::builder()
         .name("easement")
         .version(env!("CARGO_PKG_VERSION"))
         .information_uri(env!("CARGO_PKG_HOMEPAGE"))
         .rules(rules)
         .build();
+    // A run that says nothing of itself declares no kind.
+    driver.notifications = (!declared.is_empty()).then_some(declared);
     let invocation = sarif::Invocation::builder()
         .execution_successful(true)
         .tool_execution_notifications(notifications)
@@ -1188,7 +1304,7 @@ impl Report<'_> {
         for note in spared.notes() {
             out.push_str(&format!(
                 "::notice title={}::{}\n",
-                escape_property("easement unused-allowance"),
+                escape_property(&NoteKind::UnusedAllowance.title()),
                 escape_command(&note)
             ));
         }
@@ -1215,7 +1331,7 @@ impl Report<'_> {
         let narrowed = coverage
             .narrowed_reasons()
             .into_iter()
-            .map(|reason| (ResultLevel::Note, reason));
+            .map(|reason| (NoteKind::Narrowed, ResultLevel::Note, reason));
         for part in diff.iter().flat_map(|d| &d.attribution.in_full) {
             out.push_str(&format!(
                 "::notice title={}::{}\n",
@@ -1227,19 +1343,27 @@ impl Report<'_> {
         let gaps = coverage
             .evidence_gaps
             .iter()
-            .map(|gap| (level, gap.message.clone()));
-        for (level, reason) in narrowed.chain(gaps) {
+            .map(|gap| (NoteKind::EvidenceGap, level, gap.message.clone()));
+        // One notice per `uncovered_ok` entry, not one per file it accepts.
+        let accepted = coverage.accepted_gaps.iter().map(|gap| {
+            (
+                NoteKind::AcceptedGap,
+                ResultLevel::Note,
+                accepted_message(gap),
+            )
+        });
+        for (kind, level, reason) in narrowed.chain(gaps).chain(accepted) {
             out.push_str(&format!(
                 "::{} title={}::{}\n",
                 workflow_command(level),
-                escape_property("easement partial"),
+                escape_property(&kind.title()),
                 escape_command(&reason)
             ));
         }
         if let Some(note) = cache_note(stats) {
             out.push_str(&format!(
                 "::notice title={}::{}\n",
-                escape_property("easement cache"),
+                escape_property(&NoteKind::Cache.title()),
                 escape_command(&note)
             ));
         }
@@ -1519,6 +1643,12 @@ mod tests {
                 .len(),
             2
         );
+        // Nothing said of the run, no kind of note declared.
+        assert!(
+            report["runs"][0]["tool"]["driver"]
+                .get("notifications")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1685,22 +1815,143 @@ hi</system-out>
             accepted_gaps: accepted,
             ..Coverage::default()
         };
-        assert_eq!(coverage.confidence(), Confidence::Full);
         assert!(coverage.narrowed_reasons().is_empty());
-        let out = Report {
-            verdict: &verdict(),
-            stats: &Stats::default(),
+        assert!(coverage.summary().is_empty());
+        let (verdict, stats) = (verdict(), Stats::default());
+        let report = |require_evidence| Report {
+            verdict: &verdict,
+            stats: &stats,
             coverage: &coverage,
             diff: None,
             drift: None,
-            require_evidence: false,
+            require_evidence,
             spared: &NO_SPARED,
-        }
-        .text();
+        };
+        let out = report(false).text();
         assert!(
             out.contains("  gen/**, tools/** because: generated\n    gen/b.go\n    tools/a.go\n"),
             "{out}"
         );
+        // One notice per `uncovered_ok` entry, with its globs, its reason and its files.
+        let github = report(true).github();
+        assert_eq!(
+            github
+                .lines()
+                .filter(|l| l.contains("title=easement accepted-gap"))
+                .collect::<Vec<_>>(),
+            [
+                "::notice title=easement accepted-gap::uncovered_ok: gen/**, tools/** accepts files no indexer read, because generated; their dependencies were not checked; files: gen/b.go, tools/a.go"
+            ],
+            "{github}"
+        );
+    }
+
+    /// An accepted gap is a note in SARIF and in JUnit's `<system-out>`, never a
+    /// failed test case, with `--require-evidence` or not.
+    #[test]
+    fn sarif_and_junit_say_an_accepted_gap_as_a_note() {
+        let coverage = Coverage {
+            accepted_gaps: vec![AcceptedGap {
+                uncovered_ok: vec!["tools/**".into()],
+                because: Some("generated".into()),
+                files: vec!["tools/a.go".into()],
+            }],
+            ..Coverage::default()
+        };
+        let clean = clean_verdict();
+        for require_evidence in [false, true] {
+            let report = Report {
+                verdict: &clean,
+                stats: &Stats::default(),
+                coverage: &coverage,
+                diff: None,
+                drift: None,
+                require_evidence,
+                spared: &NO_SPARED,
+            };
+            let sarif: serde_json::Value = serde_json::from_str(&report.sarif()).unwrap();
+            let run = &sarif["runs"][0];
+            let said = &run["invocations"][0]["toolExecutionNotifications"];
+            assert_eq!(said.as_array().unwrap().len(), 1, "{said}");
+            assert_eq!(said[0]["level"], "note");
+            assert_eq!(said[0]["descriptor"]["id"], "accepted-gap");
+            assert_eq!(
+                said[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+                "tools/a.go"
+            );
+            assert_eq!(
+                run["tool"]["driver"]["notifications"],
+                serde_json::json!([{
+                    "id": "accepted-gap",
+                    "shortDescription": { "text": "easement accepted-gap" },
+                }])
+            );
+            let xml = report.junit();
+            assert!(xml.contains("failures=\"0\""), "{xml}");
+            assert!(
+                xml.contains(
+                    "<system-out>accepted gap (uncovered_ok: tools/**) because generated; files: tools/a.go</system-out>"
+                ),
+                "{xml}"
+            );
+        }
+    }
+
+    /// `propose` sums up what its answer leaves out by kind, never as `partial`.
+    #[test]
+    fn the_summary_names_the_narrowing_and_counts_the_evidence_gaps() {
+        let gap = |message: &str| {
+            EvidenceGap::of(GapKind::StdUnknown, &Unjudged::new(message.into()), "close")
+        };
+        let no_graph = Narrowing {
+            kind: NarrowingKind::NoGraph,
+            limited_to: "dependency decisions".into(),
+        };
+        let narrowed = Coverage {
+            narrowed: vec![no_graph.clone()],
+            ..Coverage::default()
+        };
+        assert_eq!(narrowed.summary(), "narrowed: --no-graph");
+        let gaps = Coverage {
+            evidence_gaps: vec![gap("a"), gap("b")],
+            ..Coverage::default()
+        };
+        assert_eq!(gaps.summary(), "2 evidence gaps");
+        let both = Coverage {
+            narrowed: vec![
+                no_graph,
+                Narrowing {
+                    kind: NarrowingKind::Diff,
+                    limited_to: "main".into(),
+                },
+                Narrowing {
+                    kind: NarrowingKind::Component,
+                    limited_to: "web".into(),
+                },
+                Narrowing {
+                    kind: NarrowingKind::Scope,
+                    limited_to: "src/api".into(),
+                },
+            ],
+            evidence_gaps: vec![gap("a")],
+            ..Coverage::default()
+        };
+        assert_eq!(
+            both.summary(),
+            "narrowed: --no-graph, --diff main, --component web, --scope src/api; 1 evidence gap"
+        );
+    }
+
+    fn clean_verdict() -> Verdict {
+        Verdict {
+            new: vec![],
+            warnings: vec![],
+            owners: BTreeMap::new(),
+            stale: vec![],
+            legalized: 0,
+            suppressions: vec![],
+            warned: Default::default(),
+        }
     }
 
     #[test]
@@ -1722,7 +1973,6 @@ hi</system-out>
             ],
             ..Coverage::default()
         };
-        assert_eq!(coverage.confidence(), Confidence::Partial);
         assert_eq!(
             coverage.narrowed_reasons(),
             [
@@ -1760,7 +2010,7 @@ hi</system-out>
         assert!(report(false).passed());
         let github = report(false).github();
         assert!(
-            github.contains("::warning title=easement partial::"),
+            github.contains("::warning title=easement evidence-gap::"),
             "{github}"
         );
         assert!(github.contains("easement passed"), "{github}");
@@ -1768,7 +2018,7 @@ hi</system-out>
         assert!(!report(true).passed());
         let github = report(true).github();
         assert!(
-            github.contains("::error title=easement partial::"),
+            github.contains("::error title=easement evidence-gap::"),
             "{github}"
         );
         assert!(github.contains("easement failed"), "{github}");
@@ -1833,6 +2083,21 @@ hi</system-out>
         assert_eq!(said[1].0, "warning");
         assert!(said[1].1.contains("tools/gen.go"), "{said:?}");
         assert!(said[2].1.contains("--no-cache"), "{said:?}");
+        // The kind of each note tells a narrowing from a gap, not only the level.
+        let kinds: Vec<&str> = sarif["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["descriptor"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["narrowed", "evidence-gap", "cache"]);
+        let declared: Vec<&str> = sarif["runs"][0]["tool"]["driver"]["notifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(declared, ["narrowed", "evidence-gap", "cache"]);
         let required: serde_json::Value = serde_json::from_str(&report(true).sarif()).unwrap();
         assert_eq!(
             required["runs"][0]["invocations"][0]["toolExecutionNotifications"][1]["level"],
@@ -1840,9 +2105,21 @@ hi</system-out>
         );
 
         let xml = report(false).junit();
-        assert!(xml.contains("<system-out>"), "{xml}");
-        assert!(xml.contains("tools/gen.go"), "{xml}");
-        assert!(xml.contains("--no-cache"), "{xml}");
+        assert!(
+            xml.contains("<system-out>narrowed: the report is limited to component web"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains(
+                "\nevidence gap: 1 source files were not covered by an indexer, so the dependencies in or on them were not checked; to close: "
+            ),
+            "{xml}"
+        );
+        assert!(xml.contains("; files: tools/gen.go\n"), "{xml}");
+        assert!(
+            xml.contains("\ncache: 1 index(es) came from the cache"),
+            "{xml}"
+        );
         assert!(xml.contains("failures=\"0\""), "{xml}");
         // Under `--require-evidence` a gap fails the run, so it is a failed test case.
         let xml = report(true).junit();
@@ -1851,7 +2128,7 @@ hi</system-out>
     }
 
     #[test]
-    fn github_says_why_a_verdict_is_partial_and_when_it_was_cached() {
+    fn github_names_the_narrowing_the_gaps_and_the_cache_apart() {
         let stats = Stats {
             from_cache: 1,
             uncovered: vec!["tools/gen.go".into()],
@@ -1869,7 +2146,7 @@ hi</system-out>
         .github();
         assert!(
             out.contains(
-                "::warning title=easement partial::1 source files were not covered by an indexer"
+                "::warning title=easement evidence-gap::1 source files were not covered by an indexer"
             ),
             "{out}"
         );
@@ -1910,7 +2187,9 @@ hi</system-out>
         }
         .github();
         assert!(
-            out.contains("::notice title=easement partial::the report is limited to component web"),
+            out.contains(
+                "::notice title=easement narrowed::the report is limited to component web"
+            ),
             "{out}"
         );
         assert!(!out.contains("::warning"), "{out}");

@@ -443,9 +443,7 @@ fn run(cli: Cli) -> Result<Outcome> {
         } => {
             let drawn = commands::graph(&config, format, focus.as_deref(), &mut cache(flags))?;
             // On stderr: stdout is the diagram itself.
-            for note in &drawn.notes {
-                eprintln!("easement: {note}");
-            }
+            eprint!("{}", drawn.notes());
             print!("{}", drawn.diagram);
             Ok(Outcome::Passed)
         }

@@ -804,10 +804,9 @@ impl Report {
                 Some(_) => format!("{failing} failing graph consequence(s)"),
                 None => "graph not judged".to_string(),
             },
-            if self.coverage.confidence() == report::Confidence::Partial {
-                " (partial)"
-            } else {
-                ""
+            match self.coverage.summary() {
+                reasons if reasons.is_empty() => String::new(),
+                reasons => format!(" ({reasons})"),
             }
         ));
         out

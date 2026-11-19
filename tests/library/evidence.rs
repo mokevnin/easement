@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use easement::commands::{self, CheckOptions, Checked, Outcome, Proposed};
-use easement::{CacheUse, Coverage, GapKind, Place};
+use easement::{CacheUse, Coverage, GapKind, GraphFormat, Place};
 use tempfile::TempDir;
 
 use crate::common::{commit_all, fixture, project};
@@ -262,7 +262,7 @@ fn add_to_policy(root: &Path, text: &str) {
 }
 
 #[test]
-fn uncovered_files_are_listed_and_the_verdict_says_it_is_partial() {
+fn uncovered_files_are_listed_as_an_evidence_gap() {
     let (_tmp, root) = fixture("uncovered");
     let checked = check(&root);
     assert_eq!(checked.outcome(), Outcome::Passed);
@@ -406,6 +406,27 @@ uncovered_ok:
             "because": "race-only helpers",
             "files": ["app/race.go"],
         }])
+    );
+    // A drawing without the dependencies of the accepted file says so beside it.
+    let drawn = commands::graph(&config, GraphFormat::Mermaid, None, &mut cache()).unwrap();
+    let notes = drawn.notes();
+    assert!(
+        notes.contains(
+            "Evidence gaps (an arrow through this code may be missing from the drawing):\n"
+        ),
+        "{notes}"
+    );
+    assert!(notes.contains("    to close: "), "{notes}");
+    assert!(notes.contains("    app/race.go\n"), "{notes}");
+    assert!(notes.contains("Accepted gaps (`uncovered_ok`"), "{notes}");
+    assert!(
+        notes.contains("  app/race.go because: race-only helpers\n"),
+        "{notes}"
+    );
+    assert!(
+        !drawn.diagram.contains("Evidence gaps"),
+        "{}",
+        drawn.diagram
     );
 }
 

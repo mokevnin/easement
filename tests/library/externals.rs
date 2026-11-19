@@ -4,9 +4,11 @@
 use std::fs;
 
 use easement::commands::{self, Outcome};
+use easement::{CacheUse, GraphFormat};
+use tempfile::TempDir;
 
 use crate::common::{commit_all, fixture, git, project, stub_packages};
-use crate::run::{cache, check, config, json, parse, pinned, text};
+use crate::run::{cache, cache_in, check, config, json, parse, pinned, text};
 
 #[test]
 fn a_top_level_forbidden_module_may_be_used_only_by_the_components_and_paths_it_allows() {
@@ -273,6 +275,12 @@ fn a_top_level_std_item_over_a_file_of_no_component_it_cannot_judge_is_a_gap() {
             .contains("`$std` cannot tell the standard library of .ts files"),
         "{report}"
     );
+    // The gap leaves a rule unjudged, not an arrow out of the drawing; indexed
+    // afresh, the drawing has nothing to say beside it.
+    let own = TempDir::new().unwrap();
+    let mut fresh = cache_in(own.path(), CacheUse::On);
+    let drawn = commands::graph(&config(&root), GraphFormat::Mermaid, None, &mut fresh).unwrap();
+    assert_eq!(drawn.notes(), "");
 }
 
 /// Only a policy that names `$std` needs to tell the standard library: without it, a
