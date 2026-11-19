@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.0](https://github.com/mokevnin/easement/compare/v0.9.0...v0.10.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **report:** GitHub annotations of a narrowing or an evidence gap are titled `easement narrowed` and `easement evidence-gap` instead of `easement partial`; SARIF notifications carry a descriptor and JUnit's `<system-out>` lines open with their kind; `propose` no longer ends with `(partial)`; `graph` prints its gaps on stderr as a block instead of
+* hold what easement knows of languages in four tiers ([#233](https://github.com/mokevnin/easement/issues/233))
+* **lang:** keep each language's test parts and standard library in its entry ([#231](https://github.com/mokevnin/easement/issues/231))
+* **suppress:** write a suppression in a comment of the file's language ([#230](https://github.com/mokevnin/easement/issues/230))
+
+### Bug Fixes
+
+* **diff:** judge unused in full when a manifest changed ([#248](https://github.com/mokevnin/easement/issues/248)) ([0c65ec0](https://github.com/mokevnin/easement/commit/0c65ec02693d9cb60fa57fb2fa18d955dcbbc383))
+* **indexer:** key an index on the hidden files its indexer reads ([#238](https://github.com/mokevnin/easement/issues/238)) ([81ff81b](https://github.com/mokevnin/easement/commit/81ff81be968fba99a4ab0d7f275daa9ae551ef06))
+* **report:** name narrowing, evidence gaps and accepted gaps apart in every format ([#249](https://github.com/mokevnin/easement/issues/249)) ([c0a22d0](https://github.com/mokevnin/easement/commit/c0a22d0d7d0e8c4604fa7b70d2c1170f17ddedb0))
+* **scan:** say that an import goes to a file .gitignore hides, not that it did not resolve ([#237](https://github.com/mokevnin/easement/issues/237)) ([72237ab](https://github.com/mokevnin/easement/commit/72237ab88e3074e5152674d72109849f37c8d2c4))
+* **scip:** make a symbol of a scheme no entry declares an evidence gap ([#235](https://github.com/mokevnin/easement/issues/235)) ([09b3aa9](https://github.com/mokevnin/easement/commit/09b3aa99a7cfb4b23fbd7cae83c17443687c254c)), closes [#234](https://github.com/mokevnin/easement/issues/234)
+* **scip:** name an npm package by its node_modules path, not by the indexer's credit ([#236](https://github.com/mokevnin/easement/issues/236)) ([ece277b](https://github.com/mokevnin/easement/commit/ece277b54a79d79393e9d1c0b97beb082d575d6a)), closes [#223](https://github.com/mokevnin/easement/issues/223) [#222](https://github.com/mokevnin/easement/issues/222)
+
+
+### Code Refactoring
+
+* hold what easement knows of languages in four tiers ([#233](https://github.com/mokevnin/easement/issues/233)) ([86381ec](https://github.com/mokevnin/easement/commit/86381ec1fd5f03ed1b4cf775e374fe3eba376c01))
+* **lang:** keep each language's test parts and standard library in its entry ([#231](https://github.com/mokevnin/easement/issues/231)) ([98defbb](https://github.com/mokevnin/easement/commit/98defbb1e5c33e86ab8260c9cd6409e0fc134841))
+* **suppress:** write a suppression in a comment of the file's language ([#230](https://github.com/mokevnin/easement/issues/230)) ([57ad69c](https://github.com/mokevnin/easement/commit/57ad69c5b560d066a7fd39bdfbbd910bf29720f8))
+
 ## [0.9.0](https://github.com/mokevnin/easement/compare/v0.8.0...v0.9.0) (2026-11-18)
 
 
