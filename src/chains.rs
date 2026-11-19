@@ -320,16 +320,16 @@ fn symbol_graph(
     let files = Files::new(files);
     let mut graph: BTreeMap<String, BTreeSet<(String, usize)>> = BTreeMap::new();
     let mut covered: BTreeSet<(&str, usize, &str)> = BTreeSet::new();
-    for node_dep in &flow.node_deps {
-        let (from, to) = (node_dep.from.file.as_str(), node_dep.to.file.as_str());
+    for node_reach in &flow.node_reaches {
+        let (from, to) = (node_reach.from.file.as_str(), node_reach.to.file.as_str());
         if !files.known.contains(from) || !files.known.contains(to) {
             continue;
         }
-        covered.insert((from, node_dep.line, to));
+        covered.insert((from, node_reach.line, to));
         graph
-            .entry(node_dep.from.key())
+            .entry(node_reach.from.key())
             .or_default()
-            .insert((node_dep.to.key(), node_dep.line));
+            .insert((node_reach.to.key(), node_reach.line));
     }
     for dep in deps {
         let keys = dep.targets();

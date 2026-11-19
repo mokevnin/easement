@@ -24,7 +24,7 @@ use protobuf::Message;
 use scip::types::{Index, Occurrence, PositionEncoding, occurrence::Typed_range};
 
 use crate::check::{SymbolRef, Unjudged};
-use crate::flow::{Flow, Node, NodeDep, Use};
+use crate::flow::{Flow, Node, NodeReach, Use};
 use crate::lang::parts::Part;
 use crate::lang::registry;
 use crate::lang::{
@@ -1736,11 +1736,11 @@ impl Indexed<'_> {
         }
         // A method reaches the code of its own file that is in none: the class body and the
         // constants that run when the file loads.
-        let own: Vec<NodeDep> = flow
+        let own: Vec<NodeReach> = flow
             .scopes
             .iter()
             .flat_map(|(file, scopes)| {
-                scopes.iter().map(|scope| NodeDep {
+                scopes.iter().map(|scope| NodeReach {
                     from: Node {
                         file: file.clone(),
                         scope: Some(scope.symbol.clone()),
@@ -1750,7 +1750,7 @@ impl Indexed<'_> {
                 })
             })
             .collect();
-        flow.node_deps.extend(own);
+        flow.node_reaches.extend(own);
         for document in documents {
             // The files whose method a line names: such a line reaches that method, and a
             // reference to the class around it (`Document` of `Document.host`) adds nothing.
@@ -1801,7 +1801,7 @@ impl Indexed<'_> {
                 for from in flow.owners(&document.path, reference.line) {
                     for to in &targets {
                         if from != *to {
-                            flow.node_deps.push(NodeDep {
+                            flow.node_reaches.push(NodeReach {
                                 from: from.clone(),
                                 to: to.clone(),
                                 line: reference.line,

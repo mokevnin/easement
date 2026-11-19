@@ -5,7 +5,7 @@
 //! the definitions a call references instead: a node is a method or function (a
 //! symbol with the lines it spans) or what a file holds outside any of them (its
 //! class bodies, constants, top-level code), and a node reaches another through a
-//! reference at a line ([`NodeDep`]).
+//! reference at a line ([`NodeReach`]).
 //!
 //! A dependency that no reference accounts for still reaches every node of its
 //! target, and so does a class or constant used with no method named, so no
@@ -52,7 +52,7 @@ pub fn file_of(key: &str) -> &str {
 /// One node reaching another: a reference at `line` of the source node's file to
 /// the target node, or a method reaching the code of its own file that is in none.
 #[derive(Debug, Clone)]
-pub struct NodeDep {
+pub struct NodeReach {
     pub from: Node,
     pub to: Node,
     pub line: usize,
@@ -60,7 +60,7 @@ pub struct NodeDep {
 
 /// A reference the index records at `line` of `file` to a definition: to the method
 /// it names, or to the own code of the file that defines the class or constant it
-/// names. Unlike a [`NodeDep`], it is never widened to every method of a file, and a
+/// names. Unlike a [`NodeReach`], it is never widened to every method of a file, and a
 /// module named on its own (an import) is none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Use {
@@ -73,7 +73,7 @@ pub struct Use {
 pub struct Flow {
     /// The methods of each file that the index gave a range.
     pub scopes: BTreeMap<String, Vec<Scope>>,
-    pub node_deps: Vec<NodeDep>,
+    pub node_reaches: Vec<NodeReach>,
     /// Every reference of the index to a definition, as [`Flow::callers`] reads them.
     pub uses: Vec<Use>,
     /// The name of each method of `scopes` as its symbol spells it, without the
