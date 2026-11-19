@@ -178,10 +178,10 @@ pub fn run(root: &Path, force: bool, cache: &mut scan::Cache) -> Result<String> 
     let map = ComponentMap::new(&config)?;
     let (_, component_deps, _) = check::evaluate(&config, &map, &scanned.deps);
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for dep in &component_deps {
-        deps.entry(dep.from.clone())
+    for component_dep in &component_deps {
+        deps.entry(component_dep.from.clone())
             .or_default()
-            .insert(dep.to.clone());
+            .insert(component_dep.to.clone());
     }
     std::fs::write(&path, render(&found, &deps))?;
     let mut out = format!(

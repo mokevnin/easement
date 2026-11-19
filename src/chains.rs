@@ -22,12 +22,18 @@ use crate::relpath::{self, slash};
 pub fn cycles(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation> {
     let covered: Vec<&ComponentDep> = component_deps
         .iter()
-        .filter(|dep| config.no_cycles.covers(&dep.from) && config.no_cycles.covers(&dep.to))
+        .filter(|component_dep| {
+            config.no_cycles.covers(&component_dep.from)
+                && config.no_cycles.covers(&component_dep.to)
+        })
         .collect();
     let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for dep in &covered {
-        graph.entry(&dep.from).or_default().insert(&dep.to);
-        graph.entry(&dep.to).or_default();
+    for component_dep in &covered {
+        graph
+            .entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
+        graph.entry(&component_dep.to).or_default();
     }
     let nodes: Vec<&str> = graph.keys().copied().collect();
     let mut groups: Vec<BTreeSet<&str>> =
@@ -48,7 +54,9 @@ pub fn cycles(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation
                 .map(|step| {
                     covered
                         .iter()
-                        .filter(|dep| dep.from == step[0] && dep.to == step[1])
+                        .filter(|component_dep| {
+                            component_dep.from == step[0] && component_dep.to == step[1]
+                        })
                         .min_by(|x, y| (&x.file, x.line).cmp(&(&y.file, y.line)))
                         .expect("a step of the cycle is a dependency between components")
                 })
@@ -67,10 +75,11 @@ pub fn cycles(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation
             };
             let mut evidence: Vec<Place> = covered
                 .iter()
-                .filter(|dep| {
-                    members.contains(dep.from.as_str()) && members.contains(dep.to.as_str())
+                .filter(|component_dep| {
+                    members.contains(component_dep.from.as_str())
+                        && members.contains(component_dep.to.as_str())
                 })
-                .map(|dep| Place::new(dep.file.clone(), dep.line))
+                .map(|component_dep| Place::new(component_dep.file.clone(), component_dep.line))
                 .collect();
             evidence.sort();
             Violation {
@@ -83,11 +92,11 @@ pub fn cycles(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation
                 chain: Some(Chain::shortest(
                     steps
                         .iter()
-                        .map(|dep| Hop {
-                            file: dep.file.clone(),
-                            line: dep.line,
-                            from_component: Some(dep.from.clone()),
-                            to_component: Some(dep.to.clone()),
+                        .map(|component_dep| Hop {
+                            file: component_dep.file.clone(),
+                            line: component_dep.line,
+                            from_component: Some(component_dep.from.clone()),
+                            to_component: Some(component_dep.to.clone()),
                         })
                         .collect(),
                 )),
@@ -597,7 +606,7 @@ rules:
             from_component: Some(from.into()),
             to_component: Some(to.into()),
         };
-        // One witness: the shortest cycle, an import for each step.
+        // One witness: the shortest cycle, a line that writes each step.
         assert_eq!(
             found[0].chain,
             Some(Chain {

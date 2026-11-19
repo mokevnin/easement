@@ -304,12 +304,15 @@ pub fn check(policy: &Policy, component_deps: &[ComponentDep]) -> Result<Vec<Vio
         return Ok(Vec::new());
     };
     let mut missing: BTreeMap<(&str, &str), Vec<&ComponentDep>> = BTreeMap::new();
-    for dep in component_deps
+    for component_dep in component_deps
         .iter()
-        .filter(|dep| drawn_needed(config, dep))
+        .filter(|component_dep| drawn_needed(config, component_dep))
     {
-        if !drawn.contains(&(dep.from.clone(), dep.to.clone())) {
-            missing.entry((&dep.from, &dep.to)).or_default().push(dep);
+        if !drawn.contains(&(component_dep.from.clone(), component_dep.to.clone())) {
+            missing
+                .entry((&component_dep.from, &component_dep.to))
+                .or_default()
+                .push(component_dep);
         }
     }
     Ok(missing
@@ -363,9 +366,9 @@ fn drawn_arrows(policy: &Policy) -> Result<Option<(&Path, Arrows)>> {
 /// Whether a dependency has to be drawn: not the dependencies of the `tests`
 /// that `tests: auto` makes, and not those on `common` components, which
 /// every component may use.
-fn drawn_needed(config: &Config, dep: &ComponentDep) -> bool {
-    let tests = config.tests.is_some() && dep.from == crate::config::TESTS;
-    !tests && !config.common.contains(&dep.to)
+fn drawn_needed(config: &Config, component_dep: &ComponentDep) -> bool {
+    let tests = config.tests.is_some() && component_dep.from == crate::config::TESTS;
+    !tests && !config.common.contains(&component_dep.to)
 }
 
 /// The arrows of the diagram that no dependency stands for: pictures of
@@ -379,7 +382,7 @@ pub fn unused_arrows(
     };
     let real: BTreeSet<(&str, &str)> = component_deps
         .iter()
-        .map(|dep| (dep.from.as_str(), dep.to.as_str()))
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .collect();
     Ok(drawn
         .into_iter()

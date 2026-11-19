@@ -446,8 +446,10 @@ fn counts<'a>(
         }
     }
     let mut used: BTreeMap<(&str, &str), usize> = BTreeMap::new();
-    for dep in component_deps {
-        *used.entry((&dep.from, &dep.to)).or_default() += 1;
+    for component_dep in component_deps {
+        *used
+            .entry((&component_dep.from, &component_dep.to))
+            .or_default() += 1;
     }
     Counts { unindexed, used }
 }

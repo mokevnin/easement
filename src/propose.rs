@@ -411,7 +411,7 @@ pub fn notes(config: &Config, map: &ComponentMap, proposals: &[Proposal]) -> Vec
 pub struct Step {
     pub from: String,
     pub to: String,
-    /// The import that makes the step, when the code has it.
+    /// The line of the code that writes the step, when the code has it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -437,12 +437,18 @@ impl Step {
     /// The step of components `from -> to`: the first line of the code that
     /// writes the dependency, else the first proposal that makes it.
     fn of_component_dep(from: &str, to: &str, component_deps: &[ComponentDep]) -> Self {
-        let dep = component_deps
+        let component_dep = component_deps
             .iter()
-            .filter(|dep| dep.from == from && dep.to == to)
-            .min_by_key(|dep| (proposal_at(dep.line).is_some(), &dep.file, dep.line))
+            .filter(|component_dep| component_dep.from == from && component_dep.to == to)
+            .min_by_key(|component_dep| {
+                (
+                    proposal_at(component_dep.line).is_some(),
+                    &component_dep.file,
+                    component_dep.line,
+                )
+            })
             .expect("a step of a witness is a dependency between components");
-        Step::at(from, to, &dep.file, dep.line)
+        Step::at(from, to, &component_dep.file, component_dep.line)
     }
 }
 
@@ -591,8 +597,8 @@ fn consequence(graph: &Graph, v: Violation, component_deps: &[ComponentDep]) -> 
             limit = Some(v.target.clone());
             let targets: BTreeSet<&str> = component_deps
                 .iter()
-                .filter(|dep| dep.from == v.from)
-                .map(|dep| dep.to.as_str())
+                .filter(|component_dep| component_dep.from == v.from)
+                .map(|component_dep| component_dep.to.as_str())
                 .collect();
             let witness = targets
                 .into_iter()
@@ -614,8 +620,8 @@ fn consequence(graph: &Graph, v: Violation, component_deps: &[ComponentDep]) -> 
             proposals.extend(
                 component_deps
                     .iter()
-                    .filter(|dep| dep.from == from && dep.to == to)
-                    .filter_map(|dep| proposal_at(dep.line)),
+                    .filter(|component_dep| component_dep.from == from && component_dep.to == to)
+                    .filter_map(|component_dep| proposal_at(component_dep.line)),
             );
         }
     }
@@ -637,11 +643,17 @@ fn consequence(graph: &Graph, v: Violation, component_deps: &[ComponentDep]) -> 
 fn cycle_witness(members: &BTreeSet<&str>, component_deps: &[ComponentDep]) -> Vec<Step> {
     let inside: Vec<&ComponentDep> = component_deps
         .iter()
-        .filter(|dep| members.contains(dep.from.as_str()) && members.contains(dep.to.as_str()))
+        .filter(|component_dep| {
+            members.contains(component_dep.from.as_str())
+                && members.contains(component_dep.to.as_str())
+        })
         .collect();
     let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for dep in &inside {
-        graph.entry(&dep.from).or_default().insert(&dep.to);
+    for component_dep in &inside {
+        graph
+            .entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
     }
     let cycle = proposed_component_deps(members, component_deps)
         .into_iter()
@@ -666,16 +678,16 @@ fn proposed_component_deps<'a>(
     members: &BTreeSet<&str>,
     component_deps: &'a [ComponentDep],
 ) -> BTreeSet<(&'a str, &'a str)> {
-    let inside = component_deps
-        .iter()
-        .filter(|dep| members.contains(dep.from.as_str()) && members.contains(dep.to.as_str()));
+    let inside = component_deps.iter().filter(|component_dep| {
+        members.contains(component_dep.from.as_str()) && members.contains(component_dep.to.as_str())
+    });
     let real: BTreeSet<(&str, &str)> = inside
         .clone()
-        .filter(|dep| proposal_at(dep.line).is_none())
-        .map(|dep| (dep.from.as_str(), dep.to.as_str()))
+        .filter(|component_dep| proposal_at(component_dep.line).is_none())
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .collect();
     inside
-        .map(|dep| (dep.from.as_str(), dep.to.as_str()))
+        .map(|component_dep| (component_dep.from.as_str(), component_dep.to.as_str()))
         .filter(|pair| !real.contains(pair))
         .collect()
 }

@@ -922,9 +922,11 @@ pub fn new_dependencies(
     changed: impl Fn(&str, usize) -> bool,
 ) -> Vec<String> {
     let mut all_changed: BTreeMap<(&str, &str), bool> = BTreeMap::new();
-    for dep in component_deps {
-        let entry = all_changed.entry((&dep.from, &dep.to)).or_insert(true);
-        *entry &= changed(&dep.file, dep.line);
+    for component_dep in component_deps {
+        let entry = all_changed
+            .entry((&component_dep.from, &component_dep.to))
+            .or_insert(true);
+        *entry &= changed(&component_dep.file, component_dep.line);
     }
     all_changed
         .into_iter()
@@ -938,9 +940,14 @@ pub fn new_dependencies(
 pub fn metrics(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violation> {
     let mut out: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     let mut incoming: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for dep in component_deps {
-        out.entry(&dep.from).or_default().insert(&dep.to);
-        incoming.entry(&dep.to).or_default().insert(&dep.from);
+    for component_dep in component_deps {
+        out.entry(&component_dep.from)
+            .or_default()
+            .insert(&component_dep.to);
+        incoming
+            .entry(&component_dep.to)
+            .or_default()
+            .insert(&component_dep.from);
     }
     let mut found = Vec::new();
     for (name, rule) in &config.rules {
@@ -952,8 +959,8 @@ pub fn metrics(config: &Config, component_deps: &[ComponentDep]) -> Vec<Violatio
         let instability = fan_out as f64 / (fan_in + fan_out) as f64;
         let mut evidence: Vec<Place> = component_deps
             .iter()
-            .filter(|dep| dep.from == *name)
-            .map(|dep| Place::new(dep.file.clone(), dep.line))
+            .filter(|component_dep| component_dep.from == *name)
+            .map(|component_dep| Place::new(component_dep.file.clone(), component_dep.line))
             .collect();
         evidence.sort();
         let Place { file, line, .. } = evidence[0].clone();
@@ -1531,7 +1538,7 @@ rules:
         let pairs = |component_deps: &[ComponentDep]| {
             let mut pairs: Vec<(String, String)> = component_deps
                 .iter()
-                .map(|dep| (dep.from.clone(), dep.to.clone()))
+                .map(|component_dep| (component_dep.from.clone(), component_dep.to.clone()))
                 .collect();
             pairs.sort();
             pairs

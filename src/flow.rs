@@ -4,11 +4,11 @@
 //! file reaches everything the file imports. With `reach: symbols` a chain follows
 //! the definitions a call references instead: a node is a method or function (a
 //! symbol with the lines it spans) or what a file holds outside any of them (its
-//! class bodies, constants, top-level code), and a dependency of one node on another
-//! ([`NodeDep`]) is a reference at a line.
+//! class bodies, constants, top-level code), and a node reaches another through a
+//! reference at a line ([`NodeDep`]).
 //!
-//! A dependency that no reference accounts for stays a dependency on everything in
-//! its target, and so does a class or constant used with no method named, so no
+//! A dependency that no reference accounts for still reaches every node of its
+//! target, and so does a class or constant used with no method named, so no
 //! import is dropped for want of a range. The index is read into a flow in `scip::Indexed::flow`.
 //!
 //! `impact --diff` reads the flow whatever `reach` says: the uses of a definition the
@@ -49,8 +49,8 @@ pub fn file_of(key: &str) -> &str {
     key.split_once(SEPARATOR).map_or(key, |(file, _)| file)
 }
 
-/// A dependency of one node on another: a reference at `line` of the source node's
-/// file to the target node.
+/// One node reaching another: a reference at `line` of the source node's file to
+/// the target node, or a method reaching the code of its own file that is in none.
 #[derive(Debug, Clone)]
 pub struct NodeDep {
     pub from: Node,

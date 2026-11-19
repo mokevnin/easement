@@ -12,7 +12,7 @@ pub enum GraphFormat {
 /// One arrow of the component graph: how many dependencies it stands for, and
 /// whether any of them breaks a rule.
 struct Arrow {
-    deps: usize,
+    count: usize,
     violating: bool,
 }
 
@@ -21,14 +21,14 @@ fn arrows(
     violations: &[Violation],
 ) -> BTreeMap<(String, String), Arrow> {
     let mut arrows: BTreeMap<(String, String), Arrow> = BTreeMap::new();
-    for dep in component_deps {
+    for component_dep in component_deps {
         arrows
-            .entry((dep.from.clone(), dep.to.clone()))
+            .entry((component_dep.from.clone(), component_dep.to.clone()))
             .or_insert(Arrow {
-                deps: 0,
+                count: 0,
                 violating: false,
             })
-            .deps += 1;
+            .count += 1;
     }
     for v in violations {
         if matches!(v.rule, RuleId::Dependency | RuleId::Privacy)
@@ -83,10 +83,10 @@ fn mermaid(nodes: &[&str], arrows: &BTreeMap<(String, String), Arrow>) -> String
     for (i, ((from, to), arrow)) in arrows.iter().enumerate() {
         let (from, to) = (&ids[from.as_str()], &ids[to.as_str()]);
         if arrow.violating {
-            out.push_str(&format!("  {from} -.->|{} ✗| {to}\n", arrow.deps));
+            out.push_str(&format!("  {from} -.->|{} ✗| {to}\n", arrow.count));
             red.push(i.to_string());
         } else {
-            out.push_str(&format!("  {from} -->|{}| {to}\n", arrow.deps));
+            out.push_str(&format!("  {from} -->|{}| {to}\n", arrow.count));
         }
     }
     if !red.is_empty() {
@@ -114,7 +114,7 @@ fn dot(nodes: &[&str], arrows: &BTreeMap<(String, String), Arrow>) -> String {
             "  {} -> {} [label=\"{}\"{style}];\n",
             quote(from),
             quote(to),
-            arrow.deps
+            arrow.count
         ));
     }
     out.push_str("}\n");
