@@ -85,7 +85,7 @@ fn in_every_rule() -> String {
 }
 
 #[test]
-fn review_reads_bans_moved_from_every_rule_into_one_top_level_item_as_that_item_alone() {
+fn review_reads_items_moved_from_every_rule_into_one_top_level_item_as_that_item_alone() {
     let mut files = vec![("easement.yml".to_string(), in_every_rule())];
     for letter in ('a'..='z').chain(['w']) {
         let dir = if letter == 'w' {
@@ -151,14 +151,14 @@ fn explain_names_the_top_level_forbidden_modules_of_a_path_and_what_lets_it_use_
         assert!(said.contains(line), "{line}{said}");
     }
     let wiring = explained("src/wiring/Module.kt");
-    let bans = serde_json::to_value(&wiring).unwrap()["forbid_external"].clone();
-    assert_eq!(bans[0]["allow"], "wiring", "{bans}");
-    assert_eq!(bans[0]["allowed"], true, "{bans}");
+    let items = serde_json::to_value(&wiring).unwrap()["forbid_external"].clone();
+    assert_eq!(items[0]["allow"], "wiring", "{items}");
+    assert_eq!(items[0]["allowed"], true, "{items}");
     assert_eq!(
-        bans[0]["provenance"],
+        items[0]["provenance"],
         serde_json::json!({ "field": "forbid_external[0].allow", "input": "easement.yml" })
     );
-    assert_eq!(bans[1]["allowed"], false, "{bans}");
+    assert_eq!(items[1]["allowed"], false, "{items}");
     // A component whose `may_use_external` leaves the module out still may not use it.
     let policy = fs::read_to_string(config(&root)).unwrap().replace(
         "web: { may_depend_on: [domain, utils] }",
@@ -195,9 +195,9 @@ fn explain_names_the_top_level_forbidden_modules_of_a_path_and_what_lets_it_use_
         "{unowned}"
     );
     pinned(|| {
-        insta::assert_snapshot!("explain_external_bans_text", said);
-        insta::assert_json_snapshot!("explain_external_bans_json", dates);
-        insta::assert_snapshot!("explain_external_bans_unowned_text", unowned);
+        insta::assert_snapshot!("explain_external_forbidden_text", said);
+        insta::assert_json_snapshot!("explain_external_forbidden_json", dates);
+        insta::assert_snapshot!("explain_external_forbidden_unowned_text", unowned);
     });
 }
 
@@ -250,7 +250,7 @@ fn policy_examples_of_external_modules_get_the_decision_of_the_top_level_list() 
 /// `$std` at the top level binds the files of no component too: where it cannot
 /// tell the standard library, the report says so for them as well.
 #[test]
-fn a_top_level_std_ban_over_a_file_of_no_component_it_cannot_judge_is_a_gap() {
+fn a_top_level_std_item_over_a_file_of_no_component_it_cannot_judge_is_a_gap() {
     let (_tmp, root) = project(&[
         (
             "easement.yml",
@@ -279,7 +279,7 @@ fn a_top_level_std_ban_over_a_file_of_no_component_it_cannot_judge_is_a_gap() {
 /// file of no component that imports a package of a language `$std` cannot tell
 /// leaves no gap about it; nor does a file `target_only` keeps out of the checks.
 #[test]
-fn a_file_no_std_ban_judges_leaves_no_std_gap() {
+fn a_file_no_std_item_judges_leaves_no_std_gap() {
     let gaps = |policy: &str| {
         let (_tmp, root) = project(&[
             ("easement.yml", policy),
@@ -315,7 +315,7 @@ fn a_file_no_std_ban_judges_leaves_no_std_gap() {
 /// `$std` at the top level is the standard library of each importing file, and
 /// `allow` lifts it for a component as for any module.
 #[test]
-fn a_top_level_std_ban_holds_for_every_file_but_those_it_allows() {
+fn a_top_level_std_item_holds_for_every_file_but_those_it_allows() {
     let (_tmp, root) = project(&[
         (
             "easement.yml",

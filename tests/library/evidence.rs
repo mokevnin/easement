@@ -101,9 +101,9 @@ fn answers_about_the_graph_say_an_unresolved_import_may_hide_a_dependency() {
     assert!(says_so(&report.coverage), "propose: {:?}", report.coverage);
 }
 
-/// A ban that a deeper name shows to be misspelled fails as `unmatched` only
+/// A `forbid_symbol` item that a deeper name shows to be misspelled fails as `unmatched` only
 /// over a whole index (ADR 0004): an import the indexer dropped leaves it short,
-/// so the ban says nothing until the import is resolved.
+/// so the item says nothing until the import is resolved.
 #[test]
 fn a_forbid_symbol_that_can_never_fire_waits_for_an_unresolved_import() {
     let (_tmp, root) = fixture("go_import_cycle");
@@ -134,7 +134,7 @@ fn a_forbid_symbol_that_can_never_fire_waits_for_an_unresolved_import() {
     assert!(!gaps(&checked, GapKind::UnresolvedImports).is_empty());
     assert_eq!(unmatched(&checked), 0, "{:?}", checked.verdict.new);
 
-    // With the cycle gone, the index is whole and the ban can be judged.
+    // With the cycle gone, the index is whole and the item can be judged.
     fs::write(root.join("a/a.go"), "package a\n").unwrap();
     let checked = check(&root);
     assert!(gaps(&checked, GapKind::UnresolvedImports).is_empty());

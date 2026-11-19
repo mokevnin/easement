@@ -1074,12 +1074,12 @@ components:
   a: { in: a }
   b: { in: b }
   c: { in: c }
-x-ban: &ban
+x-forbidden: &forbidden
   forbid_symbol:
     - { name: \"d.T\", because: no raw clients }
 rules:
-  a: { <<: *ban, may_depend_on: [b] }
-  b: { <<: *ban }
+  a: { <<: *forbidden, may_depend_on: [b] }
+  b: { <<: *forbidden }
 ",
         )
         .unwrap();
@@ -1090,7 +1090,11 @@ rules:
         assert!(c.rules["b"].may_depend_on.is_empty());
 
         // Only keys that start with `x-` are free; a typo is still an error.
-        std::fs::write(&path, "version: 1\ncomponents:\n  a: { in: a }\nban: {}\n").unwrap();
+        std::fs::write(
+            &path,
+            "version: 1\ncomponents:\n  a: { in: a }\nforbidden: {}\n",
+        )
+        .unwrap();
         assert!(load(&path).is_err());
     }
 

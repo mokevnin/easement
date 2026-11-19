@@ -398,7 +398,7 @@ fn a_symbol_example_pins_who_may_use_a_name() {
 
 /// The examples of the uses of names that the rest of the symbol rules decide:
 /// the own `forbid_symbol` of the user's component, on a name nothing defines,
-/// a member through its banned type, and the `public_symbols` of the component
+/// a member through its forbidden type, and the `public_symbols` of the component
 /// `defined_in` names, which without it is not consulted, and which judge a
 /// member by its type, whatever the member is called.
 #[test]

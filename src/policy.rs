@@ -938,14 +938,14 @@ mod tests {
         format!("{:#}", load_text(text).unwrap_err())
     }
 
-    /// A policy that shares bans through the anchor `bans` and gives `web` the rule `rule`.
-    fn with_bans(rule: &str) -> String {
+    /// A policy that shares forbidden items through the anchor `forbidden` and gives `web` the rule `rule`.
+    fn with_shared_items(rule: &str) -> String {
         format!(
             "version: 1
 components:
   web: {{ in: web }}
   api: {{ in: api }}
-x-bans: &bans
+x-forbidden: &forbidden
   forbid_symbol: [a.A, b.B]
   because: shared
   max_fan_out: 3
@@ -955,12 +955,12 @@ rules:
         )
     }
 
-    /// A rule of `web` that drops both shared bans.
-    const DROPPING: &str = "{ <<: *bans, forbid_symbol: [extra.E] }";
+    /// A rule of `web` that drops both shared items.
+    const DROPPING: &str = "{ <<: *forbidden, forbid_symbol: [extra.E] }";
 
     #[test]
     fn a_list_next_to_a_merge_that_drops_merged_items_is_refused() {
-        let err = load_error(&with_bans(DROPPING));
+        let err = load_error(&with_shared_items(DROPPING));
         assert!(err.contains("easement.yml"), "{err}");
         assert!(
             err.contains("`rules.web.forbid_symbol` written next to `<<` drops a.A, b.B"),
@@ -970,7 +970,7 @@ rules:
         // Under an `x-` key too, though easement drops that key once merged.
         let err = load_error(&format!(
             "{}x-web: {DROPPING}\n",
-            with_bans("{ <<: *bans }")
+            with_shared_items("{ <<: *forbidden }")
         ));
         assert!(
             err.contains("`x-web.forbid_symbol` written next to `<<` drops a.A, b.B"),
@@ -984,26 +984,34 @@ rules:
 
     #[test]
     fn a_list_next_to_a_merge_that_keeps_every_merged_item_loads() {
-        let policy = load_text(&with_bans(
-            "{ <<: *bans, forbid_symbol: [a.A, extra.E, b.B] }",
+        let policy = load_text(&with_shared_items(
+            "{ <<: *forbidden, forbid_symbol: [a.A, extra.E, b.B] }",
         ))
         .unwrap();
         assert_eq!(policy.config.rules["web"].forbid_symbol.len(), 3);
-        assert!(load_text(&with_bans("{ <<: *bans, forbid_symbol: [b.B, a.A] }")).is_ok());
+        assert!(
+            load_text(&with_shared_items(
+                "{ <<: *forbidden, forbid_symbol: [b.B, a.A] }"
+            ))
+            .is_ok()
+        );
         // An item written again with another reason is not the item merged.
-        let err = load_error(&with_bans(
-            "{ <<: *bans, forbid_symbol: [{ name: a.A, because: other }, b.B] }",
+        let err = load_error(&with_shared_items(
+            "{ <<: *forbidden, forbid_symbol: [{ name: a.A, because: other }, b.B] }",
         ));
         assert!(err.contains("drops a.A that"), "{err}");
     }
 
     #[test]
     fn a_scalar_or_another_type_next_to_a_merge_is_not_a_dropped_item() {
-        let policy = load_text(&with_bans("{ <<: *bans, because: own, max_fan_out: 1 }")).unwrap();
+        let policy = load_text(&with_shared_items(
+            "{ <<: *forbidden, because: own, max_fan_out: 1 }",
+        ))
+        .unwrap();
         assert_eq!(policy.config.reason("web"), Some("own"));
         assert_eq!(policy.config.rules["web"].max_fan_out, Some(1));
         // A scalar over a list is left to the schema.
-        let err = load_error(&with_bans("{ <<: *bans, forbid_symbol: a.A }"));
+        let err = load_error(&with_shared_items("{ <<: *forbidden, forbid_symbol: a.A }"));
         assert!(err.contains("rules.web.forbid_symbol"), "{err}");
         assert!(!err.contains("merge brings in"), "{err}");
     }
@@ -1123,7 +1131,7 @@ components:
     /// where it is written.
     #[test]
     fn a_merge_inside_the_value_of_a_merge_is_checked_too() {
-        let err = load_error(&with_bans(&format!("{{ <<: {DROPPING} }}")));
+        let err = load_error(&with_shared_items(&format!("{{ <<: {DROPPING} }}")));
         assert!(
             err.contains("`rules.web.<<.forbid_symbol` written next to `<<` drops a.A, b.B"),
             "{err}"
@@ -1133,9 +1141,9 @@ components:
     #[test]
     fn an_anchor_that_merges_another_brings_in_what_that_one_does() {
         let more = |rule: &str| {
-            with_bans(rule).replace(
+            with_shared_items(rule).replace(
                 "rules:\n",
-                "x-more: &more\n  <<: *bans\n  because: more\nrules:\n",
+                "x-more: &more\n  <<: *forbidden\n  because: more\nrules:\n",
             )
         };
         let policy = load_text(&more("{ <<: *more, max_fan_out: 1 }")).unwrap();
@@ -1143,7 +1151,10 @@ components:
         assert_eq!(web.forbid_symbol.len(), 2);
         assert_eq!(web.max_fan_out, Some(1));
         assert_eq!(policy.config.reason("web"), Some("more"));
-        let policy = load_text(&with_bans("{ <<: { <<: *bans, because: own } }")).unwrap();
+        let policy = load_text(&with_shared_items(
+            "{ <<: { <<: *forbidden, because: own } }",
+        ))
+        .unwrap();
         assert_eq!(policy.config.rules["web"].forbid_symbol.len(), 2);
         assert_eq!(policy.config.reason("web"), Some("own"));
         // What the inner anchor brings is kept like what the outer one does.
@@ -1157,7 +1168,7 @@ components:
     #[test]
     fn a_merge_that_drops_items_in_an_extended_file_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "base.yml", &with_bans(DROPPING));
+        write(dir.path(), "base.yml", &with_shared_items(DROPPING));
         write(dir.path(), "easement.yml", "extends: base.yml\n");
         let err = format!(
             "{:#}",
@@ -1172,10 +1183,14 @@ components:
     fn a_merge_that_drops_items_at_a_revision_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path();
-        write(repo, "easement.yml", &with_bans(DROPPING));
+        write(repo, "easement.yml", &with_shared_items(DROPPING));
         git(repo, &["init", "-q"]);
-        commit(repo, "drop the shared bans");
-        write(repo, "easement.yml", &with_bans("{ <<: *bans }"));
+        commit(repo, "drop the shared items");
+        write(
+            repo,
+            "easement.yml",
+            &with_shared_items("{ <<: *forbidden }"),
+        );
         commit(repo, "keep them");
 
         let config = repo.join("easement.yml");
@@ -1203,7 +1218,7 @@ components:
 entry:
   - cmd/**
 forbid_symbol:
-  - { name: d.T, because: banned }
+  - { name: d.T, because: forbidden }
   - name: e.T
     allow_in:
       - src/ab
