@@ -149,5 +149,5 @@ uncovered_ok:
 
 1. Walk the project. For Go, TypeScript, Python, Rust, PHP, Java, C# and Ruby run the SCIP indexer and read the index; for Kotlin and Swift parse each file with tree-sitter and collect imports.
 2. Turn every reference to a module into a dependency on a file inside the project, or on an external module.
-3. Map both ends to components and check each edge against the rules.
+3. Map both ends to components and check each dependency against the rules.
 4. Compare violations with the baseline and report.
