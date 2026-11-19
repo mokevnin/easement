@@ -373,12 +373,9 @@ fn every_command_says_when_its_indexes_came_from_the_cache() {
         drawn.diagram
     );
     assert!(
-        drawn
-            .notes
-            .iter()
-            .any(|note| note.contains("came from the cache")),
-        "{:?}",
-        drawn.notes
+        drawn.notes().contains("came from the cache"),
+        "{}",
+        drawn.notes()
     );
     let recorded = commands::baseline(&config, false, &mut own()).unwrap();
     assert_eq!(recorded.outcome(), Outcome::Passed);

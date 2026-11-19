@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::baseline::{Baseline, Verdict};
-use crate::components::ComponentMap;
+use crate::components::{AcceptedGap, ComponentMap};
 use crate::policy::Policy;
 use crate::project::{self, Analysis, Project};
 use crate::{
@@ -481,11 +481,36 @@ pub fn policy(config: &Path) -> Result<resolved::ResolvedPolicy> {
 }
 
 /// A drawing of the components and the dependencies between them, with what
-/// it leaves out apart from it.
+/// it leaves out apart from it. `--focus` narrows nothing: the drawing shows
+/// what it draws.
 pub struct Drawn {
     pub diagram: String,
-    /// The evidence gaps and the cache note, for a channel other than the diagram's.
-    pub notes: Vec<String>,
+    /// The gaps that leave dependencies out of the drawing, every file no
+    /// indexer read among them, `uncovered_ok` or not.
+    pub evidence_gaps: Vec<report::EvidenceGap>,
+    /// Files no indexer read that `uncovered_ok` accepts, by the entry that accepts them.
+    pub accepted_gaps: Vec<AcceptedGap>,
+    /// Set when indexes came from the cache: what their key leaves out and how
+    /// to index again.
+    pub cached: Option<String>,
+}
+
+impl Drawn {
+    /// What the drawing leaves out, for a channel other than the diagram's: the
+    /// gaps as every command says them, then the cache note.
+    pub fn notes(&self) -> String {
+        let mut out = report::gap_lines(
+            &self.evidence_gaps,
+            &self.accepted_gaps,
+            "an arrow through this code may be missing from the drawing",
+            false,
+            false,
+        );
+        if let Some(note) = &self.cached {
+            out.push_str(&format!("easement: {note}\n"));
+        }
+        out
+    }
 }
 
 /// Draws the components, or only `focus` and the ones it shares an arrow with.
@@ -500,11 +525,6 @@ pub fn graph(
         project.config().require_component(name)?;
     }
     let analysis = project.analyze(cache)?;
-    let notes = report::evidence_gaps(&analysis.stats)
-        .into_iter()
-        .map(|gap| format!("partial: {}", gap.message))
-        .chain(report::cache_note(&analysis.stats))
-        .collect();
     Ok(Drawn {
         diagram: graph::render(
             format,
@@ -513,7 +533,9 @@ pub fn graph(
             &analysis.violations,
             focus,
         ),
-        notes,
+        evidence_gaps: report::graph_gaps(&analysis.stats, &analysis.unindexed),
+        cached: report::cache_note(&analysis.stats),
+        accepted_gaps: analysis.accepted,
     })
 }
 

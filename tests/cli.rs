@@ -602,4 +602,13 @@ fn graph_and_suggest_patch_print_their_notes_on_stderr() {
         .success()
         .stdout(contains("came from the cache").not())
         .stderr(contains("came from the cache"));
+    // So do the gaps that leave dependencies out of the drawing.
+    let (_tmp, root) = fixture("uncovered");
+    easement_cached(&root, &["graph"], cache.path())
+        .success()
+        .stdout(contains("Evidence gaps").not())
+        .stderr(contains(
+            "Evidence gaps (an arrow through this code may be missing from the drawing):\n",
+        ))
+        .stderr(contains("    tools/gen.go\n"));
 }

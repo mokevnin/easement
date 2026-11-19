@@ -179,7 +179,7 @@
       ]
     },
     "uncovered_ok": {
-      "description": "Source files that no indexer covers and that may stay that way (globs, each with the reason). Others are listed in the report as not covered, and the result is marked partial.",
+      "description": "Source files that no indexer covers and that may stay that way (globs, each with the reason): accepted gaps, still listed in the report. Others are evidence gaps.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/Accepted"
