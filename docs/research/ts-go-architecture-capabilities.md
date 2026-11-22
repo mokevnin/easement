@@ -85,11 +85,11 @@ See [dependency selector](https://www.jsboundaries.dev/docs/selectors/dependency
 | Public API | **N:** barrel modules expose exported files; barrel-less modules hide an `internal` folder (configurable). The docs permit direct imports of an exported file: it is inaccurate to describe Sheriff as requiring every external import to go through `index.ts`. |
 | Symbol identity policy | **NV:** arbitrary definition-resolved symbol allowlists and forbidding uses through typed receivers. Barrel export visibility is a different contract. |
 
-See [tag placeholders and sameTag](https://sheriff.softarc.io/docs/dependency-rules), [module visibility](https://sheriff.softarc.io/docs/module_boundaries), [configuration](https://sheriff.softarc.io/docs/configuration).
+See [tag placeholders and sameTag](https://sheriff-arch.github.io/sheriff/docs/dependency-rules), [module visibility](https://sheriff-arch.github.io/sheriff/docs/module_boundaries), [configuration](https://sheriff-arch.github.io/sheriff/docs/configuration).
 
-The CLI initializes config, verifies, lists tagged modules and exports JSON for reachable files. An export is not an inventory proving all source files were checked. [CLI reference](https://sheriff.softarc.io/docs/cli)
+The CLI initializes config, verifies, lists tagged modules and exports JSON for reachable files. An export is not an inventory proving all source files were checked. [CLI reference](https://sheriff-arch.github.io/sheriff/docs/cli)
 
-**NV in the reviewed full configuration/CLI references:** transitive forbidden contracts, dead-code detection, external-package/manifest policies, required imports/files/directives, type-name ownership, diagram input, violation baseline, Git-line diff, allowance pruning, impact and shortest-chain/prospective-file explanation. Documentation recommends gradual module adoption and `excludeRoot`, not a verified known-violation ratchet. [Incremental integration](https://sheriff.softarc.io/docs/integration)
+**NV in the reviewed full configuration/CLI references:** transitive forbidden contracts, dead-code detection, external-package/manifest policies, required imports/files/directives, type-name ownership, diagram input, violation baseline, Git-line diff, allowance pruning, impact and shortest-chain/prospective-file explanation. Documentation recommends gradual module adoption and `excludeRoot`, not a verified known-violation ratchet. [Incremental integration](https://sheriff-arch.github.io/sheriff/docs/integration)
 
 ## go-arch-lint
 
