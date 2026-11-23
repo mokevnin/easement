@@ -10,7 +10,9 @@ use easement::{CacheUse, EvidenceGap, GapKind};
 use tempfile::TempDir;
 
 use crate::common::{fixture, project, write_all};
-use crate::run::{cannot_index_here, check, check_in, check_with, config, json, pinned, text};
+use crate::run::{
+    by_message, cannot_index_here, check, check_in, check_with, config, json, pinned, text,
+};
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
 /// client types, which declare `"*.css"`, `"*.svg"` and `"*?raw"` by wildcard,
@@ -319,4 +321,106 @@ fn a_python_project_whose_imports_resolve_has_no_unresolved_import() {
             unresolved(&checked)
         );
     }
+}
+
+/// A project whose `app` reaches into the installed `flag-icons` by a glob of its
+/// files (`src/app/glob.ts`) and by a literal path to one (`src/app/url.ts`), with
+/// `rules` for `app` and `dependencies` for its `package.json`.
+fn flags(rules: &str, dependencies: &str) -> (TempDir, PathBuf) {
+    project(&[
+        (
+            "easement.yml",
+            &format!(
+                "version: 1\nmanifests: true\ncomponents:\n  app: {{ in: src/app }}\nrules:\n  app: {rules}\n"
+            ),
+        ),
+        (
+            "package.json",
+            &format!(
+                "{{\"name\": \"app\", \"private\": true, \"dependencies\": {{{dependencies}}}}}\n"
+            ),
+        ),
+        (
+            "tsconfig.json",
+            r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler"},"include":["src"]}"#,
+        ),
+        (
+            "node_modules/flag-icons/package.json",
+            r#"{"name":"flag-icons","version":"7.0.0"}"#,
+        ),
+        ("node_modules/flag-icons/flags/4x3/de.svg", "<svg/>\n"),
+        (
+            "src/app/glob.ts",
+            "export const flags = import.meta.glob(\"/node_modules/flag-icons/flags/4x3/*.svg\", { eager: true });\n",
+        ),
+        (
+            "src/app/url.ts",
+            "import de from \"/node_modules/flag-icons/flags/4x3/de.svg?url\";\nexport const flag = de;\n",
+        ),
+    ])
+}
+
+/// `(file, line, message)` of the violations of both files of [`flags`], each
+/// with `message` at its first line.
+fn in_both_files(message: &str) -> Vec<(String, u64, String)> {
+    ["src/app/glob.ts", "src/app/url.ts"]
+        .map(|file| (file.to_string(), 1, message.to_string()))
+        .to_vec()
+}
+
+/// A glob, or a literal path, whose static prefix runs into one installed package
+/// is a use of that package, judged as a literal import of it is: by
+/// `forbid_external`, by `may_use_external` and by `manifests`, with no gap left.
+#[test]
+fn a_glob_into_an_installed_package_is_a_use_of_it() {
+    let (_tmp, root) = flags(
+        "{ forbid_external: [flag-icons] }",
+        "\"flag-icons\": \"7.0.0\"",
+    );
+    let report = json(&check(&root));
+    let forbidden = "app -> external flag-icons is forbidden";
+    assert_eq!(by_message(&report), in_both_files(forbidden), "{report:#}");
+
+    let (_tmp, root) = flags(
+        "{ may_use_external: [flag-icons] }",
+        "\"flag-icons\": \"7.0.0\"",
+    );
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{:#}", json(&checked));
+    assert!(
+        unresolved(&checked).is_empty(),
+        "{:?}",
+        unresolved(&checked)
+    );
+
+    let (_tmp, root) = flags("{ may_use_external: [flag-icons] }", "");
+    let report = json(&check(&root));
+    let undeclared = "flag-icons is not declared in package.json; add it to the dependencies, or drop the dependency";
+    assert_eq!(by_message(&report), in_both_files(undeclared), "{report:#}");
+}
+
+/// A glob whose static prefix stops short of a whole package, or that is bare,
+/// which an alias may stand for, stays a gap.
+#[test]
+fn a_glob_short_of_one_installed_package_stays_a_gap() {
+    let (_tmp, root) = flags(
+        "{ may_use_external: [flag-icons] }",
+        "\"flag-icons\": \"7.0.0\"",
+    );
+    write_all(
+        &root,
+        &[(
+            "src/app/short.ts",
+            "export const any = import.meta.glob(\"/node_modules/flag-*/x.svg\");\nexport const bare = import.meta.glob(\"flag-icons/flags/*.svg\");\n",
+        )],
+    );
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    assert_eq!(checked.outcome(), Outcome::EvidenceRequired);
+    assert_eq!(
+        places(&checked, "the target of"),
+        at(&[
+            (1, "/node_modules/flag-*/x.svg"),
+            (2, "flag-icons/flags/*.svg")
+        ])
+    );
 }

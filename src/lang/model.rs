@@ -20,6 +20,11 @@ pub struct Import {
     /// The text its index records it on, when that is not the specifier: the
     /// `y as z` of Python's `from . import y as z`, whose specifier is `.y`.
     pub recorded_on: Option<String>,
+    /// The static prefix of an import computed at run time ([`Form::Computed`]):
+    /// its whole path segments before the first that is not literal, ending in `/`
+    /// where it is cut (`/node_modules/pkg/` of `/node_modules/pkg/*.svg`), as its
+    /// language reads them. `None` when it has none to read, such as a variable.
+    pub prefix: Option<String>,
 }
 
 impl Import {
@@ -30,6 +35,7 @@ impl Import {
             line,
             form,
             recorded_on: None,
+            prefix: None,
         }
     }
 

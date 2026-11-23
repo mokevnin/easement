@@ -238,6 +238,30 @@ pub struct Installs<'a> {
     pub package: fn(&str) -> String,
 }
 
+impl Installs<'_> {
+    /// The package installed where a path, cut into its segments, runs into one of
+    /// the directories, the innermost when they nest (pnpm's
+    /// `node_modules/.pnpm/a@1.0.0/node_modules/a/`), with how many segments of the
+    /// path reach through its name. `None` when the path runs into none, holds no
+    /// segment inside the package, or steps back below the directory (`..`, `.`),
+    /// which may leave the package. An empty last segment, as of a path cut after a
+    /// `/`, stands for what is below it. One reading for the path of a symbol and
+    /// for a path an import writes.
+    pub fn package_in(&self, segments: &[&str]) -> Option<(String, usize)> {
+        let dir = segments
+            .iter()
+            .rposition(|segment| self.dirs.contains(segment))?;
+        let below = &segments[dir + 1..];
+        if below.iter().any(|segment| matches!(*segment, "." | "..")) {
+            return None;
+        }
+        let package = (self.package)(&below.join("/"));
+        // The directories the package's name takes, and at least one inside it.
+        let length = package.split('/').count();
+        (below.len() > length).then_some((package, dir + 1 + length))
+    }
+}
+
 /// What a name is to the rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shape {
@@ -346,28 +370,16 @@ pub struct Module<'a> {
     pub reading: Reading,
 }
 
-/// The package installed where the path of a symbol runs into one of `installs`,
-/// the innermost when they nest (pnpm's `node_modules/.pnpm/a@1.0.0/node_modules/a/`),
-/// with the symbol as one of its own, which the hooks of the language read as they
-/// read any symbol of a package: what it names past the package, and how many of the
-/// descriptors of the symbol that leaves out. `None` when the path runs into none,
-/// or names nothing inside the package.
+/// The package installed where the path of a symbol runs into one of `installs`
+/// ([`Installs::package_in`]), with the symbol as one of its own, which the hooks of
+/// the language read as they read any symbol of a package: what it names past the
+/// package, and how many of the descriptors of the symbol that leaves out.
 fn installed<'a>(parsed: &Parsed<'a>, installs: &Installs) -> Option<(Parsed<'a>, usize)> {
-    let namespaces = &parsed.descriptors[..leading(parsed, 0, Kind::Namespace)];
-    let dir = namespaces
-        .iter()
-        .rposition(|(name, _)| installs.dirs.contains(&name.as_str()))?;
-    let below: Vec<&str> = namespaces[dir + 1..]
+    let namespaces: Vec<&str> = parsed.descriptors[..leading(parsed, 0, Kind::Namespace)]
         .iter()
         .map(|(name, _)| name.as_str())
         .collect();
-    let package = (installs.package)(&below.join("/"));
-    // The directories the package's name takes, and at least one inside it.
-    let length = package.split('/').count();
-    if below.len() <= length {
-        return None;
-    }
-    let skipped = dir + 1 + length;
+    let (package, skipped) = installs.package_in(&namespaces)?;
     Some((
         Parsed {
             scheme: parsed.scheme.clone(),
@@ -724,6 +736,49 @@ mod tests {
         assert_eq!(
             module("scip-typescript npm . . node_modules/`@types`/node/`index.d.ts`/"),
             "node"
+        );
+    }
+
+    /// A path, of a symbol or written, is in the package under the innermost
+    /// install directory it runs into, when it holds the whole name of the package
+    /// and something inside it; the package comes with the segments its path takes.
+    #[test]
+    fn a_path_is_in_the_package_under_its_innermost_install_directory() {
+        fn scoped(path: &str) -> String {
+            let mut parts = path.splitn(3, '/');
+            match (parts.next().unwrap_or_default(), parts.next()) {
+                (scope, Some(name)) if scope.starts_with('@') => format!("{scope}/{name}"),
+                (first, _) => first.to_string(),
+            }
+        }
+        let installs = Installs {
+            dirs: &["node_modules"],
+            package: scoped,
+        };
+        let installed = |path: &str| {
+            let segments: Vec<&str> = path.split('/').collect();
+            installs.package_in(&segments)
+        };
+        assert_eq!(installed("node_modules/kit/a.css"), Some(("kit".into(), 2)));
+        assert_eq!(
+            installed("/node_modules/@sc/kit/x/a.css"),
+            Some(("@sc/kit".into(), 4))
+        );
+        assert_eq!(
+            installed("node_modules/.pnpm/kit@1.0.0/node_modules/kit/a.js"),
+            Some(("kit".into(), 5))
+        );
+        for nothing_inside in ["node_modules/kit", "node_modules/@sc/kit", "node_modules"] {
+            assert_eq!(installed(nothing_inside), None, "{nothing_inside}");
+        }
+        assert_eq!(installed("src/kit/a.css"), None);
+        // A step back below the directory may leave the package: it names none.
+        for stepping in ["node_modules/kit/../x/a.js", "node_modules/kit/./a.js"] {
+            assert_eq!(installed(stepping), None, "{stepping}");
+        }
+        assert_eq!(
+            installed("../node_modules/kit/a.css"),
+            Some(("kit".into(), 3))
         );
     }
 

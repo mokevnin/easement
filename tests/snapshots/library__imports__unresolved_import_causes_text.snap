@@ -13,7 +13,7 @@ Evidence gaps (a pass says nothing about this code):
   the index holds nothing of 1 import(s) for side effects alone, so the dependencies they write were not checked (the compiler records one only when its file is a module, with an `import` or `export`; a file that does not exist leaves nothing either): src/app/main.ts:7 (`../lib/polyfill`)
     to close: make each file imported a module with `export {}`, or fix its path
     src/app/main.ts:7 (`../lib/polyfill`)
-  the target of 3 import(s) is computed at run time, so the dependencies they write were not checked (a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file): src/app/main.ts:16 (``../lib/${name}``), src/app/main.ts:17 (`"../lib/" + name`), src/app/main.ts:18 (`../lib/*.ts`)
+  the target of 3 import(s) is computed at run time, so the dependencies they write were not checked (a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file; one whose static prefix is a path into one installed package (`/node_modules/pkg/*.svg`) is judged as a use of that package instead): src/app/main.ts:16 (``../lib/${name}``), src/app/main.ts:17 (`"../lib/" + name`), src/app/main.ts:18 (`../lib/*.ts`)
     to close: write each target as a literal path, or review those dependencies by hand
     src/app/main.ts:16 (``../lib/${name}``)
     src/app/main.ts:17 (`"../lib/" + name`)

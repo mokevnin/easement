@@ -67,7 +67,7 @@ A file that declares the external dependencies of a package, such as `package.js
 _Avoid_: lockfile (it pins versions, it declares nothing), project file (a `.csproj` or `pom.xml` is read by an indexer, not here)
 
 **Installed package**:
-The package a name is of when the path of its symbol runs into a directory where the language's toolchain installs third-party code, such as `node_modules/<pkg>/`: the package under the innermost one (`hono`, `@scope/pkg`, the one pnpm's store links), whatever package the index credits the name to. Every other name is of the package the index credits it to, which is the project's own when a file of the project defines a name of it.
+The package a name is of when the path of its symbol runs into a directory where the language's toolchain installs third-party code, such as `node_modules/<pkg>/`: the package under the innermost one (`hono`, `@scope/pkg`, the one pnpm's store links), whatever package the index credits the name to. Every other name is of the package the index credits it to, which is the project's own when a file of the project defines a name of it. A path an import writes is read the same way: a TypeScript specifier, or the static prefix of an import computed at run time, that is a path into `node_modules/<pkg>/` with something inside the package is a use of that package (`/node_modules/flag-icons/flags/4x3/de.svg?url`, `import.meta.glob("/node_modules/flag-icons/flags/*.svg")`), whether or not it is installed.
 _Avoid_: unnamed package (the index may credit such a name to the project or to no named package, but its path names it)
 
 **Framework**:
@@ -87,8 +87,12 @@ Where the index must take an import a file writes for it to count as resolved: a
 _Avoid_: resolved module (a module reference that leads nowhere resolves nothing)
 
 **Unresolved import**:
-An import a file writes that the index takes to no source target and whose text names none either, or names more than one file it may mean (both `x.py` and `x/__init__.py`): its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
+An import a file writes that the index takes to no source target and whose text, or static prefix, names none either, or names more than one file it may mean (both `x.py` and `x/__init__.py`): its dependency is not in the graph, so it is an evidence gap, one for each cause. One that a `target_only` or excluded file writes is no gap, as no check judges that file's dependencies, but `unused` takes a file it may reach as unjudged.
 _Avoid_: missing import, broken import (the code may build)
+
+**Static prefix**:
+The whole path segments of an import computed at run time before the first that is not literal, as its language's entry reads them: in an `import.meta.glob` pattern, the segments without any character of glob syntax (`* ? [ ] { } ( ) !` or `\`); in a template literal, the text of its fragments before the first substitution or escape, cut at its last `/`. A segment cut short is no part of it, so `/node_modules/flag-*/x.svg` has `/node_modules/`. One that is a path into one installed package makes the import a use of that package; any other, a bare one among them (`pkg/*.svg`, which an alias may stand for), leaves the import an unresolved one.
+_Avoid_: base, glob base (a glob library's base may cut inside a segment)
 
 **Import call**:
 A call that imports the module its literal argument names, such as `require("./x")` or `importlib.import_module("a.b")`, which an index may not record: the compiler records `require()` only where it knows `require`, and scip-python records no such call. One the index does not record is an unresolved import of its own cause. Its argument is read as an import's specifier where the language reads it so (`require`), and never where the call reads it in its own terms (`import_module` against the package it is given).

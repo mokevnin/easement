@@ -109,6 +109,7 @@ pub static GO: Language = Language {
             close: None,
         }],
         spelled: None,
+        computed: None,
     }),
     reader: Reader::Indexer(&Indexer {
         binary: "scip-go",
@@ -174,6 +175,7 @@ pub static TYPESCRIPT: Language = Language {
         list: super::typescript::written_imports,
         explained: super::typescript::EXPLAINED,
         spelled: Some(super::typescript::spelled),
+        computed: Some(super::typescript::computed),
     }),
     reader: Reader::Indexer(&Indexer {
         binary: "scip-typescript",
@@ -238,6 +240,7 @@ pub static PYTHON: Language = Language {
         list: super::python::written_imports,
         explained: super::python::EXPLAINED,
         spelled: Some(super::python::spelled),
+        computed: None,
     }),
     reader: Reader::Indexer(&Indexer {
         binary: "scip-python",

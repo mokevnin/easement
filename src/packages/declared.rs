@@ -309,6 +309,16 @@ pub(crate) mod tests {
         let named = PACKAGE_JSON.named_in_source("a.ts", relative);
         assert!(!named.names("."));
         assert!(!named.names(""));
+        // A path, or the static prefix of a glob, into an installed package names it.
+        let installed = "import u from \"/node_modules/flags/x.svg?url\";\n\
+                         const g = import.meta.glob(\"../node_modules/@sc/kit/*.css\");\n\
+                         const s = import.meta.glob(\"/node_modules/sh*/x.css\");\n\
+                         const t = import(`/node_modules/tpl/${name}.js`);\n";
+        let named = PACKAGE_JSON.named_in_source("a.ts", installed);
+        assert!(named.names("flags"));
+        assert!(named.names("@sc/kit"));
+        assert!(!named.names("sh"));
+        assert!(named.names("tpl"));
         let rs = "use serde::de::Error;\nextern crate libc;\nfn f() { other::x(); }\n";
         let named = CARGO_TOML.named_in_source("a.rs", rs);
         assert!(named.names("serde"));

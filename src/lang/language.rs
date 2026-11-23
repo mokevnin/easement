@@ -39,6 +39,11 @@ pub struct WrittenImports {
     /// from its text alone. `None` when nothing is read from it, and such an import
     /// is an evidence gap.
     pub spelled: Option<fn(&str) -> Spelled>,
+    /// The package an import computed at run time uses, read from its static prefix
+    /// ([`Import::prefix`]) alone: a path into one installed package. `None`, as a
+    /// field or as an answer, when nothing is read from it, and such an import is
+    /// an evidence gap.
+    pub computed: Option<fn(&str) -> Option<String>>,
 }
 
 /// What brings about one cause of an unresolved import in a language, and how to

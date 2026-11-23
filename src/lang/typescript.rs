@@ -11,9 +11,9 @@ use tree_sitter::Node;
 use super::language::module_path_in;
 use super::language::{Explained, Language, Spelled, UnindexedUse, UnrelatedSpan};
 use super::{Cause, Form, Import};
-use crate::packages::npm::npm_name;
+use crate::packages::npm::{self, npm_name};
 use crate::relpath::{self, parent};
-use crate::scip::symbol::{self, Kind, Parsed, Qualifier};
+use crate::scip::symbol::{self, Installs, Kind, Parsed, Qualifier};
 
 /// The extensions of its files.
 pub const EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
@@ -87,7 +87,7 @@ pub const EXPLAINED: &[Explained] = &[
     },
     Explained {
         cause: Cause::Computed,
-        because: "a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file",
+        because: "a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file; one whose static prefix is a path into one installed package (`/node_modules/pkg/*.svg`) is judged as a use of that package instead",
         close: Some("write each target as a literal path, or review those dependencies by hand"),
     },
 ];
@@ -200,12 +200,56 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
                 Some(specifier) if form != Form::Computed => {
                     Some(Import::at(argument, specifier, form))
                 }
-                Some(pattern) => Some(Import::at(argument, pattern, Form::Computed)),
-                None => Some(Import::at(argument, source(argument)?, Form::Computed)),
+                Some(pattern) => Some(Import {
+                    prefix: Some(glob_prefix(&pattern)),
+                    ..Import::at(argument, pattern, Form::Computed)
+                }),
+                None => Some(Import {
+                    prefix: template_prefix(argument, text),
+                    ..Import::at(argument, source(argument)?, Form::Computed)
+                }),
             }
         }
         _ => None,
     }
+}
+
+/// The whole segments of a glob pattern before the first that is not literal:
+/// one that holds any character of the syntax of tinyglobby, which Vite reads
+/// (`* ? [ ] { } ( ) !`), or an escape. A wide set: a doubt cuts the prefix
+/// short, and leaves a gap. A pattern of literal segments alone is all prefix.
+fn glob_prefix(pattern: &str) -> String {
+    const SYNTAX: &[char] = &['*', '?', '[', ']', '{', '}', '(', ')', '!', '\\'];
+    let segments: Vec<&str> = pattern.split('/').collect();
+    match segments.iter().position(|segment| segment.contains(SYNTAX)) {
+        Some(first_glob) => segments[..first_glob]
+            .iter()
+            .map(|segment| format!("{segment}/"))
+            .collect(),
+        None => pattern.to_string(),
+    }
+}
+
+/// The whole segments of a template string before its first substitution, from
+/// the text the syntax tree gives as its fragments up to the first other part
+/// (a substitution, or an escape, read as no literal text). `None` for anything
+/// that is not a template.
+fn template_prefix(node: Node, text: &str) -> Option<String> {
+    if node.kind() != "template_string" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let literal: String = node
+        .named_children(&mut cursor)
+        .take_while(|child| child.kind() == "string_fragment")
+        .filter_map(|fragment| fragment.utf8_text(text.as_bytes()).ok())
+        .collect();
+    // The segment the first other part cuts short is no part of it.
+    Some(
+        literal
+            .rfind('/')
+            .map_or_else(String::new, |end| literal[..=end].to_string()),
+    )
 }
 
 /// What a string, or a template with nothing substituted, holds between its quotes.
@@ -221,20 +265,61 @@ fn literal(node: Node, text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// What a specifier spells when the index takes it to no source target: a
-/// relative path, without the query a bundler reads (`?raw`); a package; or
-/// neither, such as an alias that `paths` or the bundler defines.
+/// Where its package managers install packages, and how a path below one names
+/// the package, as the path of a symbol is read.
+const INSTALLS: Installs<'static> = Installs {
+    dirs: THIRD_PARTY,
+    package: npm::package,
+};
+
+/// The package installed where `path` runs into `node_modules`, the innermost
+/// when they nest, when the path holds its whole name, one npm takes, and
+/// something inside it.
+fn installed(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let (package, _) = INSTALLS.package_in(&segments)?;
+    (npm::named_by(&package).as_ref() == Some(&package)).then_some(package)
+}
+
+/// Whether a specifier is a path: from the importing file, or from the root of
+/// the project (`/`, as Vite reads it).
+fn is_path(specifier: &str) -> bool {
+    ["/", "./", "../"]
+        .iter()
+        .any(|start| specifier.starts_with(start))
+}
+
+/// What a specifier spells when the index takes it to no source target, without
+/// the query a bundler reads (`?raw`): the package installed where a path runs
+/// into `node_modules`; another relative path; a package; or neither, such as an
+/// alias that `paths` or the bundler defines.
 pub fn spelled(specifier: &str) -> Spelled {
-    if specifier.starts_with("./") || specifier.starts_with("../") {
-        let path = specifier
-            .split_once('?')
-            .map_or(specifier, |(path, _)| path);
-        return Spelled::Paths(vec![path.to_string()]);
+    let path = specifier
+        .split_once('?')
+        .map_or(specifier, |(path, _)| path);
+    if is_path(specifier) {
+        return match installed(path) {
+            Some(package) => Spelled::Package(package),
+            // A path from the root of the project names no file the way the
+            // index reads one.
+            None if specifier.starts_with('/') => Spelled::Neither,
+            None => Spelled::Paths(vec![path.to_string()]),
+        };
     }
-    match crate::packages::npm::named_by(specifier) {
+    match npm::named_by(specifier) {
         Some(package) => Spelled::Package(package),
         None => Spelled::Neither,
     }
+}
+
+/// The package an import computed at run time uses, read from its static prefix
+/// ([`Import::prefix`]): the one installed where a path runs into `node_modules`,
+/// as [`spelled`] reads a written path. A bare prefix names none: Vite reads a
+/// glob that does not start with `./` or `/` through an alias, and a bare
+/// `` import(`pkg/${x}`) `` may go through `paths` or an alias, which only the
+/// index could rule out.
+pub fn computed(prefix: &str) -> Option<String> {
+    is_path(prefix).then(|| installed(prefix)).flatten()
 }
 
 /// scip-typescript reads what the TypeScript compiler does: the sources and declarations, every
@@ -478,6 +563,105 @@ export const q = 1;
         );
     }
 
+    /// The static prefix of each import computed at run time `text` writes: its
+    /// whole path segments before the first that is not literal, as a glob pattern
+    /// or a template's text before its first substitution spells them.
+    fn prefixes(text: &str) -> Vec<(String, Option<String>)> {
+        written_imports("src/app.ts", text)
+            .into_iter()
+            .filter(|import| import.form == Form::Computed)
+            .map(|import| (import.specifier, import.prefix))
+            .collect()
+    }
+
+    #[test]
+    fn a_computed_import_has_the_whole_literal_segments_before_its_first_variant_one() {
+        let glob = |pattern: &str, prefix: Option<&str>| {
+            (
+                format!("import.meta.glob('{pattern}');\n"),
+                prefix.map(str::to_string),
+            )
+        };
+        let cases = [
+            glob(
+                "/node_modules/flag-icons/flags/4x3/*.svg",
+                Some("/node_modules/flag-icons/flags/4x3/"),
+            ),
+            // A segment a wildcard cuts short is no part of it, a package's name
+            // included.
+            glob("/node_modules/flag-*/x.svg", Some("/node_modules/")),
+            glob("/node_modules/@scope/*/x.js", Some("/node_modules/@scope/")),
+            glob("/node_modules/*", Some("/node_modules/")),
+            glob("/node_modules/.bin/*", Some("/node_modules/.bin/")),
+            glob(
+                "/node_modules/.pnpm/a@1.0.0/node_modules/a/*.js",
+                Some("/node_modules/.pnpm/a@1.0.0/node_modules/a/"),
+            ),
+            glob("/node_modules/@(a|b)/x.js", Some("/node_modules/")),
+            glob("/node_modules/a/{x,y}.js", Some("/node_modules/a/")),
+            glob("/node_modules/a/[xy].js", Some("/node_modules/a/")),
+            glob("/node_modules/a/x?.js", Some("/node_modules/a/")),
+            glob("/node_modules/a\\\\b/x.js", Some("/node_modules/")),
+            glob("pkg/*.svg", Some("pkg/")),
+            glob("./locales/*.json", Some("./locales/")),
+            glob("**/*.ts", Some("")),
+            glob("!/node_modules/a/*", Some("")),
+            // A pattern of literal segments alone is its own prefix.
+            glob("/node_modules/a/x.svg", Some("/node_modules/a/x.svg")),
+            ("import.meta.glob(['/node_modules/a/*.js']);\n".into(), None),
+            (
+                "import(`/node_modules/pkg/${x}.js`);\n".into(),
+                Some("/node_modules/pkg/".into()),
+            ),
+            ("import(`pkg/${x}`);\n".into(), Some("pkg/".into())),
+            (
+                "import(`/node_modules/pkg-${x}/a.js`);\n".into(),
+                Some("/node_modules/".into()),
+            ),
+            // An escape is read as no literal text.
+            (
+                "import(`/node_modules/p\\x41g/${x}`);\n".into(),
+                Some("/node_modules/".into()),
+            ),
+            ("import(\"/node_modules/a/\" + x);\n".into(), None),
+            ("require(name);\n".into(), None),
+        ];
+        for (text, prefix) in cases {
+            let found = prefixes(&text);
+            assert_eq!(found.len(), 1, "{text}");
+            assert_eq!(found[0].1, prefix, "{text}");
+        }
+    }
+
+    /// A static prefix that is a path into one installed package is a use of that
+    /// package; any other one, a bare one among them, which an alias may stand
+    /// for, names none.
+    #[test]
+    fn a_static_prefix_into_an_installed_package_names_it() {
+        for (prefix, package) in [
+            ("/node_modules/flag-icons/flags/4x3/", "flag-icons"),
+            ("/node_modules/flag-icons/", "flag-icons"),
+            ("/node_modules/@scope/pkg/", "@scope/pkg"),
+            ("/node_modules/.pnpm/a@1.0.0/node_modules/a/", "a"),
+            ("../node_modules/a/x.svg", "a"),
+        ] {
+            assert_eq!(computed(prefix), Some(package.into()), "{prefix}");
+        }
+        for none in [
+            "/node_modules/",
+            "/node_modules/@scope/",
+            "/node_modules/.bin/",
+            "pkg/",
+            "node_modules/pkg/",
+            "./locales/",
+            "",
+            "/node_modules/a/../",
+            "/node_modules/a/../../src/",
+        ] {
+            assert_eq!(computed(none), None, "{none}");
+        }
+    }
+
     /// The compiler knows `require` in a JavaScript file, so the index records it there.
     #[test]
     fn a_require_in_javascript_is_a_static_import_and_jsx_parses() {
@@ -536,6 +720,38 @@ export const q = 1;
         ] {
             assert_eq!(spelled(neither), Spelled::Neither, "{neither}");
         }
+    }
+
+    /// A path that runs into an installed package spells that package, by the
+    /// innermost `node_modules`, whether it starts at the root of the project or at
+    /// the importing file; a path into `node_modules` that holds no package spells
+    /// none.
+    #[test]
+    fn a_path_into_node_modules_spells_the_package_installed_there() {
+        for (path, package) in [
+            (
+                "/node_modules/flag-icons/flags/4x3/de.svg?url",
+                "flag-icons",
+            ),
+            ("./node_modules/@scope/pkg/x.css", "@scope/pkg"),
+            ("../../node_modules/.pnpm/a@1.0.0/node_modules/a/x.js", "a"),
+        ] {
+            assert_eq!(spelled(path), Spelled::Package(package.into()), "{path}");
+        }
+        for neither in [
+            "/node_modules/.bin/x",
+            "/node_modules/@scope/x.css",
+            "/node_modules/pkg",
+            "/node_modules/",
+            "/node_modules/a/../b/x.js",
+        ] {
+            assert_eq!(spelled(neither), Spelled::Neither, "{neither}");
+        }
+        // A relative path into no package names a file, which is never walked.
+        assert_eq!(
+            spelled("./node_modules/.bin/x"),
+            Spelled::Paths(vec!["./node_modules/.bin/x".into()])
+        );
     }
 
     #[test]

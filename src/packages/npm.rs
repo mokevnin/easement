@@ -8,6 +8,7 @@ use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 use super::manifest::{
     Declared, Declares, Framework, Listed, Setting, Source, line_at, path_source,
 };
+use crate::lang::language::Spelled;
 use crate::lang::parts::{Kind, Part};
 use crate::lang::{Form, typescript};
 use crate::packages::manifest::ManifestFile;
@@ -283,14 +284,21 @@ pub(crate) fn npm_name(package: &str) -> String {
 
 /// The packages TypeScript or JavaScript source names in an import, a `require`
 /// or an `import()` it writes, not in a comment or a string; a relative or
-/// absolute path names a file instead.
+/// absolute path names a file instead, unless it runs into an installed package,
+/// as the static prefix of an import computed at run time may.
 pub(crate) fn named_in_source(file: &str, source: &str) -> BTreeSet<String> {
     typescript::written_imports(file, source)
         .into_iter()
-        .filter(|import| import.form != Form::Computed)
-        .map(|import| import.specifier)
-        .filter(|specifier| !specifier.starts_with(['.', '/']))
-        .map(|specifier| self::package(&specifier))
+        .filter_map(|import| match import.form {
+            Form::Computed => import.prefix.as_deref().and_then(typescript::computed),
+            _ if import.specifier.starts_with(['.', '/']) => {
+                match typescript::spelled(&import.specifier) {
+                    Spelled::Package(package) => Some(package),
+                    Spelled::Paths(_) | Spelled::Neither => None,
+                }
+            }
+            _ => Some(self::package(&import.specifier)),
+        })
         .collect()
 }
 

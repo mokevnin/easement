@@ -179,9 +179,28 @@ fn compare(
 ) -> Compared {
     use lang::language::Spelled;
     use lang::{Cause, Form};
-    // A target computed at run time is no one file, whatever the index holds.
+    // The dependency the text of the import names, on `target`.
+    let spelled_on = |target: Target| {
+        Compared::Spelled(Box::new(Dep::module(
+            file,
+            import.line,
+            target.name(),
+            target,
+        )))
+    };
+    // A target computed at run time is no one file, whatever the index holds; its
+    // static prefix may still run into one package, which it is a use of.
     let unspelled = match import.form {
-        Form::Computed => Cause::Computed,
+        Form::Computed => {
+            let package = written
+                .computed
+                .zip(import.prefix.as_deref())
+                .and_then(|(computed, prefix)| computed(prefix));
+            if let Some(package) = package {
+                return spelled_on(Target::External(package));
+            }
+            Cause::Computed
+        }
         form => {
             let resolution = resolved(&import);
             // A call reads its module in its own terms (a package it is given), so
@@ -196,13 +215,7 @@ fn compare(
                 Some(Spelled::Neither) | None => None,
             };
             if let Some(target) = target {
-                let specifier = target.name();
-                return Compared::Spelled(Box::new(Dep::module(
-                    file,
-                    import.line,
-                    specifier,
-                    target,
-                )));
+                return spelled_on(target);
             }
             match (resolution, form) {
                 (scip::Resolution::Unwalked, _) => Cause::Unwalked,
