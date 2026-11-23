@@ -177,6 +177,10 @@ enum Compared {
     Resolved,
     /// The index does not, but its text names a file of the project or a package.
     Spelled(Box<Dep>),
+    /// The index takes it out of the project, but its text spells a path to a file
+    /// of the project, which it is: the dependency is that file's, and the index's
+    /// references at these columns of its line are overruled.
+    Overruled(Box<Dep>, (usize, usize)),
     /// Neither does its text: its dependency is not in the graph.
     Unresolved(Unresolved),
 }
@@ -194,7 +198,9 @@ struct Written {
 /// When the index takes it to no source target, a path its text spells that names
 /// a file that `exists` exactly, or a package it spells, is its dependency (never
 /// for a call that imports a module, which reads it in its own terms); else it
-/// is unresolved, for the cause its resolution and its form tell.
+/// is unresolved, for the cause its resolution and its form tell. When the index
+/// takes it only out of the project, a path its text spells to one file that
+/// `exists` still is its dependency: a relative path names no other.
 fn compare(
     file: &str,
     import: Import,
@@ -205,14 +211,7 @@ fn compare(
     use lang::language::Spelled;
     use lang::{Cause, Form};
     // The dependency the text of the import names, on `target`.
-    let spelled_on = |target: Target| {
-        Compared::Spelled(Box::new(Dep::module(
-            file,
-            import.line,
-            target.name(),
-            target,
-        )))
-    };
+    let dep_on = |target: Target| Box::new(Dep::module(file, import.line, target.name(), target));
     // A target computed at run time is no one file, whatever the index holds; its
     // static prefix may still run into one package, which it is a use of.
     let unspelled = match import.form {
@@ -222,7 +221,7 @@ fn compare(
                 .zip(import.prefix.as_deref())
                 .and_then(|(computed, prefix)| computed(prefix));
             if let Some(package) = package {
-                return spelled_on(Target::External(package));
+                return Compared::Spelled(dep_on(Target::External(package)));
             }
             Cause::Computed
         }
@@ -235,12 +234,22 @@ fn compare(
                 .filter(|_| form != Form::ImportCall { as_import: false });
             let target = match spelled.map(|spelled| spelled(&import.specifier)) {
                 _ if resolution == scip::Resolution::Target => return Compared::Resolved,
-                Some(Spelled::Paths(paths)) => only_file(file, &paths, &exists),
+                Some(Spelled::Paths(paths)) => match (only_file(file, &paths, &exists), resolution)
+                {
+                    (Some(target), scip::Resolution::Outside(columns)) => {
+                        return Compared::Overruled(dep_on(target), columns);
+                    }
+                    (_, scip::Resolution::Outside(_)) => return Compared::Resolved,
+                    (target, _) => target,
+                },
+                _ if matches!(resolution, scip::Resolution::Outside(_)) => {
+                    return Compared::Resolved;
+                }
                 Some(Spelled::Package(package)) => Some(Target::External(package)),
                 Some(Spelled::Neither) | None => None,
             };
             if let Some(target) = target {
-                return spelled_on(target);
+                return Compared::Spelled(dep_on(target));
             }
             match (resolution, form) {
                 (scip::Resolution::Unwalked, _) => Cause::Unwalked,
@@ -520,6 +529,8 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
     // What the comparison of written imports found, in checked files and in unread ones.
     let mut checked_imports = Written::default();
     let mut unread_imports = Written::default();
+    // The references of the index that the text of an import overrules.
+    let mut overruled = Vec::new();
     // A file the text of an import may name: one of the project, excluded or not.
     let exists = |file: &str| {
         project.contains(file) || excluded.binary_search_by(|f| f.as_str().cmp(file)).is_ok()
@@ -599,10 +610,15 @@ fn read(root: &Path, policy: &ScanPolicy, cache: &mut Cache, flow: bool) -> Resu
             match compare(&document.path, import, written, resolved, exists) {
                 Compared::Resolved => {}
                 Compared::Spelled(dep) => found.spelled.push(*dep),
+                Compared::Overruled(dep, columns) => {
+                    overruled.push((document.path.clone(), dep.line, columns));
+                    found.spelled.push(*dep);
+                }
                 Compared::Unresolved(unresolved) => found.unresolved.push(unresolved),
             }
         }
     }
+    let index = index.overruling(overruled);
     let implementations = index
         .implementations()
         .into_iter()
