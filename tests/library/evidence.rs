@@ -675,6 +675,7 @@ fn an_accepted_gap_that_accepts_nothing_fails_as_unmatched_at_its_line() {
 /// A file easement could not read is accepted like any unread file, so an
 /// entry that names only such a file accepts it and is not stale.
 #[test]
+#[cfg(unix)]
 fn an_accepted_gap_over_an_unreadable_file_accepts_it_and_is_not_stale() {
     use std::os::unix::fs::PermissionsExt;
     let (_tmp, root) = fixture("kotlin");
