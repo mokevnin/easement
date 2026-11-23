@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/mokevnin/easement/compare/v0.10.0...v0.11.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** `uncovered_ok` is removed and fails to load. Write each entry as `{ kind: uncovered, files: <globs>, because: <why> }`. Files whose indexer cannot run on this platform are no longer accepted.
+
+### Features
+
+* **config:** accept a reviewed computed import in accepted_gaps ([e68c9d2](https://github.com/mokevnin/easement/commit/e68c9d20a08c0f51d2770caad073997434546561)), closes [#253](https://github.com/mokevnin/easement/issues/253)
+* **config:** replace uncovered_ok with accepted_gaps, entries of one kind with a reason ([3723072](https://github.com/mokevnin/easement/commit/37230727341d9c79334898364d49bed85cc319c9)), closes [#253](https://github.com/mokevnin/easement/issues/253)
+* **typescript:** judge a computed import into one installed package as a use of it ([60e670d](https://github.com/mokevnin/easement/commit/60e670d67ee1c6b19569794a2af63070be0d4f2b)), closes [#250](https://github.com/mokevnin/easement/issues/250)
+
+
+### Bug Fixes
+
+* **review:** list an accepted gap whose reason changed, and count what one accepts ([0789c8c](https://github.com/mokevnin/easement/commit/0789c8c44d118123a893aad42b308aa08922f937)), closes [#253](https://github.com/mokevnin/easement/issues/253)
+
 ## [0.10.0](https://github.com/mokevnin/easement/compare/v0.9.0...v0.10.0) (2026-11-19)
 
 
