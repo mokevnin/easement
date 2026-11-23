@@ -6,6 +6,7 @@ expression: report
   "accepted_gaps": [
     {
       "because": "rewritten next quarter",
+      "count": 1,
       "files": [
         "legacy/old.go"
       ],

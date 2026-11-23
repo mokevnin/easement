@@ -347,6 +347,7 @@ fn accepted_gaps_accepts_known_uncovered_files() {
             "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
             "line": 7,
             "files": ["tools/gen.go", "tools/other.go"],
+            "count": 2,
         }])
     );
 }
@@ -411,6 +412,7 @@ accepted_gaps:
             "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
             "line": 8,
             "files": ["app/race.go"],
+            "count": 1,
         }])
     );
     // A drawing without the dependencies of the accepted file says so beside it.
@@ -773,6 +775,7 @@ fn an_accepted_computed_import_passes_require_evidence_and_stays_a_gap_of_the_gr
             "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
             "line": 5,
             "files": ["src/i18n.ts"],
+            "count": 1,
             "places": [
                 { "file": "src/i18n.ts", "line": 1, "specifier": "./locales/*.json" },
                 { "file": "src/i18n.ts", "line": 2, "specifier": "./locales/*.json" },

@@ -761,9 +761,8 @@ impl Debt {
                 .collect()
         };
         let (accepted_then, accepted_now) = (accepted(base), accepted(head));
-        let same = |a: &Accepted, b: &Accepted| {
-            (a.kind, &a.files, &a.file, &a.specifier) == (b.kind, &b.files, &b.file, &b.specifier)
-        };
+        // A new reason is a new decision, so it counts too.
+        let same = |a: &Accepted, b: &Accepted| a == b;
         let (exclude_added, exclude_removed) = added_and_removed(&base.exclude, &head.exclude);
         let (target_only_added, target_only_removed) =
             added_and_removed(&base.target_only, &head.target_only);
@@ -1407,6 +1406,25 @@ components:
             lines(&examples.removed),
             ["web/a.ts -> db/b.ts: expects rejected [privacy]"]
         );
+    }
+
+    /// A new reason is a new decision: the entry is listed as taken back with the
+    /// old one and added with the new one.
+    #[test]
+    fn an_accepted_gap_with_a_new_reason_is_listed_both_ways() {
+        let entry = |because: &str| {
+            format!(
+                "{TWO}accepted_gaps:\n  - {{ kind: uncovered, files: old/**, because: {because} }}\n"
+            )
+        };
+        let debt = compare(&entry("rewritten soon"), &entry("kept for good"), |s| {
+            Debt::of(s, &BTreeSet::new(), &BTreeSet::new())
+        });
+        let because = |items: &[Accepted]| -> Vec<String> {
+            items.iter().map(|a| a.because.clone()).collect()
+        };
+        assert_eq!(because(&debt.accepted_gaps_added), ["kept for good"]);
+        assert_eq!(because(&debt.accepted_gaps_removed), ["rewritten soon"]);
     }
 
     #[test]

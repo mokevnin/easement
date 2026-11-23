@@ -91,6 +91,9 @@ pub struct AcceptedGap {
     /// for `unresolved_imports`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    /// How many files, as the evidence gap of its kind counts them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
     /// The places of the imports it accepts, for `unresolved_imports`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub places: Vec<Place>,
@@ -1873,6 +1876,7 @@ hi</system-out>
             },
             line,
             files: files.iter().map(|f| f.to_string()).collect(),
+            count: Some(files.len()),
             places: Vec::new(),
         }
     }

@@ -404,13 +404,14 @@ pub fn graph_unread(
     if policy.config.tests.is_some() {
         stats.parts_gaps = parts_reasons(&scan.parts_doubts);
     }
-    let accepted_gap = |entry: usize, kind, files, places| {
+    let accepted_gap = |entry: usize, kind, files: Vec<String>, places| {
         let (provenance, line) = policy.top_item("accepted_gaps", entry);
         report::AcceptedGap {
             kind,
             because: policy.config.accepted_gaps[entry].because().to_string(),
             provenance,
             line,
+            count: (!files.is_empty()).then_some(files.len()),
             files,
             places,
         }
