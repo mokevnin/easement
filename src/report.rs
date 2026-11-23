@@ -10,6 +10,7 @@ use crate::check::{
     self, CannotRun, HonouredSuppression, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged,
     Violation,
 };
+use crate::config::AcceptedKind;
 use crate::diff::{Changes, Diff, InFull};
 use crate::drift::Drift;
 use crate::policy::Provenance;
@@ -80,7 +81,7 @@ pub struct Coverage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AcceptedGap {
     /// The kind of the evidence gap it accepts.
-    pub kind: GapKind,
+    pub kind: AcceptedKind,
     /// Why the policy accepts it.
     pub because: String,
     /// Where the policy writes the entry.
@@ -111,8 +112,8 @@ impl AcceptedGap {
     /// What it accepts, as a phrase: `files no indexer read`.
     fn what(&self) -> &'static str {
         match self.kind {
-            GapKind::UnresolvedImports => "imports whose target is computed at run time",
-            _ => "files no indexer read",
+            AcceptedKind::Uncovered => "files no indexer read",
+            AcceptedKind::UnresolvedImports => "imports whose target is computed at run time",
         }
     }
 
@@ -120,11 +121,11 @@ impl AcceptedGap {
     /// places of the imports.
     fn where_(&self) -> String {
         match self.kind {
-            GapKind::UnresolvedImports => {
+            AcceptedKind::Uncovered => format!("files: {}", self.files.join(", ")),
+            AcceptedKind::UnresolvedImports => {
                 let places: Vec<String> = self.places.iter().map(ToString::to_string).collect();
                 format!("places: {}", places.join(", "))
             }
-            _ => format!("files: {}", self.files.join(", ")),
         }
     }
 
@@ -675,8 +676,8 @@ pub fn gap_lines(
             ));
             // The places say the files too, each at its line.
             out.push_str(&match gap.kind {
-                GapKind::UnresolvedImports => item_lines(&gap.places, "    "),
-                _ => item_lines(&gap.files, "    "),
+                AcceptedKind::Uncovered => item_lines(&gap.files, "    "),
+                AcceptedKind::UnresolvedImports => item_lines(&gap.places, "    "),
             });
         }
     }
@@ -1867,7 +1868,7 @@ hi</system-out>
     /// `files` as generated.
     fn accepted_gap(index: usize, line: usize, files: &[&str]) -> AcceptedGap {
         AcceptedGap {
-            kind: GapKind::Uncovered,
+            kind: AcceptedKind::Uncovered,
             because: "generated".into(),
             provenance: Provenance {
                 field: format!("accepted_gaps[{index}]"),
@@ -1925,7 +1926,7 @@ hi</system-out>
     #[test]
     fn an_accepted_import_is_named_with_its_places_in_every_format() {
         let mut gap = accepted_gap(0, 5, &["src/i18n.ts"]);
-        gap.kind = GapKind::UnresolvedImports;
+        gap.kind = AcceptedKind::UnresolvedImports;
         gap.places = vec![Place {
             file: "src/i18n.ts".into(),
             line: 1,

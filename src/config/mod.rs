@@ -443,7 +443,7 @@ impl ForbiddenName {
 }
 
 /// An entry of `accepted_gaps`: an evidence gap of one kind that the policy accepts, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AcceptedEntry {
     /// Source files no indexer covers that may stay that way.
@@ -470,12 +470,31 @@ pub enum AcceptedEntry {
     },
 }
 
-impl AcceptedEntry {
-    /// The key of the evidence gap it accepts, as the report names its kind.
-    pub fn kind(&self) -> &'static str {
+/// The kind of evidence gap an entry of `accepted_gaps` accepts, named as the
+/// report names the gap's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcceptedKind {
+    Uncovered,
+    UnresolvedImports,
+}
+
+impl AcceptedKind {
+    /// The kind as the policy writes it.
+    pub fn as_str(self) -> &'static str {
         match self {
-            AcceptedEntry::Uncovered { .. } => "uncovered",
-            AcceptedEntry::UnresolvedImports { .. } => "unresolved_imports",
+            AcceptedKind::Uncovered => "uncovered",
+            AcceptedKind::UnresolvedImports => "unresolved_imports",
+        }
+    }
+}
+
+impl AcceptedEntry {
+    /// The kind of evidence gap it accepts.
+    pub fn kind(&self) -> AcceptedKind {
+        match self {
+            AcceptedEntry::Uncovered { .. } => AcceptedKind::Uncovered,
+            AcceptedEntry::UnresolvedImports { .. } => AcceptedKind::UnresolvedImports,
         }
     }
 
@@ -668,7 +687,7 @@ impl Layer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Patterns {
     One(String),
@@ -1324,7 +1343,7 @@ tests: auto
         };
         let c = with("{ kind: uncovered, files: [tools/**, gen/x.go], because: build helpers }")
             .unwrap();
-        assert_eq!(c.accepted_gaps[0].kind(), "uncovered");
+        assert_eq!(c.accepted_gaps[0].kind(), AcceptedKind::Uncovered);
         assert_eq!(c.accepted_gaps[0].because(), "build helpers");
         assert_eq!(
             c.accepted_gaps[0].uncovered_patterns(),
@@ -1342,7 +1361,10 @@ tests: auto
             "{ kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: by language }",
         )
         .unwrap();
-        assert_eq!(imports.accepted_gaps[0].kind(), "unresolved_imports");
+        assert_eq!(
+            imports.accepted_gaps[0].kind(),
+            AcceptedKind::UnresolvedImports
+        );
         assert_eq!(
             imports.accepted_gaps[0].import(),
             Some(("src/i18n.ts", "./locales/*.json"))

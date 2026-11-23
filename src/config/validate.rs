@@ -214,7 +214,7 @@ impl Config {
             if entry.because().trim().is_empty() {
                 bail!(
                     "{place} has an empty `because`; say why the {} gap is accepted",
-                    entry.kind()
+                    entry.kind().as_str()
                 );
             }
             match entry {

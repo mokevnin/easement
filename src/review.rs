@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::check::{self, Key, Violation};
 use crate::components::{Access, ComponentMap};
-use crate::config::{Config, Example};
+use crate::config::{AcceptedEntry, Config, Example, Patterns};
 use crate::decision::{self, Grant, PairDecision, Refusal};
 use crate::examples;
 use crate::policy::Policy;
@@ -704,9 +704,9 @@ pub struct Debt {
     pub baseline_removed: Vec<Key>,
     /// What entries of `accepted_gaps` accept now and did not before: evidence
     /// gaps that no longer count against the verdict, each glob of files apart.
-    pub accepted_gaps_added: Vec<Accepted>,
+    pub accepted_gaps_added: Vec<AcceptedEntry>,
     /// What they accepted before and do not now.
-    pub accepted_gaps_removed: Vec<Accepted>,
+    pub accepted_gaps_removed: Vec<AcceptedEntry>,
     /// `exclude` globs added: paths no rule judges.
     pub exclude_added: Vec<String>,
     pub exclude_removed: Vec<String>,
@@ -720,49 +720,16 @@ pub struct Debt {
     pub warn_removed: Vec<String>,
 }
 
-/// One thing an entry of `accepted_gaps` accepts, with the reason the entry gives:
-/// for `uncovered`, one glob of its files; for `unresolved_imports`, the imports of
-/// one file written as one specifier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Accepted {
-    pub kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub files: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub specifier: Option<String>,
-    pub because: String,
-}
-
 impl Debt {
     /// What differs between the two policies and their baseline entries.
     pub fn of(sides: &Sides, base_baseline: &BTreeSet<Key>, head_baseline: &BTreeSet<Key>) -> Self {
         let (base, head) = (&sides.base.config, &sides.head.config);
-        let accepted = |config: &Config| -> Vec<Accepted> {
-            config
-                .accepted_gaps
-                .iter()
-                .flat_map(|entry| {
-                    let accepted = |files: Option<&str>, import: Option<(&str, &str)>| Accepted {
-                        kind: entry.kind(),
-                        files: files.map(str::to_string),
-                        file: import.map(|(file, _)| file.to_string()),
-                        specifier: import.map(|(_, specifier)| specifier.to_string()),
-                        because: entry.because().to_string(),
-                    };
-                    entry
-                        .uncovered_patterns()
-                        .into_iter()
-                        .map(|pattern| accepted(Some(pattern), None))
-                        .chain(entry.import().map(|import| accepted(None, Some(import))))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+        let accepted = |config: &Config| -> Vec<AcceptedEntry> {
+            config.accepted_gaps.iter().flat_map(each_glob).collect()
         };
         let (accepted_then, accepted_now) = (accepted(base), accepted(head));
         // A new reason is a new decision, so it counts too.
-        let same = |a: &Accepted, b: &Accepted| a == b;
+        let same = |a: &AcceptedEntry, b: &AcceptedEntry| a == b;
         let (exclude_added, exclude_removed) = added_and_removed(&base.exclude, &head.exclude);
         let (target_only_added, target_only_removed) =
             added_and_removed(&base.target_only, &head.target_only);
@@ -787,16 +754,40 @@ fn quoted_each(items: &[String]) -> Vec<String> {
     items.iter().map(|i| format!("`{i}`")).collect()
 }
 
-impl Accepted {
-    /// What it accepts in backticks, with its kind and reason.
-    fn line(&self) -> String {
-        let what = match (&self.files, &self.file, &self.specifier) {
-            (Some(files), _, _) => format!("`{files}`"),
-            (None, Some(file), Some(specifier)) => format!("`{specifier}` in {file}"),
-            _ => String::new(),
-        };
-        format!("{} {what} (because: {})", self.kind, self.because)
+/// The entry as one entry per glob of its files, so that each glob is told apart;
+/// an entry of another kind as it is.
+fn each_glob(entry: &AcceptedEntry) -> Vec<AcceptedEntry> {
+    match entry {
+        AcceptedEntry::Uncovered { files, because } => files
+            .as_vec()
+            .into_iter()
+            .map(|glob| AcceptedEntry::Uncovered {
+                files: Patterns::One(glob.to_string()),
+                because: because.clone(),
+            })
+            .collect(),
+        AcceptedEntry::UnresolvedImports { .. } => vec![entry.clone()],
     }
+}
+
+/// What an entry accepts in backticks, with its kind and reason.
+fn accepted_line(entry: &AcceptedEntry) -> String {
+    let what = match entry {
+        AcceptedEntry::Uncovered { files, .. } => files
+            .as_vec()
+            .iter()
+            .map(|glob| format!("`{glob}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        AcceptedEntry::UnresolvedImports {
+            file, specifier, ..
+        } => format!("`{specifier}` in {file}"),
+    };
+    format!(
+        "{} {what} (because: {})",
+        entry.kind().as_str(),
+        entry.because()
+    )
 }
 
 /// Items as the policy writes them, each in backticks; `none` for no item.
@@ -1061,16 +1052,13 @@ impl Review {
         for (heading, items) in [
             (
                 "accepted_gaps added",
-                debt.accepted_gaps_added
-                    .iter()
-                    .map(Accepted::line)
-                    .collect(),
+                debt.accepted_gaps_added.iter().map(accepted_line).collect(),
             ),
             (
                 "accepted_gaps removed",
                 debt.accepted_gaps_removed
                     .iter()
-                    .map(Accepted::line)
+                    .map(accepted_line)
                     .collect(),
             ),
             ("exclude added", quoted_each(&debt.exclude_added)),
@@ -1420,8 +1408,8 @@ components:
         let debt = compare(&entry("rewritten soon"), &entry("kept for good"), |s| {
             Debt::of(s, &BTreeSet::new(), &BTreeSet::new())
         });
-        let because = |items: &[Accepted]| -> Vec<String> {
-            items.iter().map(|a| a.because.clone()).collect()
+        let because = |items: &[AcceptedEntry]| -> Vec<String> {
+            items.iter().map(|a| a.because().to_string()).collect()
         };
         assert_eq!(because(&debt.accepted_gaps_added), ["kept for good"]);
         assert_eq!(because(&debt.accepted_gaps_removed), ["rewritten soon"]);
@@ -1445,29 +1433,21 @@ components:
         // Each glob apart: `old/**` was accepted already.
         assert_eq!(
             debt.accepted_gaps_added,
-            [Accepted {
-                kind: "uncovered",
-                files: Some("legacy/**".to_string()),
-                file: None,
-                specifier: None,
+            [AcceptedEntry::Uncovered {
+                files: Patterns::One("legacy/**".to_string()),
                 because: "rewritten next quarter".to_string(),
             }]
         );
         assert_eq!(
             debt.accepted_gaps_removed,
             [
-                Accepted {
-                    kind: "uncovered",
-                    files: Some("tools/**".to_string()),
-                    file: None,
-                    specifier: None,
+                AcceptedEntry::Uncovered {
+                    files: Patterns::One("tools/**".to_string()),
                     because: "build helpers".to_string(),
                 },
-                Accepted {
-                    kind: "unresolved_imports",
-                    files: None,
-                    file: Some("src/i18n.ts".to_string()),
-                    specifier: Some("./locales/*.json".to_string()),
+                AcceptedEntry::UnresolvedImports {
+                    file: "src/i18n.ts".to_string(),
+                    specifier: "./locales/*.json".to_string(),
                     because: "by language".to_string(),
                 },
             ]

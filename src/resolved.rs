@@ -8,7 +8,8 @@ use serde::Serialize;
 use crate::check::RuleId;
 use crate::components::ComponentMap;
 use crate::config::{
-    AcceptedEntry, Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Reach, Rule, TESTS,
+    AcceptedEntry, Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Patterns, Reach,
+    Rule, TESTS,
 };
 use crate::decision::{self, ClauseId, Grant, Refusal};
 use crate::policy::{InputKind, Policy, Provenance, Site};
@@ -678,7 +679,8 @@ pub struct ResolvedPolicy {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub target_only: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub accepted_gaps: Vec<ResolvedAccepted>,
+    /// Each entry as the policy writes it, its globs always a list.
+    pub accepted_gaps: Vec<AcceptedEntry>,
     pub reach: &'static str,
     pub manifests: bool,
     pub packages: bool,
@@ -803,21 +805,6 @@ pub struct ExampleEntry {
 pub enum Cycles {
     All(bool),
     Among(Vec<String>),
-}
-
-/// An entry of `accepted_gaps`: the kind of gap it accepts, what it names and why.
-#[derive(Debug, Serialize)]
-pub struct ResolvedAccepted {
-    pub kind: &'static str,
-    /// The globs of the files, for `uncovered`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
-    /// The importing file and the specifier, for `unresolved_imports`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub specifier: Option<String>,
-    pub because: String,
 }
 
 impl ResolvedPolicy {
@@ -1046,27 +1033,30 @@ impl ResolvedPolicy {
             }
         }
         for accepted in &self.accepted_gaps {
-            let what = match (&accepted.file, &accepted.specifier) {
-                (Some(file), Some(specifier)) => format!("`{specifier}` in {file}"),
-                _ => accepted.files.join(", "),
+            let what = match accepted {
+                AcceptedEntry::Uncovered { files, .. } => files.as_vec().join(", "),
+                AcceptedEntry::UnresolvedImports {
+                    file, specifier, ..
+                } => format!("`{specifier}` in {file}"),
             };
             out.push_str(&format!(
                 "accepted_gaps: {} {what}{}\n",
-                accepted.kind,
-                reason(Some(&accepted.because))
+                accepted.kind().as_str(),
+                reason(Some(accepted.because()))
             ));
         }
         out
     }
 }
 
-fn accepted(entry: &AcceptedEntry) -> ResolvedAccepted {
-    ResolvedAccepted {
-        kind: entry.kind(),
-        files: strings(entry.uncovered_patterns()),
-        file: entry.import().map(|(file, _)| file.to_string()),
-        specifier: entry.import().map(|(_, specifier)| specifier.to_string()),
-        because: entry.because().to_string(),
+/// The entry with its globs as a list, however the policy writes them.
+fn accepted(entry: &AcceptedEntry) -> AcceptedEntry {
+    match entry {
+        AcceptedEntry::Uncovered { files, because } => AcceptedEntry::Uncovered {
+            files: Patterns::Many(strings(files.as_vec())),
+            because: because.clone(),
+        },
+        AcceptedEntry::UnresolvedImports { .. } => entry.clone(),
     }
 }
 

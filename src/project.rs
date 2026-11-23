@@ -404,11 +404,12 @@ pub fn graph_unread(
     if policy.config.tests.is_some() {
         stats.parts_gaps = parts_reasons(&scan.parts_doubts);
     }
-    let accepted_gap = |entry: usize, kind, files: Vec<String>, places| {
+    let accepted_gap = |entry: usize, files: Vec<String>, places| {
         let (provenance, line) = policy.top_item("accepted_gaps", entry);
+        let accepted = &policy.config.accepted_gaps[entry];
         report::AcceptedGap {
-            kind,
-            because: policy.config.accepted_gaps[entry].because().to_string(),
+            kind: accepted.kind(),
+            because: accepted.because().to_string(),
             provenance,
             line,
             count: (!files.is_empty()).then_some(files.len()),
@@ -416,12 +417,10 @@ pub fn graph_unread(
             places,
         }
     };
-    let files = decided.accepted.into_iter().map(|(entry, files)| {
-        (
-            entry,
-            accepted_gap(entry, report::GapKind::Uncovered, files, Vec::new()),
-        )
-    });
+    let files = decided
+        .accepted
+        .into_iter()
+        .map(|(entry, files)| (entry, accepted_gap(entry, files, Vec::new())));
     let imports = imports.accepted.into_iter().map(|(entry, accepted)| {
         let mut places: Vec<check::Place> =
             accepted.iter().map(|&i| unresolved[i].place()).collect();
@@ -429,8 +428,7 @@ pub fn graph_unread(
         places.dedup();
         let mut files: Vec<String> = places.iter().map(|p| p.file.clone()).collect();
         files.dedup();
-        let gap = accepted_gap(entry, report::GapKind::UnresolvedImports, files, places);
-        (entry, gap)
+        (entry, accepted_gap(entry, files, places))
     });
     // In the order of the entries.
     let mut accepted: Vec<(usize, report::AcceptedGap)> = files.chain(imports).collect();
