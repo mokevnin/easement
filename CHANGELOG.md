@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/mokevnin/easement/compare/v0.11.0...v0.11.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **python:** take an import of a standard-library module to it, not to a project file of its name ([#256](https://github.com/mokevnin/easement/issues/256)) ([63547da](https://github.com/mokevnin/easement/commit/63547da6185cbc1a6dc07b293c3c8179460b1f7d)), closes [#255](https://github.com/mokevnin/easement/issues/255)
+
 ## [0.11.0](https://github.com/mokevnin/easement/compare/v0.10.0...v0.11.0) (2026-11-23)
 
 
