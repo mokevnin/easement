@@ -223,6 +223,57 @@ fn python_resolves_absolute_relative_and_from_imports() {
     assert_eq!(stats["external_deps"], 1);
 }
 
+/// The case of #255: a module of the project named as one of the standard library
+/// (`app/typing.py`, `app/json.py`) is a dependency of each file that imports it,
+/// absolutely or relatively, and never external; an import of the standard
+/// library's module is no dependency on it.
+#[test]
+fn a_python_module_named_as_one_of_the_standard_library_is_not_what_it_imports() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
+    let (_tmp, root) = fixture("python");
+    fs::remove_dir_all(root.join("src")).unwrap();
+    write_all(
+        &root,
+        &[
+            ("src/app/__init__.py", ""),
+            ("src/app/typing.py", "class Request:\n    pass\n"),
+            ("src/app/json.py", "def dumps():\n    pass\n"),
+            (
+                "src/app/registry.py",
+                "from typing import Any\nimport json\nimport typing as t\n",
+            ),
+            ("src/app/users/__init__.py", ""),
+            (
+                "src/app/users/absolute.py",
+                "from app.typing import Request\n",
+            ),
+            ("src/app/users/name.py", "from ..json import dumps\n"),
+            ("src/app/users/star.py", "from ..typing import *\n"),
+        ],
+    );
+    fs::write(
+        root.join("easement.yml"),
+        "version: 1\ncomponents:\n  registry: { in: src/app/registry.py }\n  users: { in: src/app/users }\n  kernel: { in: [src/app/typing.py, src/app/json.py] }\nrules:\n  registry: { may_depend_on: [] }\n  users: { may_depend_on: [], forbid_external: [$std] }\n",
+    )
+    .unwrap();
+    let (found, report) = judged(&root);
+    let users = |file| {
+        (
+            format!("src/app/users/{file}"),
+            1,
+            "dependency".to_string(),
+            "users -> kernel".to_string(),
+        )
+    };
+    assert_eq!(
+        found,
+        vec![users("absolute.py"), users("name.py"), users("star.py")],
+        "{report}"
+    );
+}
+
 #[test]
 fn java_resolves_by_package_declaration() {
     if cannot_index_here(&["java"]) {

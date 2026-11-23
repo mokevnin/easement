@@ -221,6 +221,11 @@ pub enum Resolution {
     /// A module it takes to a source target: a file of the project or an external
     /// package.
     Target,
+    /// Only a module outside the project, by references at these columns of its
+    /// line: what the text of the import spells may still name a file of the
+    /// project (scip-python credits `from .json import x` to the standard library's
+    /// `json`), and then the text is right and the index is not.
+    Outside((usize, usize)),
     /// Only a declaration that stands for modules it does not name (`"*.css"`):
     /// the file the import means is not in the index.
     Wildcard,
@@ -587,6 +592,9 @@ struct Ending<'a> {
 struct Lookup<'s, 'a> {
     mine: &'s Definitions<'a>,
     others: &'s Definitions<'a>,
+    /// The packages of the project's own names: only a name of one is
+    /// matched by the ending of its path.
+    own: &'s BTreeSet<String>,
 }
 
 impl<'a> Lookup<'_, 'a> {
@@ -620,12 +628,23 @@ impl<'a> Lookup<'_, 'a> {
     }
 
     /// The file of the project a module, or a name at the top level of one, is in.
+    /// A name of another package (the standard library's `typing`) is never matched
+    /// by the ending of its path: a module of the project of the same name
+    /// (`src.app.typing`) is not it.
     fn file_of(&self, name: &Name) -> Option<&'a str> {
         if !matches!(name.shape, Shape::Module | Shape::TopLevel) {
             return None;
         }
-        self.defined_at(&name.symbol)
-            .or_else(|| name.reading.by_ending.then(|| self.ending(name)).flatten())
+        let own = || {
+            name.package
+                .credited()
+                .is_some_and(|package| self.own.contains(package))
+        };
+        self.defined_at(&name.symbol).or_else(|| {
+            (name.reading.by_ending && own())
+                .then(|| self.ending(name))
+                .flatten()
+        })
     }
 }
 
@@ -683,7 +702,13 @@ pub struct Indexed<'a> {
     /// where an import that no file of the project resolves goes
     /// ([`Indexed::resolution`]).
     unwalked: HashSet<&'a str>,
+    /// The references, by document and at (line, columns), that the text of an
+    /// import overrules ([`Resolution::Outside`]): no fact is read from them.
+    overruled: HashMap<String, HashSet<LineColumns>>,
 }
+
+/// A range on one line of a document: the 1-based line and the columns.
+type LineColumns = (usize, (usize, usize));
 
 /// The checked and the excluded documents of an index, with every symbol they
 /// define or reference read once.
@@ -775,7 +800,24 @@ impl<'a> Indexed<'a> {
             own,
             aliases,
             unwalked: HashSet::new(),
+            overruled: HashMap::new(),
         }
+    }
+
+    /// With the references that the text of an import overrules, as (document,
+    /// line, columns): the dependency is the file the text names, not what the index
+    /// takes those references to.
+    pub fn overruling(
+        mut self,
+        references: impl IntoIterator<Item = (String, usize, (usize, usize))>,
+    ) -> Self {
+        for (document, line, columns) in references {
+            self.overruled
+                .entry(document)
+                .or_default()
+                .insert((line, columns));
+        }
+        self
     }
 
     /// With the documents of files the walk leaves out: none of their names is a
@@ -818,6 +860,7 @@ impl<'a> Indexed<'a> {
         let lookup = Lookup {
             mine: &self.checked,
             others: &self.hidden,
+            own: &self.own,
         };
         let mut files = BTreeSet::new();
         for symbol in symbols {
@@ -992,8 +1035,9 @@ impl<'a> Indexed<'a> {
     /// another import on the same line, stands on other text, so it resolves
     /// nothing here; nor does a reference whose range is not on one line, since
     /// what it stands on is unknown. A module resolves it only when it is taken
-    /// where the dependencies are: to a file of the project, checked or excluded,
-    /// or to an external module; a name at the top level of a file of the project
+    /// where the dependencies are: to a file of the project, checked or excluded
+    /// ([`Resolution::Target`]), or else to an external module
+    /// ([`Resolution::Outside`]); a name at the top level of a file of the project
     /// resolves it too (Python's `from . import VERSION`). Neither does when it is
     /// the importing file itself.
     pub fn resolution(&self, document: &Document, lines: &[&str], import: &Import) -> Resolution {
@@ -1001,8 +1045,10 @@ impl<'a> Indexed<'a> {
         let lookup = Lookup {
             mine: &self.checked,
             others: &self.hidden,
+            own: &self.own,
         };
         let mut found = Resolution::Nothing;
+        let mut outside = None;
         for reference in &document.references {
             let on_path = reference.line == import.line
                 && reference.columns.is_some_and(|columns| {
@@ -1018,8 +1064,9 @@ impl<'a> Indexed<'a> {
             match name.shape {
                 // The file itself is no target of its own import.
                 _ if file == Some(document.path.as_str()) => {}
-                Shape::Module if file.is_some() || self.external(name).is_some() => {
-                    return Resolution::Target;
+                Shape::Module if file.is_some() => return Resolution::Target,
+                Shape::Module if self.external(name).is_some() => {
+                    outside = reference.columns.map(Resolution::Outside);
                 }
                 Shape::TopLevel if file.is_some() => return Resolution::Target,
                 Shape::Module | Shape::TopLevel
@@ -1031,7 +1078,7 @@ impl<'a> Indexed<'a> {
                 _ => {}
             }
         }
-        found
+        outside.unwrap_or(found)
     }
 
     /// The facts of `documents`, whose definitions are `mine`; the definitions of
@@ -1046,7 +1093,11 @@ impl<'a> Indexed<'a> {
     ) -> Facts {
         let defined = &mine.defined;
         let reopened = &mine.reopened;
-        let lookup = Lookup { mine, others };
+        let lookup = Lookup {
+            mine,
+            others,
+            own: &self.own,
+        };
         let defined_at = |symbol: &str| lookup.defined_at(symbol);
         // The one file that defines `symbol`: a module reopened in several files is no
         // one file's.
@@ -1112,9 +1163,17 @@ impl<'a> Indexed<'a> {
             ..Document::default()
         });
         for document in documents.iter().chain(definitions.as_ref()) {
+            let overruled = self.overruled.get(&document.path);
             let read: Vec<(&Reference, &Name)> = document
                 .references
                 .iter()
+                .filter(|reference| {
+                    overruled.is_none_or(|overruled| {
+                        reference
+                            .columns
+                            .is_none_or(|columns| !overruled.contains(&(reference.line, columns)))
+                    })
+                })
                 .filter_map(|reference| Some((reference, self.names.get(&reference.symbol)?)))
                 .collect();
             // The file of the project each module, or name at the top level of one, is in.
@@ -2897,12 +2956,12 @@ mod tests {
             )
         };
         let resolved = |line, specifier: &str| resolution(&document, line, specifier);
-        assert_eq!(resolved(3, "fmt"), Resolution::Target);
+        assert_eq!(resolved(3, "fmt"), Resolution::Outside((10, 13)));
         assert_eq!(
             resolved(3, "example.com/app/internal/db"),
-            Resolution::Target
+            Resolution::Outside((21, 48))
         );
-        assert_eq!(resolved(5, "io"), Resolution::Target);
+        assert_eq!(resolved(5, "io"), Resolution::Outside((16, 18)));
         assert_eq!(
             resolved(5, "os"),
             Resolution::Nothing,
@@ -2972,7 +3031,7 @@ mod tests {
         assert_eq!(resolution(1, "./app.css"), Resolution::Wildcard);
         assert_eq!(resolution(2, "./data.json"), Resolution::Nothing);
         assert_eq!(resolution(3, "./util"), Resolution::Target);
-        assert_eq!(resolution(4, "zod"), Resolution::Target);
+        assert_eq!(resolution(4, "zod"), Resolution::Outside((18, 23)));
         // Nor is a wildcard a dependency or a use.
         let facts = index.facts(true, &BTreeSet::new());
         let externals: Vec<&Target> = facts
