@@ -48,7 +48,7 @@ Using both is reasonable: keep a language-specific tool for the deep rules of on
 - [NetArchTest](https://github.com/BenMorris/NetArchTest): architecture rules as tests for .NET.
 - [ArchUnitTS](https://github.com/LukasNiessen/ArchUnitTS): architecture rules as tests for TypeScript.
 - [eslint-plugin-boundaries](https://github.com/javierbrea/eslint-plugin-boundaries): element types and allowed imports for JavaScript and TypeScript, as ESLint rules.
-- [Sheriff](https://github.com/softarc-consulting/sheriff): module boundaries and dependency rules for TypeScript.
+- [Sheriff](https://github.com/sheriff-arch/sheriff): module boundaries and dependency rules for TypeScript.
 - [Tach](https://github.com/tach-org/tach): module boundaries, layers and public interfaces for Python.
 - [PyTestArch](https://github.com/zyskarch/pytestarch): architecture rules as tests for Python.
 - [PHPArkitect](https://github.com/phparkitect/arkitect): architecture rules for PHP.
