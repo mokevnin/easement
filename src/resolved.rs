@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::check::RuleId;
 use crate::components::ComponentMap;
 use crate::config::{
-    Accepted, Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Reach, Rule, TESTS,
+    AcceptedEntry, Component, Config, Forbid, ForbiddenName, Listed, NoCycles, Reach, Rule, TESTS,
 };
 use crate::decision::{self, ClauseId, Grant, Refusal};
 use crate::policy::{InputKind, Policy, Provenance, Site};
@@ -678,7 +678,7 @@ pub struct ResolvedPolicy {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub target_only: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub uncovered_ok: Vec<UncoveredOk>,
+    pub accepted_gaps: Vec<ResolvedAccepted>,
     pub reach: &'static str,
     pub manifests: bool,
     pub packages: bool,
@@ -805,12 +805,14 @@ pub enum Cycles {
     Among(Vec<String>),
 }
 
-/// An entry of `uncovered_ok`.
+/// An entry of `accepted_gaps`: the kind of gap it accepts, what it names and why.
 #[derive(Debug, Serialize)]
-pub struct UncoveredOk {
-    pub patterns: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
+pub struct ResolvedAccepted {
+    pub kind: &'static str,
+    /// The globs of the files, for `uncovered`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    pub because: String,
 }
 
 impl ResolvedPolicy {
@@ -839,7 +841,7 @@ impl ResolvedPolicy {
             layers,
             strict,
             unowned,
-            uncovered_ok,
+            accepted_gaps,
             tests,
             entry,
             manifests,
@@ -923,7 +925,7 @@ impl ResolvedPolicy {
             entry: entry.clone(),
             exclude: exclude.clone(),
             target_only: target_only.clone(),
-            uncovered_ok: uncovered_ok.iter().map(uncovered).collect(),
+            accepted_gaps: accepted_gaps.iter().map(accepted).collect(),
             reach: reach.as_str(),
             manifests: *manifests,
             packages: *packages,
@@ -1038,21 +1040,23 @@ impl ResolvedPolicy {
                 out.push_str(&format!("{line}\n"));
             }
         }
-        for accepted in &self.uncovered_ok {
+        for accepted in &self.accepted_gaps {
             out.push_str(&format!(
-                "uncovered_ok: {}{}\n",
-                accepted.patterns.join(", "),
-                reason(accepted.because.as_deref())
+                "accepted_gaps: {} {}{}\n",
+                accepted.kind,
+                accepted.files.join(", "),
+                reason(Some(&accepted.because))
             ));
         }
         out
     }
 }
 
-fn uncovered(accepted: &Accepted) -> UncoveredOk {
-    UncoveredOk {
-        patterns: strings(accepted.patterns()),
-        because: accepted.because().map(str::to_string),
+fn accepted(entry: &AcceptedEntry) -> ResolvedAccepted {
+    ResolvedAccepted {
+        kind: entry.kind(),
+        files: strings(entry.uncovered_patterns()),
+        because: entry.because().to_string(),
     }
 }
 

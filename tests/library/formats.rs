@@ -81,7 +81,7 @@ fn notifications(sarif: &str) -> Vec<(String, String, Vec<String>)> {
         .collect()
 }
 
-/// The `uncovered` fixture, its tools accepted in `uncovered_ok` but `except`.
+/// The `uncovered` fixture, its tools accepted in `accepted_gaps` but `except`.
 fn accepting_tools(except: &str) -> (TempDir, std::path::PathBuf) {
     let (tmp, root) = fixture("uncovered");
     let policy = fs::read_to_string(config(&root)).unwrap();
@@ -93,13 +93,15 @@ fn accepting_tools(except: &str) -> (TempDir, std::path::PathBuf) {
         .join(", ");
     fs::write(
         config(&root),
-        format!("{policy}uncovered_ok:\n  - {{ name: [{accepted}], because: build helpers }}\n"),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: [{accepted}], because: build helpers }}\n"
+        ),
     )
     .unwrap();
     (tmp, root)
 }
 
-/// An accepted gap is a note in every CI format, one per `uncovered_ok` entry
+/// An accepted gap is a note in every CI format, one per entry of `accepted_gaps`
 /// with its reason, never a failed test case, `--require-evidence` or not.
 #[test]
 fn an_accepted_gap_is_a_note_in_every_ci_format() {
@@ -126,7 +128,7 @@ fn an_accepted_gap_is_a_note_in_every_ci_format() {
         assert!(junit.contains("failures=\"0\""), "{junit}");
         assert!(
             junit.contains(
-                "accepted gap (uncovered_ok: tools/gen.go, tools/other.go) because build helpers; files: tools/gen.go, tools/other.go"
+                "accepted gap (accepted_gaps[0] at easement.yml:7) because build helpers; files: tools/gen.go, tools/other.go"
             ),
             "{junit}"
         );

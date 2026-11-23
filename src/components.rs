@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
-use serde::Serialize;
 
 use crate::config::STD;
 use crate::config::{Config, Forbid, ForbiddenName, TESTS};
@@ -26,12 +25,10 @@ pub struct ComponentMap {
     excluded: GlobSet,
     /// Files that `target_only` keeps as targets alone.
     target_only: GlobSet,
-    /// Source files that may stay uncovered by an indexer.
-    uncovered_ok: GlobSet,
-    /// The `uncovered_ok` entries, in the order of the config.
-    accepting: Vec<Accepting>,
-    /// The index in `accepting` of the entry each glob of `uncovered_ok` comes from.
-    accepting_of_glob: Vec<usize>,
+    /// The globs of the `uncovered` entries of `accepted_gaps`.
+    accepted_uncovered: GlobSet,
+    /// The index in `accepted_gaps` of the entry each glob of `accepted_uncovered` comes from.
+    entry_of_glob: Vec<usize>,
     /// Component -> matchers of its public surface, for components that declare
     /// `public` or `surfaces`: empty when only `surfaces` is declared.
     public: std::collections::HashMap<String, Vec<ModuleMatcher>>,
@@ -79,20 +76,21 @@ pub enum Access<'a> {
     Only(std::collections::BTreeSet<&'a str>),
 }
 
-/// An `uncovered_ok` entry: its globs as written and why.
-struct Accepting {
-    patterns: Vec<String>,
-    because: Option<String>,
-}
-
-/// The files no indexer read that one `uncovered_ok` entry accepts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AcceptedGap {
-    /// The globs of the entry.
-    pub uncovered_ok: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
-    pub files: Vec<String>,
+/// What the `uncovered` entries of `accepted_gaps` decide of the source files no
+/// indexer read.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct UncoveredDecision {
+    /// The files no entry accepts, every file whose indexer cannot run here among them.
+    pub open: Vec<String>,
+    /// By the index in `accepted_gaps` of the entry that accepts them, in that order, the
+    /// files it accepts; a file two entries accept belongs to the first.
+    pub accepted: Vec<(usize, Vec<String>)>,
+    /// The indices in `accepted_gaps` of the `uncovered` entries that match no file
+    /// no indexer read, and no file whose indexer cannot run here either: they accept
+    /// nothing, so they are a typo or a gap gone. One that matches only files whose
+    /// indexer cannot run here is not judged, since the index of such a platform cannot
+    /// tell.
+    pub stale: Vec<usize>,
 }
 
 /// `$std` in `forbid_external`, with the reason of its item.
@@ -432,26 +430,16 @@ impl ComponentMap {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut uncovered_ok = GlobSetBuilder::new();
-        let mut accepting = Vec::new();
-        let mut accepting_of_glob = Vec::new();
-        for (entry, accepted) in config.uncovered_ok.iter().enumerate() {
-            accepting.push(Accepting {
-                patterns: accepted
-                    .patterns()
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-                because: accepted.because().map(str::to_string),
-            });
-            for pattern in accepted.patterns() {
+        let mut accepted_uncovered = GlobSetBuilder::new();
+        let mut entry_of_glob = Vec::new();
+        for (entry, accepted) in config.accepted_gaps.iter().enumerate() {
+            for pattern in accepted.uncovered_patterns() {
                 let pattern = pattern.trim_end_matches('/');
                 for glob in [pattern.to_string(), format!("{pattern}/**")] {
-                    uncovered_ok.add(
-                        Glob::new(&glob)
-                            .with_context(|| format!("bad uncovered_ok pattern `{pattern}`"))?,
-                    );
-                    accepting_of_glob.push(entry);
+                    accepted_uncovered.add(Glob::new(&glob).with_context(|| {
+                        format!("bad pattern `{pattern}` in accepted_gaps[{entry}].files")
+                    })?);
+                    entry_of_glob.push(entry);
                 }
             }
         }
@@ -462,9 +450,8 @@ impl ComponentMap {
             unowned: crate::relpath::glob_set(&config.unowned, "unowned")?,
             excluded: crate::relpath::glob_set(&config.exclude, "exclude")?,
             target_only: crate::relpath::glob_set(&config.target_only, "target_only")?,
-            uncovered_ok: uncovered_ok.build()?,
-            accepting,
-            accepting_of_glob,
+            accepted_uncovered: accepted_uncovered.build()?,
+            entry_of_glob,
             public,
             surfaces,
             externals,
@@ -552,55 +539,59 @@ impl ComponentMap {
         self.target_only.is_match(rel_path)
     }
 
-    /// Whether `uncovered_ok` accepts that no indexer covers `rel_path`.
-    pub fn is_uncovered_ok(&self, rel_path: &str) -> bool {
-        self.uncovered_ok.is_match(rel_path)
-    }
-
-    /// The files no indexer covered that no `uncovered_ok` entry accepts, and
-    /// the entries that accept the others: the gaps a report names and the ones
-    /// it names as accepted.
-    pub fn split_uncovered(&self, uncovered: &[String]) -> (Vec<String>, Vec<AcceptedGap>) {
-        let open = uncovered
-            .iter()
-            .filter(|f| !self.is_uncovered_ok(f))
-            .cloned()
-            .collect();
-        (open, self.accepted_gaps(uncovered))
-    }
-
-    /// The `uncovered_ok` entries that accept some of the `unread` files, each
-    /// with the files it accepts, in the order of the config. A file two entries
-    /// accept belongs to the first; an entry that accepts none of them is no gap.
-    pub fn accepted_gaps<'a>(
+    /// What the `uncovered` entries of `accepted_gaps` decide of `uncovered`, the
+    /// files no indexer read, of which `cannot_run` are those whose indexer cannot run
+    /// on this platform: the policy describes the code, not the machine, so no entry
+    /// accepts one of these.
+    pub fn decide_uncovered(
         &self,
-        unread: impl IntoIterator<Item = &'a String>,
-    ) -> Vec<AcceptedGap> {
+        uncovered: &[String],
+        cannot_run: &[String],
+    ) -> UncoveredDecision {
+        let cannot_run: std::collections::HashSet<&String> = cannot_run.iter().collect();
+        let mut open = Vec::new();
         let mut by_entry: std::collections::BTreeMap<usize, Vec<String>> =
             std::collections::BTreeMap::new();
-        for file in unread {
-            let first = self
-                .uncovered_ok
+        let mut matched = std::collections::BTreeSet::new();
+        for file in uncovered.iter().chain(cannot_run.iter().copied()) {
+            let entries: Vec<usize> = self
+                .accepted_uncovered
                 .matches(file)
                 .into_iter()
-                .map(|glob| self.accepting_of_glob[glob])
-                .min();
-            if let Some(entry) = first {
-                by_entry.entry(entry).or_default().push(file.clone());
+                .map(|glob| self.entry_of_glob[glob])
+                .collect();
+            matched.extend(entries.iter().copied());
+            if cannot_run.contains(file) {
+                continue;
+            }
+            match entries.into_iter().min() {
+                Some(entry) => by_entry.entry(entry).or_default().push(file.clone()),
+                None => open.push(file.clone()),
             }
         }
-        by_entry
+        open.extend(uncovered.iter().filter(|f| cannot_run.contains(f)).cloned());
+        open.sort();
+        open.dedup();
+        let stale = self
+            .entry_of_glob
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<usize>>()
             .into_iter()
-            .map(|(entry, mut files)| {
-                files.sort();
-                let accepting = &self.accepting[entry];
-                AcceptedGap {
-                    uncovered_ok: accepting.patterns.clone(),
-                    because: accepting.because.clone(),
-                    files,
-                }
-            })
-            .collect()
+            .filter(|entry| !matched.contains(entry))
+            .collect();
+        UncoveredDecision {
+            open,
+            accepted: by_entry
+                .into_iter()
+                .map(|(entry, mut files)| {
+                    files.sort();
+                    files.dedup();
+                    (entry, files)
+                })
+                .collect(),
+            stale,
+        }
     }
 
     /// Whether the top-level `forbid_external` names `$std`, which binds every file.
@@ -928,27 +919,55 @@ components:
     }
 
     #[test]
-    fn unread_files_are_accepted_by_the_first_uncovered_ok_entry_that_names_them() {
+    fn unread_files_are_accepted_by_the_first_entry_that_names_them() {
         let map = map("version: 1
 components:
   app: { in: app }
-uncovered_ok:
-  - { name: [gen/**, tools/**], because: generated }
-  - nothing/**
-  - tools/a.go
+accepted_gaps:
+  - { kind: uncovered, files: [gen/**, tools/**], because: generated }
+  - { kind: uncovered, files: nothing/**, because: gone }
+  - { kind: uncovered, files: tools/a.go, because: shadowed }
 ");
         let unread: Vec<String> = ["tools/a.go", "gen/b.go", "app/c.go"]
             .map(String::from)
             .into();
-        // tools/a.go is accepted by two entries and belongs to the first; an
-        // entry that accepts none of the files is no gap.
+        // tools/a.go is accepted by two entries and belongs to the first, yet the
+        // second still matches a file: only the entry that matches none is stale.
         assert_eq!(
-            map.accepted_gaps(&unread),
-            [AcceptedGap {
-                uncovered_ok: vec!["gen/**".into(), "tools/**".into()],
-                because: Some("generated".into()),
-                files: vec!["gen/b.go".into(), "tools/a.go".into()],
-            }]
+            map.decide_uncovered(&unread, &[]),
+            UncoveredDecision {
+                open: vec!["app/c.go".into()],
+                accepted: vec![(0, vec!["gen/b.go".into(), "tools/a.go".into()])],
+                stale: vec![1],
+            }
+        );
+    }
+
+    /// The policy describes the code, not the machine: a file whose indexer cannot
+    /// run on this platform stays open under an entry that names it, and that entry
+    /// is not judged stale, since such an index cannot tell.
+    #[test]
+    fn a_file_whose_indexer_cannot_run_here_is_never_accepted_and_keeps_its_entry_unjudged() {
+        let map = map("version: 1
+components:
+  app: { in: app }
+accepted_gaps:
+  - { kind: uncovered, files: scripts/**, because: checked on Linux }
+  - { kind: uncovered, files: [tools/**, scripts/seed.py], because: build helpers }
+");
+        let unread: Vec<String> = ["scripts/seed.py", "scripts/util.py", "tools/gen.go"]
+            .map(String::from)
+            .into();
+        let cannot_run: Vec<String> = ["scripts/seed.py", "scripts/util.py"]
+            .map(String::from)
+            .into();
+        assert_eq!(
+            map.decide_uncovered(&unread, &cannot_run),
+            UncoveredDecision {
+                open: vec!["scripts/seed.py".into(), "scripts/util.py".into()],
+                accepted: vec![(1, vec!["tools/gen.go".into()])],
+                stale: vec![],
+            }
         );
     }
 

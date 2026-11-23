@@ -15,7 +15,7 @@ Set up easement (https://github.com/mokevnin/easement), an architecture quality 
 
 1. Install easement the way this project installs its tools: a line in mise.toml if the project uses mise ("github:mokevnin/easement" = "latest"), otherwise Homebrew or the install script from installation.md.
 2. Run `easement doctor --format json` and install every indexer it reports missing, again the way the project installs tools. Repeat until it exits 0.
-3. Run `easement init`, then `easement check`. If the report says files are not covered by an indexer, fix the cause (a tsconfig include, a missing go.mod) or list them in `uncovered_ok` with a reason.
+3. Run `easement init`, then `easement check`. If the report says files are not covered by an indexer, fix the cause (a tsconfig include, a missing go.mod) or accept them in `accepted_gaps` with a reason.
 4. Study the code and turn the generated config into the intended architecture: remove the allowances that should not exist, give every rule a `because` that tells where the code should go instead, and use `layers`, `public`, `no_cycles` and `tests: auto` where they fit. Do not change application code to make the check pass. When the config is final, record the existing violations with `easement baseline`.
 5. Add the check to CI: the GitHub Action from adoption.md with `diff` on pull requests if the project uses GitHub Actions, otherwise `easement check` in the existing pipeline (`easement check --suggest` on the default branch, so that unused allowances fail too). If the project has git hooks, run it on pre-push.
 6. Install the easement skill into the project with `npx skills add mokevnin/easement`, for the agents this team uses, and commit the files it writes, so every agent that works here gets it.

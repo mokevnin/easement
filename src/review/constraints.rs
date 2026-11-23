@@ -523,7 +523,7 @@ impl Diff<'_> {
             target_only: _,
             // The debt section compares its entries, not where they are kept.
             baseline: _,
-            uncovered_ok: _,
+            accepted_gaps: _,
             warn: _,
             // What is scanned: `rescanned` names them, and the delta shows their effect.
             reach: _,

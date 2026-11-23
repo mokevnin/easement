@@ -570,11 +570,11 @@ pub struct Stats {
     /// Source files of an indexed language that its indexer did not cover.
     #[serde(skip)]
     pub uncovered: Vec<String>,
-    /// Source files easement could not read, `uncovered_ok` aside.
+    /// Source files easement could not read, accepted ones aside.
     #[serde(skip)]
     pub unreadable: Vec<String>,
     /// The languages whose indexer cannot run on this platform, with their
-    /// files, which are among `uncovered` unless `uncovered_ok` accepts them.
+    /// files, which are among `uncovered`: `accepted_gaps` never accepts them.
     #[serde(skip)]
     pub unavailable: Vec<Unavailable>,
     /// `--component` and `--scope` of the run, as `component web`, `path src/api`.

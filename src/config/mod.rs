@@ -104,10 +104,14 @@ pub struct Config {
     /// Globs of files and directories that may belong to no component in strict mode.
     #[serde(default)]
     pub unowned: Vec<String>,
-    /// Source files that no indexer covers and that may stay that way (globs, each with the
-    /// reason): accepted gaps, still listed in the report. Others are evidence gaps.
+    /// Evidence gaps the policy accepts as a decision about the code, each with its `kind`,
+    /// the gap of the report it accepts, and the reason: `{ kind: uncovered, files: tools/**,
+    /// because: … }` accepts source files no indexer covers (globs). An accepted gap no longer
+    /// counts against the verdict of `check` but is still listed in the report, under
+    /// `accepted_gaps`. Files whose indexer cannot run on this platform are never accepted. An
+    /// entry that accepts nothing fails as `unmatched` at its line.
     #[serde(default)]
-    pub uncovered_ok: Vec<Accepted>,
+    pub accepted_gaps: Vec<AcceptedEntry>,
     /// Settings of an indexer, by the language it reads: `go: { tags: [race] }` indexes Go
     /// files behind `//go:build race` too (files behind other tags are not built, so they
     /// count as not covered). An unknown language or setting fails.
@@ -436,47 +440,39 @@ impl ForbiddenName {
     }
 }
 
-/// An `uncovered_ok` entry: a glob, or `name` with one glob or a list of them
-/// that share a reason.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum Accepted {
-    Plain(String),
-    Reasoned(AcceptedGlobs),
+/// An entry of `accepted_gaps`: an evidence gap of one kind that the policy accepts, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AcceptedEntry {
+    /// Source files no indexer covers that may stay that way.
+    Uncovered {
+        /// A glob or a list of globs of the files.
+        files: Patterns,
+        /// Why the files may stay uncovered, reported with the files it accepts.
+        #[schemars(extend("minLength" = 1, "pattern" = "\\S"))]
+        because: String,
+    },
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AcceptedGlobs {
-    /// A glob or a list of globs.
-    name: OneOrMany,
-    /// Why the files may stay uncovered, reported with the files it accepts.
-    #[serde(default)]
-    because: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(untagged)]
-enum OneOrMany {
-    One(String),
-    Many(Vec<String>),
-}
-
-impl Accepted {
-    pub fn patterns(&self) -> Vec<&str> {
+impl AcceptedEntry {
+    /// The key of the evidence gap it accepts, as the report names its kind.
+    pub fn kind(&self) -> &'static str {
         match self {
-            Accepted::Plain(name) => vec![name],
-            Accepted::Reasoned(AcceptedGlobs { name, .. }) => match name {
-                OneOrMany::One(name) => vec![name],
-                OneOrMany::Many(names) => names.iter().map(String::as_str).collect(),
-            },
+            AcceptedEntry::Uncovered { .. } => "uncovered",
         }
     }
 
-    pub fn because(&self) -> Option<&str> {
+    /// Why the policy accepts the gap.
+    pub fn because(&self) -> &str {
         match self {
-            Accepted::Plain(_) => None,
-            Accepted::Reasoned(AcceptedGlobs { because, .. }) => because.as_deref(),
+            AcceptedEntry::Uncovered { because, .. } => because,
+        }
+    }
+
+    /// The globs of the files an `uncovered` entry accepts; none for another kind.
+    pub fn uncovered_patterns(&self) -> Vec<&str> {
+        match self {
+            AcceptedEntry::Uncovered { files, .. } => files.as_vec(),
         }
     }
 }
@@ -642,7 +638,7 @@ impl Layer {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Patterns {
     One(String),
@@ -777,6 +773,12 @@ impl Config {
     /// The config of a value merged from the configuration at `path` and the
     /// files it extends (`policy::Policy::load`); `path` names it in errors.
     pub fn from_merged(value: Value, path: &Path) -> Result<Self> {
+        if value.get("uncovered_ok").is_some() {
+            bail!(
+                "invalid config {}: `uncovered_ok` is replaced by `accepted_gaps`; write each entry as `{{ kind: uncovered, files: <globs>, because: <why> }}`",
+                path.display()
+            );
+        }
         // The merged value has no line numbers, so the error names the path to the field.
         let config: Config = serde_path_to_error::deserialize(value)
             .with_context(|| format!("invalid config {}", path.display()))?;
@@ -1281,6 +1283,63 @@ tests: auto
         )
         .unwrap_err();
         assert!(err.to_string().contains("already declared"));
+    }
+
+    #[test]
+    fn an_accepted_gap_names_its_kind_and_needs_a_reason() {
+        let with = |entry: &str| {
+            parse(&format!(
+                "version: 1\ncomponents:\n  a: {{ in: a }}\naccepted_gaps:\n  - {entry}\n"
+            ))
+        };
+        let c = with("{ kind: uncovered, files: [tools/**, gen/x.go], because: build helpers }")
+            .unwrap();
+        assert_eq!(c.accepted_gaps[0].kind(), "uncovered");
+        assert_eq!(c.accepted_gaps[0].because(), "build helpers");
+        assert_eq!(
+            c.accepted_gaps[0].uncovered_patterns(),
+            ["tools/**", "gen/x.go"]
+        );
+        let error = |entry: &str| format!("{:#}", with(entry).unwrap_err());
+        assert!(
+            error("{ kind: uncovered, files: tools/** }").contains("missing field `because`"),
+            "{}",
+            error("{ kind: uncovered, files: tools/** }")
+        );
+        assert!(error("{ kind: uncovered, files: tools/**, because: ' ' }").contains("empty"));
+        assert!(error("{ files: tools/**, because: x }").contains("missing field `kind`"));
+        // A gap that is a fault of the tool or the environment is no decision about
+        // the code, so it cannot be accepted.
+        let fault = error("{ kind: unknown_scheme, files: tools/**, because: x }");
+        assert!(
+            fault.contains("unknown variant `unknown_scheme`"),
+            "{fault}"
+        );
+        assert!(
+            error("{ kind: uncoverd, files: tools/**, because: x }").contains("unknown variant")
+        );
+        assert!(
+            error("{ kind: uncovered, files: tools/**, because: x, name: y }")
+                .contains("unknown field `name`")
+        );
+        assert!(error("{ kind: uncovered, files: [], because: x }").contains("lists no file"));
+        assert!(error("{ kind: uncovered, files: 'a/<x>', because: x }").contains("placeholder"));
+    }
+
+    #[test]
+    fn uncovered_ok_fails_to_load_and_names_accepted_gaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("easement.yml");
+        std::fs::write(
+            &path,
+            "version: 1\ncomponents:\n  a: { in: a }\nuncovered_ok: [tools/**]\n",
+        )
+        .unwrap();
+        let error = format!("{:#}", load(&path).unwrap_err());
+        assert!(
+            error.contains("`uncovered_ok` is replaced by `accepted_gaps`"),
+            "{error}"
+        );
     }
 
     #[test]

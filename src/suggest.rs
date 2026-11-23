@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::check::{ComponentDep, RuleId, Violation};
-use crate::components::{AcceptedGap, ComponentMap};
+use crate::components::ComponentMap;
 use crate::config::Config;
 use crate::decision::{self, Grant, Refusal};
 use crate::lang::Dep;
 use crate::policy::Policy;
-use crate::report::{self, EvidenceGap};
+use crate::report::{self, AcceptedGap, EvidenceGap};
 use crate::{patch, relpath};
 
 /// What `suggest` says of a `may_depend_on` entry no import uses, and what

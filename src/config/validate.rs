@@ -209,13 +209,28 @@ impl Config {
         )?;
         plain("unowned", self.unowned.iter().map(String::as_str).collect())?;
         plain("entry", self.entry.iter().map(String::as_str).collect())?;
-        plain(
-            "uncovered_ok",
-            self.uncovered_ok
-                .iter()
-                .flat_map(Accepted::patterns)
-                .collect(),
-        )?;
+        for (i, entry) in self.accepted_gaps.iter().enumerate() {
+            let place = format!("accepted_gaps[{i}]");
+            if entry.because().trim().is_empty() {
+                bail!(
+                    "{place} has an empty `because`; say why the {} gap is accepted",
+                    entry.kind()
+                );
+            }
+            match entry {
+                AcceptedEntry::Uncovered { files, .. } => {
+                    let patterns = files.as_vec();
+                    if patterns.is_empty() {
+                        bail!("{place} lists no file; write the globs of the files it accepts");
+                    }
+                    plain(&format!("{place}.files"), patterns.clone())?;
+                    for pattern in patterns {
+                        globset::Glob::new(pattern)
+                            .with_context(|| format!("bad pattern `{pattern}` in {place}.files"))?;
+                    }
+                }
+            }
+        }
         for (name, component) in &self.components {
             // A cycle is keyed by its components joined with `,`.
             if name.contains(',') {

@@ -57,6 +57,14 @@ exclude: ["**/*_test.go"]
 - **rules**: an allow-list. A component may depend on itself, on `common` components and on what `may_depend_on` lists — nothing else. `because` is printed with every violation of the rule, so the reader (or an agent) learns where the code should go instead.
 - Files outside every component are not checked, unless `strict: true` turns them into `orphan` violations. External modules are checked only where a rule says so, see [External modules](#external-modules).
 - **target_only**: globs of generated files that stay in the graph as targets but are never checked as sources. Components can own them (`web-generated: { in: src/generated }`), and rules can allow or forbid importing them (`must_not_depend_on: [web-generated]`); their own imports, symbol uses and directives are not checked. `exclude` wins when a file matches both, and then importing it fails.
+- **accepted_gaps**: evidence gaps the policy accepts as a decision about the code, so that `check --require-evidence` passes on them while every report still names them (see [Indexers](languages.md#indexers)). Each entry names the `kind` of gap it accepts, as the report names it, and needs a non-empty `because`. `kind: uncovered` accepts source files no indexer covers, by `files` (a glob or a list of globs): build helpers, the other half of a build-tag pair. Only a gap that is a decision about the code can be accepted: the other kinds are faults of the tool or the environment, or have a fix their `close` names, so an entry of another `kind` fails to load, and so does one without a reason. Files whose indexer cannot run on this platform (`cannot_run`) are never accepted, since the policy describes the code, not the machine. An entry that accepts nothing fails as `unmatched` at its line, like an `in` pattern that matches no file; one whose globs name files of a language whose indexer cannot run here is not judged, since such an index cannot tell.
+
+  ```yaml
+  accepted_gaps:
+    - { kind: uncovered, files: "tools/**", because: build helpers with no go.mod on purpose }
+    - { kind: uncovered, files: ["**/race_on.go", "**/embed_none.go"], because: the other half of a build-tag pair }
+  ```
+
 - **exclude**: globs to skip, for the whole project. `.gitignore` is honoured and `node_modules` is always skipped. Excluded files are not checked at all, and a checked file that imports one fails as `excluded`, since no rule would see that dependency (an indexer has to index the excluded file to resolve the import; files that `.gitignore` hides are never read, and an import the index takes to one is an `unresolved_imports` evidence gap that says so): generated code the project imports belongs in `target_only`, and hand-written code that only the rules should skip (such as `config/initializers`) in a component or in `unowned`. To hold tests to rules of their own, see [Tests](#tests).
 
 ## Rules
@@ -77,7 +85,7 @@ Every violation carries a rule id, used in the JSON report, the baseline and sup
 | `symbol` | a component uses a name its `forbid_symbol` rule forbids, or one outside the `public_symbols` of another component |
 | `suppression-reason` | an inline suppression has no reason |
 | `unused-suppression` | a rule an inline suppression names matches no violation on its line, or cannot be suppressed (`dependency`, `privacy`, `external`, `isolation`, `symbol`, `excluded`, `naming`, `implementation` and `undeclared` can be) |
-| `unmatched` | an `in` pattern of a component matches no file of the project, a `part` names no part the scan found, an `entry` pattern matches no file, a `forbid_symbol` name can never fire, a glob or a set of components covers none, or a set is never named |
+| `unmatched` | an `in` pattern of a component matches no file of the project, a `part` names no part the scan found, an `entry` pattern matches no file, an entry of `accepted_gaps` accepts nothing, a `forbid_symbol` name can never fire, a glob or a set of components covers none, or a set is never named |
 | `excluded` | a component imports a file that `exclude` hides |
 | `reach` | a component reaches one its `must_not_reach` names through a chain of imports |
 | `unused` | with `entry`, a file of a component that no chain of imports from an entry reaches |

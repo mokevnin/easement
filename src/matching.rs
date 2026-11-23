@@ -75,6 +75,35 @@ pub fn unmatched(
         .collect()
 }
 
+/// An entry of `accepted_gaps` that accepts nothing, at its line: a typo, or a gap
+/// gone. Like every `unmatched`, `--diff` keeps it and the baseline never accepts it.
+pub fn unmatched_accepted(
+    policy: &Policy,
+    map: &ComponentMap,
+    uncovered: &[String],
+    cannot_run: &[String],
+    config_file: &str,
+) -> Vec<Violation> {
+    map.decide_uncovered(uncovered, cannot_run)
+        .stale
+        .into_iter()
+        .map(|entry| {
+            let globs = policy.config.accepted_gaps[entry]
+                .uncovered_patterns()
+                .join(", ");
+            Violation {
+                file: config_file.to_string(),
+                line: policy.config_item_line("accepted_gaps", entry),
+                message: format!(
+                    "`accepted_gaps[{entry}]` accepts no uncovered file (files: {globs}): an indexer reads every file it names, or none is left; drop the entry, or fix its globs (files that `exclude` or .gitignore hide do not count)"
+                ),
+                target: globs,
+                ..Violation::of(RuleId::Unmatched)
+            }
+        })
+        .collect()
+}
+
 /// A glob or a set of a list of components, or a key of `rules`, that covers no
 /// component, and a set nothing names: each says nothing, so it is a typo or a
 /// component gone.

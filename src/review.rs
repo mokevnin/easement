@@ -8,12 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::check::{self, Key, Violation};
-use crate::components::{AcceptedGap, Access, ComponentMap};
+use crate::components::{Access, ComponentMap};
 use crate::config::{Config, Example};
 use crate::decision::{self, Grant, PairDecision, Refusal};
 use crate::examples;
 use crate::policy::Policy;
-use crate::report::{self, EvidenceGap};
+use crate::report::{self, AcceptedGap, EvidenceGap};
 
 mod constraints;
 
@@ -49,7 +49,7 @@ pub struct Review {
     /// Code the scans could not read or judge: the delta and the file lists
     /// say nothing about it.
     pub evidence_gaps: Vec<EvidenceGap>,
-    /// Files no indexer read that the head policy accepts in `uncovered_ok`,
+    /// Files no indexer read that the head policy accepts in `accepted_gaps`,
     /// by entry: unread too, but by decision.
     pub accepted_gaps: Vec<AcceptedGap>,
     /// Set when indexes came from the cache: what their key leaves out and
@@ -702,9 +702,11 @@ pub struct Debt {
     pub baseline_added: Vec<Key>,
     /// Violations the baseline legalized before and does not now.
     pub baseline_removed: Vec<Key>,
-    /// `uncovered_ok` patterns added: files no indexer reads that may stay so.
-    pub uncovered_ok_added: Vec<Accepted>,
-    pub uncovered_ok_removed: Vec<Accepted>,
+    /// What entries of `accepted_gaps` accept now and did not before: evidence
+    /// gaps that no longer count against the verdict, each glob of files apart.
+    pub accepted_gaps_added: Vec<Accepted>,
+    /// What they accepted before and do not now.
+    pub accepted_gaps_removed: Vec<Accepted>,
     /// `exclude` globs added: paths no rule judges.
     pub exclude_added: Vec<String>,
     pub exclude_removed: Vec<String>,
@@ -718,12 +720,13 @@ pub struct Debt {
     pub warn_removed: Vec<String>,
 }
 
-/// One `uncovered_ok` pattern with the reason its entry gives.
+/// One thing an entry of `accepted_gaps` accepts, with the reason the entry gives:
+/// for `uncovered`, one glob of its files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Accepted {
-    pub pattern: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
+    pub kind: &'static str,
+    pub files: String,
+    pub because: String,
 }
 
 impl Debt {
@@ -732,18 +735,22 @@ impl Debt {
         let (base, head) = (&sides.base.config, &sides.head.config);
         let accepted = |config: &Config| -> Vec<Accepted> {
             config
-                .uncovered_ok
+                .accepted_gaps
                 .iter()
                 .flat_map(|entry| {
-                    entry.patterns().into_iter().map(|pattern| Accepted {
-                        pattern: pattern.to_string(),
-                        because: entry.because().map(str::to_string),
-                    })
+                    entry
+                        .uncovered_patterns()
+                        .into_iter()
+                        .map(|pattern| Accepted {
+                            kind: entry.kind(),
+                            files: pattern.to_string(),
+                            because: entry.because().to_string(),
+                        })
                 })
                 .collect()
         };
         let (accepted_then, accepted_now) = (accepted(base), accepted(head));
-        let same = |a: &Accepted, b: &Accepted| a.pattern == b.pattern;
+        let same = |a: &Accepted, b: &Accepted| (a.kind, &a.files) == (b.kind, &b.files);
         let (exclude_added, exclude_removed) = added_and_removed(&base.exclude, &head.exclude);
         let (target_only_added, target_only_removed) =
             added_and_removed(&base.target_only, &head.target_only);
@@ -751,8 +758,8 @@ impl Debt {
         Self {
             baseline_added: head_baseline.difference(base_baseline).cloned().collect(),
             baseline_removed: base_baseline.difference(head_baseline).cloned().collect(),
-            uncovered_ok_added: missing(&accepted_now, &accepted_then, same),
-            uncovered_ok_removed: missing(&accepted_then, &accepted_now, same),
+            accepted_gaps_added: missing(&accepted_now, &accepted_then, same),
+            accepted_gaps_removed: missing(&accepted_then, &accepted_now, same),
             exclude_added,
             exclude_removed,
             target_only_added,
@@ -769,12 +776,9 @@ fn quoted_each(items: &[String]) -> Vec<String> {
 }
 
 impl Accepted {
-    /// The pattern in backticks, with its reason.
+    /// What it accepts in backticks, with its kind and reason.
     fn line(&self) -> String {
-        match &self.because {
-            Some(because) => format!("`{}` (because: {because})", self.pattern),
-            None => format!("`{}`", self.pattern),
-        }
+        format!("{} `{}` (because: {})", self.kind, self.files, self.because)
     }
 }
 
@@ -1039,12 +1043,15 @@ impl Review {
         }
         for (heading, items) in [
             (
-                "uncovered_ok added",
-                debt.uncovered_ok_added.iter().map(Accepted::line).collect(),
+                "accepted_gaps added",
+                debt.accepted_gaps_added
+                    .iter()
+                    .map(Accepted::line)
+                    .collect(),
             ),
             (
-                "uncovered_ok removed",
-                debt.uncovered_ok_removed
+                "accepted_gaps removed",
+                debt.accepted_gaps_removed
                     .iter()
                     .map(Accepted::line)
                     .collect(),
@@ -1385,10 +1392,12 @@ components:
     }
 
     #[test]
-    fn exclude_uncovered_ok_and_warn_entries_are_listed_both_ways() {
-        let base = format!("{TWO}exclude: [gen]\nwarn: [unused]\n");
+    fn exclude_accepted_gaps_and_warn_entries_are_listed_both_ways() {
+        let base = format!(
+            "{TWO}exclude: [gen]\nwarn: [unused]\naccepted_gaps:\n  - {{ kind: uncovered, files: old/**, because: rewritten next quarter }}\n  - {{ kind: uncovered, files: tools/**, because: build helpers }}\n"
+        );
         let head = format!(
-            "{TWO}exclude: [vendor]\nwarn: [dependency]\nuncovered_ok:\n  - {{ name: [legacy/**, old/**], because: rewritten next quarter }}\n"
+            "{TWO}exclude: [vendor]\nwarn: [dependency]\naccepted_gaps:\n  - {{ kind: uncovered, files: [legacy/**, old/**], because: rewritten next quarter }}\n"
         );
         let debt = compare(&base, &head, |s| {
             Debt::of(s, &BTreeSet::new(), &BTreeSet::new())
@@ -1397,19 +1406,22 @@ components:
         assert_eq!(debt.exclude_removed, ["gen"]);
         assert_eq!(debt.warn_added, ["dependency"]);
         assert_eq!(debt.warn_removed, ["unused"]);
-        let because = Some("rewritten next quarter".to_string());
+        // Each glob apart: `old/**` was accepted already.
         assert_eq!(
-            debt.uncovered_ok_added,
-            [
-                Accepted {
-                    pattern: "legacy/**".to_string(),
-                    because: because.clone()
-                },
-                Accepted {
-                    pattern: "old/**".to_string(),
-                    because
-                },
-            ]
+            debt.accepted_gaps_added,
+            [Accepted {
+                kind: "uncovered",
+                files: "legacy/**".to_string(),
+                because: "rewritten next quarter".to_string(),
+            }]
+        );
+        assert_eq!(
+            debt.accepted_gaps_removed,
+            [Accepted {
+                kind: "uncovered",
+                files: "tools/**".to_string(),
+                because: "build helpers".to_string(),
+            }]
         );
     }
 }

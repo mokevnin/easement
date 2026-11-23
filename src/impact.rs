@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::chains::{NO_COMPONENT, Reached, describe_chain, file_graph, shortest_chain};
 use crate::check::{Chain, Hop, Place, RuleId, Unjudged, Violation};
-use crate::components::{AcceptedGap, ComponentMap};
+use crate::components::ComponentMap;
 use crate::config::Config;
 use crate::decision;
 use crate::diff::{Changes, Touch};
@@ -15,7 +15,7 @@ use crate::lang::language;
 use crate::lang::{Aliased, Dep, Mention, Qualified, Unit, registry};
 use crate::policy::Policy;
 use crate::relpath;
-use crate::report::{self, Coverage, EvidenceGap, GapKind};
+use crate::report::{self, AcceptedGap, Coverage, EvidenceGap, GapKind};
 use crate::resolved::PairDecision;
 use crate::symbols;
 

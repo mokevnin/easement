@@ -58,16 +58,27 @@ fn on_windows_the_files_of_an_indexer_that_cannot_run_there_are_uncovered_with_t
         insta::assert_snapshot!("windows_uncovered_text", text(&checked));
     });
 
-    // Accepted in `uncovered_ok`, the files are no evidence gap.
+    // The policy describes the code, not the machine: an entry that names the
+    // files accepts none of them, and is not stale for it either.
     let policy = fs::read_to_string(config(&root)).unwrap();
     fs::write(
         config(&root),
-        format!("{policy}uncovered_ok:\n  - {{ name: scripts/**, because: checked on Linux }}\n"),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: scripts/**, because: checked on Linux }}\n"
+        ),
     )
     .unwrap();
-    let checked = commands::check(&CheckOptions::new(config(&root)), &mut on_windows()).unwrap();
-    let report = json(&checked);
-    assert_eq!(report["evidence_gaps"], serde_json::json!([]), "{report}");
+    let accepting = commands::check(&CheckOptions::new(config(&root)), &mut on_windows()).unwrap();
+    let accepting_report = json(&accepting);
+    assert_eq!(
+        accepting_report["evidence_gaps"], report["evidence_gaps"],
+        "{accepting_report}"
+    );
+    assert_eq!(accepting_report["accepted_gaps"], serde_json::json!([]));
+    assert_eq!(
+        accepting_report["violations"], report["violations"],
+        "no `unmatched`: {accepting_report}"
+    );
 }
 
 /// Off Windows the same project indexes its Python files.

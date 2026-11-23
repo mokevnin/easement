@@ -10,9 +10,9 @@ use crate::check::{
     self, CannotRun, HonouredSuppression, Key, Place, RecognisedFramework, RuleId, Stats, Unjudged,
     Violation,
 };
-use crate::components::AcceptedGap;
 use crate::diff::{Changes, Diff, InFull};
 use crate::drift::Drift;
+use crate::policy::Provenance;
 use crate::suggest::Spared;
 
 #[derive(Serialize)]
@@ -71,8 +71,45 @@ pub struct Coverage {
     pub narrowed: Vec<Narrowing>,
     /// Code or facts the run could not read or judge: a pass says nothing about them.
     pub evidence_gaps: Vec<EvidenceGap>,
-    /// Files no indexer read that `uncovered_ok` accepts, by the entry that accepts them.
+    /// The gaps the entries of `accepted_gaps` accept, by entry.
     pub accepted_gaps: Vec<AcceptedGap>,
+}
+
+/// An entry of `accepted_gaps`, with the gaps of the run it accepts: those of its
+/// `kind`, which an evidence gap of that kind would hold otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AcceptedGap {
+    /// The kind of the evidence gap it accepts.
+    pub kind: GapKind,
+    /// Why the policy accepts it.
+    pub because: String,
+    /// Where the policy writes the entry.
+    pub provenance: Provenance,
+    /// The line, counted from 1, of the entry in the input of its provenance.
+    pub line: usize,
+    /// The files it accepts, for `uncovered`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+}
+
+impl AcceptedGap {
+    /// The entry as every format names it: `accepted_gaps[0] at easement.yml:12`.
+    pub fn entry(&self) -> String {
+        match &self.provenance.input {
+            Some(input) => format!("{} at {input}:{}", self.provenance.field, self.line),
+            None => self.provenance.field.clone(),
+        }
+    }
+
+    /// What it accepts and why, in one line, for a note.
+    fn message(&self) -> String {
+        format!(
+            "{} accepts files no indexer read, because {}; their dependencies were not checked; files: {}",
+            self.entry(),
+            self.because,
+            self.files.join(", ")
+        )
+    }
 }
 
 /// A part of the project or of a change that a narrowed verdict judges alone.
@@ -246,12 +283,10 @@ impl EvidenceGap {
     }
 }
 
-pub const CLOSE_UNCOVERED: &str =
-    "add them to a project the indexer reads, `exclude` them, or accept them in `uncovered_ok`";
+pub const CLOSE_UNCOVERED: &str = "add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason";
 
 /// What closes the gap of files whose indexer cannot run on this platform.
-pub const CLOSE_CANNOT_RUN: &str =
-    "check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`";
+pub const CLOSE_CANNOT_RUN: &str = "check them on Linux or macOS (or WSL), or `exclude` them; `accepted_gaps` never accepts them, since the policy describes the code, not the machine";
 
 /// Code a check could not read or judge, in the order the reasons were always given.
 pub fn evidence_gaps(stats: &Stats) -> Vec<EvidenceGap> {
@@ -260,7 +295,7 @@ pub fn evidence_gaps(stats: &Stats) -> Vec<EvidenceGap> {
 
 /// The evidence gaps of a run that leave dependencies out of its graph, for an
 /// answer about the graph (`impact`, `why`, `suggest`, `graph`). `unread` is every file no indexer
-/// read, `uncovered_ok` or not: accepting a file settles the verdict of `check`,
+/// read, accepted or not: accepting a file settles the verdict of `check`,
 /// but nobody saw its imports.
 pub fn graph_gaps(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
     evidence_gaps_unread(stats, unread)
@@ -597,14 +632,14 @@ pub fn gap_lines(
             out.push('\n');
         }
         out.push_str(
-            "Accepted gaps (`uncovered_ok`: no indexer read them, so their dependencies were not checked):\n",
+            "Accepted gaps (`accepted_gaps`: no indexer read them, so their dependencies were not checked):\n",
         );
         for gap in accepted_gaps {
-            out.push_str(&format!("  {}", gap.uncovered_ok.join(", ")));
-            if let Some(because) = &gap.because {
-                out.push_str(&paint(color, DIM, &format!(" because: {because}")));
-            }
-            out.push('\n');
+            out.push_str(&format!(
+                "  {}{}\n",
+                gap.entry(),
+                paint(color, DIM, &format!(" because: {}", gap.because))
+            ));
             out.push_str(&item_lines(&gap.files, "    "));
         }
     }
@@ -980,33 +1015,23 @@ impl<'a> Note<'a> {
         }
     }
 
-    /// An `uncovered_ok` entry: its globs, its reason and its files.
+    /// An entry of `accepted_gaps`: where it is written, its reason and its files.
     fn accepted(gap: &'a AcceptedGap) -> Self {
-        let globs = gap.uncovered_ok.join(", ");
-        let files = gap.files.join(", ");
-        let because = gap.because.as_deref().map(|b| format!(" because {b}"));
-        let because = because.as_deref().unwrap_or_default();
         Note {
-            out: format!("accepted gap (uncovered_ok: {globs}){because}; files: {files}"),
+            out: format!(
+                "accepted gap ({}) because {}; files: {}",
+                gap.entry(),
+                gap.because,
+                gap.files.join(", ")
+            ),
             ..Note::new(
                 NoteKind::AcceptedGap,
                 ResultLevel::Note,
-                accepted_message(gap),
+                gap.message(),
                 &gap.files,
             )
         }
     }
-}
-
-/// What an `uncovered_ok` entry accepts, in one line.
-fn accepted_message(gap: &AcceptedGap) -> String {
-    let because = gap.because.as_deref().map(|b| format!(", because {b}"));
-    format!(
-        "uncovered_ok: {} accepts files no indexer read{}; their dependencies were not checked; files: {}",
-        gap.uncovered_ok.join(", "),
-        because.as_deref().unwrap_or_default(),
-        gap.files.join(", ")
-    )
 }
 
 impl Report<'_> {
@@ -1344,14 +1369,11 @@ impl Report<'_> {
             .evidence_gaps
             .iter()
             .map(|gap| (NoteKind::EvidenceGap, level, gap.message.clone()));
-        // One notice per `uncovered_ok` entry, not one per file it accepts.
-        let accepted = coverage.accepted_gaps.iter().map(|gap| {
-            (
-                NoteKind::AcceptedGap,
-                ResultLevel::Note,
-                accepted_message(gap),
-            )
-        });
+        // One notice per entry of `accepted_gaps`, not one per file it accepts.
+        let accepted = coverage
+            .accepted_gaps
+            .iter()
+            .map(|gap| (NoteKind::AcceptedGap, ResultLevel::Note, gap.message()));
         for (kind, level, reason) in narrowed.chain(gaps).chain(accepted) {
             out.push_str(&format!(
                 "::{} title={}::{}\n",
@@ -1804,13 +1826,25 @@ hi</system-out>
         );
     }
 
+    /// The `index`th entry of `accepted_gaps`, at `line` of easement.yml, accepting
+    /// `files` as generated.
+    fn accepted_gap(index: usize, line: usize, files: &[&str]) -> AcceptedGap {
+        AcceptedGap {
+            kind: GapKind::Uncovered,
+            because: "generated".into(),
+            provenance: Provenance {
+                field: format!("accepted_gaps[{index}]"),
+                input: Some("easement.yml".into()),
+                through: Vec::new(),
+            },
+            line,
+            files: files.iter().map(|f| f.to_string()).collect(),
+        }
+    }
+
     #[test]
     fn an_accepted_gap_leaves_the_verdict_full_and_is_still_reported() {
-        let accepted = vec![AcceptedGap {
-            uncovered_ok: vec!["gen/**".into(), "tools/**".into()],
-            because: Some("generated".into()),
-            files: vec!["gen/b.go".into(), "tools/a.go".into()],
-        }];
+        let accepted = vec![accepted_gap(0, 12, &["gen/b.go", "tools/a.go"])];
         let coverage = Coverage {
             accepted_gaps: accepted,
             ..Coverage::default()
@@ -1829,10 +1863,12 @@ hi</system-out>
         };
         let out = report(false).text();
         assert!(
-            out.contains("  gen/**, tools/** because: generated\n    gen/b.go\n    tools/a.go\n"),
+            out.contains(
+                "  accepted_gaps[0] at easement.yml:12 because: generated\n    gen/b.go\n    tools/a.go\n"
+            ),
             "{out}"
         );
-        // One notice per `uncovered_ok` entry, with its globs, its reason and its files.
+        // One notice per entry, with where it is written, its reason and its files.
         let github = report(true).github();
         assert_eq!(
             github
@@ -1840,7 +1876,7 @@ hi</system-out>
                 .filter(|l| l.contains("title=easement accepted-gap"))
                 .collect::<Vec<_>>(),
             [
-                "::notice title=easement accepted-gap::uncovered_ok: gen/**, tools/** accepts files no indexer read, because generated; their dependencies were not checked; files: gen/b.go, tools/a.go"
+                "::notice title=easement accepted-gap::accepted_gaps[0] at easement.yml:12 accepts files no indexer read, because generated; their dependencies were not checked; files: gen/b.go, tools/a.go"
             ],
             "{github}"
         );
@@ -1851,11 +1887,7 @@ hi</system-out>
     #[test]
     fn sarif_and_junit_say_an_accepted_gap_as_a_note() {
         let coverage = Coverage {
-            accepted_gaps: vec![AcceptedGap {
-                uncovered_ok: vec!["tools/**".into()],
-                because: Some("generated".into()),
-                files: vec!["tools/a.go".into()],
-            }],
+            accepted_gaps: vec![accepted_gap(1, 7, &["tools/a.go"])],
             ..Coverage::default()
         };
         let clean = clean_verdict();
@@ -1890,7 +1922,7 @@ hi</system-out>
             assert!(xml.contains("failures=\"0\""), "{xml}");
             assert!(
                 xml.contains(
-                    "<system-out>accepted gap (uncovered_ok: tools/**) because generated; files: tools/a.go</system-out>"
+                    "<system-out>accepted gap (accepted_gaps[1] at easement.yml:7) because generated; files: tools/a.go</system-out>"
                 ),
                 "{xml}"
             );

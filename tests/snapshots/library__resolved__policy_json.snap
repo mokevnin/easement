@@ -3,6 +3,15 @@ source: tests/library/resolved.rs
 expression: policy_json(&root)
 ---
 {
+  "accepted_gaps": [
+    {
+      "because": "vendored code",
+      "files": [
+        "vendor/**"
+      ],
+      "kind": "uncovered"
+    }
+  ],
   "common": [
     {
       "name": "kernel",
@@ -772,14 +781,6 @@ expression: policy_json(&root)
     "**/*.pb.ts"
   ],
   "tests": true,
-  "uncovered_ok": [
-    {
-      "because": "vendored code",
-      "patterns": [
-        "vendor/**"
-      ]
-    }
-  ],
   "unowned": [
     "scripts"
   ],

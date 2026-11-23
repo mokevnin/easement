@@ -382,6 +382,30 @@ impl Policy {
         }
     }
 
+    /// Where the `index`th item of the top-level list `key` (`accepted_gaps`) is
+    /// written: its provenance, and its line, counted from 1, in the input that last
+    /// wrote the key, which holds the whole list; 1 when no input writes it.
+    pub fn top_item(&self, key: &str, index: usize) -> (Provenance, usize) {
+        let input = self.defined_by("", key);
+        let provenance = Provenance {
+            field: format!("{key}[{index}]"),
+            input: input.map(|i| self.input_name(i)),
+            through: Vec::new(),
+        };
+        let line = input.map_or(1, |i| item_line(&i.content, key, index));
+        (provenance, line)
+    }
+
+    /// The line, counted from 1, of the `index`th item of the top-level list `key` in
+    /// the configuration; 1 when a file it extends writes the key, as reports then
+    /// name the configuration.
+    pub fn config_item_line(&self, key: &str, index: usize) -> usize {
+        if !self.written_in_config(&[key]) {
+            return 1;
+        }
+        item_line(&self.config_input().content, key, index)
+    }
+
     /// How reports name `input`: relative to the root of the policy, the
     /// directory of the configuration, or absolute outside it.
     pub fn input_name(&self, input: &PolicyInput) -> String {

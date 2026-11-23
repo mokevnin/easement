@@ -11,7 +11,7 @@ expression: parse(&impacted.json().unwrap())
   "dependents": [],
   "evidence_gaps": [
     {
-      "close": "add them to a project the indexer reads, `exclude` them, or accept them in `uncovered_ok`",
+      "close": "add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason",
       "count": 2,
       "files": [
         "tools/gen.go",

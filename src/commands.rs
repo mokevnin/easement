@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::baseline::{Baseline, Verdict};
-use crate::components::{AcceptedGap, ComponentMap};
+use crate::components::ComponentMap;
 use crate::policy::Policy;
 use crate::project::{self, Analysis, Project};
 use crate::{
@@ -486,10 +486,10 @@ pub fn policy(config: &Path) -> Result<resolved::ResolvedPolicy> {
 pub struct Drawn {
     pub diagram: String,
     /// The gaps that leave dependencies out of the drawing, every file no
-    /// indexer read among them, `uncovered_ok` or not.
+    /// indexer read among them, accepted or not.
     pub evidence_gaps: Vec<report::EvidenceGap>,
-    /// Files no indexer read that `uncovered_ok` accepts, by the entry that accepts them.
-    pub accepted_gaps: Vec<AcceptedGap>,
+    /// The gaps the entries of `accepted_gaps` accept, by entry.
+    pub accepted_gaps: Vec<report::AcceptedGap>,
     /// Set when indexes came from the cache: what their key leaves out and how
     /// to index again.
     pub cached: Option<String>,
@@ -687,13 +687,11 @@ pub fn review(config: &Path, base: &str, cache: &mut scan::Cache) -> Result<revi
         project.judge_despite_unread_diagram(&old, old_scan.as_ref().unwrap_or(&scan))?;
     // What no indexer read under the old policy and it did not accept: the
     // delta says nothing of it either.
-    let old_uncovered: Vec<String> = old_scan
-        .as_ref()
-        .map_or(&scan.uncovered, |s| &s.uncovered)
-        .iter()
-        .filter(|f| !old_judgment.map.is_uncovered_ok(f))
-        .cloned()
-        .collect();
+    let old_read = old_scan.as_ref().unwrap_or(&scan);
+    let old_uncovered = old_judgment
+        .map
+        .decide_uncovered(&old_read.uncovered, &old_read.cannot_run())
+        .open;
     let old_files: &[String] = old_scan.as_ref().map_or(&[], |s| &s.paths);
     let old_from_cache = old_scan.as_ref().map_or(0, |s| s.from_cache);
     let mut head = project.analysis_despite_unread_diagram(scan)?;
@@ -843,7 +841,7 @@ pub fn propose(
         };
         let consequences = propose::consequences(&graph, &proposals)?;
         // What the graph could not read is what its consequences cannot see.
-        let accepted = project::graph_unread(config, &map, &scan, &mut stats);
+        let accepted = project::graph_unread(&project.policy, &map, &scan, &mut stats);
         (
             Some(consequences),
             Vec::new(),

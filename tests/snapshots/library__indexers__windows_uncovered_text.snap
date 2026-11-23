@@ -6,7 +6,7 @@ internal/handlers/books.go:6: handler -> repository is not allowed (written as i
 
 Evidence gaps (a pass says nothing about this code):
   2 python source files were not indexed, since scip-python cannot run on Windows: scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224); the dependencies in or on them were not checked
-    to close: check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`
+    to close: check them on Linux or macOS (or WSL), or `exclude` them; `accepted_gaps` never accepts them, since the policy describes the code, not the machine
     scripts/seed.py
     scripts/util.py
 

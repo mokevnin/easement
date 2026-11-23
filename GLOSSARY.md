@@ -138,7 +138,7 @@ Code or facts the check could not read or could not judge, so a clean verdict sa
 _Avoid_: partial, unread reason, missing coverage
 
 **Accepted gap**:
-An evidence gap the policy declares deliberate; it is still reported and never counts as read. It lets a verdict pass, but an answer about the dependency graph still counts it as an evidence gap, since nobody saw its dependencies.
+An evidence gap the policy declares deliberate, in an entry of `accepted_gaps` that names its kind and gives a reason, which is required; it is still reported and never counts as read. Only a gap that is a decision about the code can be accepted: source files no indexer covers, never because their indexer cannot run on this platform; an entry that accepts nothing fails as `unmatched`. It lets a verdict pass, but an answer about the dependency graph still counts it as an evidence gap, since nobody saw its dependencies.
 _Avoid_: ignored file, covered file
 
 **Legalized violation**:

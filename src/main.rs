@@ -79,7 +79,7 @@ enum Command {
         cache: CacheFlags,
         /// Fail a run without violations, with exit code 4, when its verdict rests
         /// on an evidence gap: code the check could not read or judge. Narrowing
-        /// (`--diff`, `--component`, `--scope`), `uncovered_ok` and the cache never do.
+        /// (`--diff`, `--component`, `--scope`), accepted gaps and the cache never do.
         #[arg(long)]
         require_evidence: bool,
         /// Fail on each `may_depend_on` entry no import uses, the ones `suggest --patch`

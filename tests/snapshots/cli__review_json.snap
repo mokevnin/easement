@@ -3,7 +3,20 @@ source: tests/cli.rs
 expression: report
 ---
 {
-  "accepted_gaps": [],
+  "accepted_gaps": [
+    {
+      "because": "rewritten next quarter",
+      "files": [
+        "legacy/old.go"
+      ],
+      "kind": "uncovered",
+      "line": 13,
+      "provenance": {
+        "field": "accepted_gaps[0]",
+        "input": "easement.yml"
+      }
+    }
+  ],
   "base": "main",
   "cached": "1 index(es) came from the cache, keyed on the project files, the indexer and its environment but not on dependencies outside the project; if those changed without a lock file, run with `--no-cache` to index again",
   "components": {
@@ -27,6 +40,14 @@ expression: report
     }
   ],
   "debt": {
+    "accepted_gaps_added": [
+      {
+        "because": "rewritten next quarter",
+        "files": "legacy/**",
+        "kind": "uncovered"
+      }
+    ],
+    "accepted_gaps_removed": [],
     "baseline_added": [
       {
         "file": "src/web/page.ts",
@@ -45,13 +66,6 @@ expression: report
       "**/*.gen.ts"
     ],
     "target_only_removed": [],
-    "uncovered_ok_added": [
-      {
-        "because": "rewritten next quarter",
-        "pattern": "legacy/**"
-      }
-    ],
-    "uncovered_ok_removed": [],
     "warn_added": [
       "unused"
     ],
@@ -85,7 +99,17 @@ expression: report
     "removed": [],
     "warned": []
   },
-  "evidence_gaps": [],
+  "evidence_gaps": [
+    {
+      "close": "add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason",
+      "count": 1,
+      "files": [
+        "legacy/old.go"
+      ],
+      "kind": "uncovered",
+      "message": "1 source files were not covered by an indexer, so the dependencies in or on them were not checked"
+    }
+  ],
   "examples": {
     "added": [],
     "changed": [],

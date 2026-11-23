@@ -1,5 +1,5 @@
 //! What a verdict rests on: the evidence gaps of a run, the files no indexer
-//! read and the ones `uncovered_ok` accepts, what `--require-evidence` does
+//! read and the ones `accepted_gaps` accepts, what `--require-evidence` does
 //! with them, and what a narrowed run (`--diff`, `--component`, `--scope`)
 //! says it left out.
 
@@ -293,7 +293,7 @@ fn uncovered_files_are_listed_as_an_evidence_gap() {
         serde_json::json!(["tools/gen.go", "tools/other.go"])
     );
     assert!(
-        gaps[0]["close"].as_str().unwrap().contains("uncovered_ok"),
+        gaps[0]["close"].as_str().unwrap().contains("accepted_gaps"),
         "{gaps:?}"
     );
 }
@@ -317,11 +317,11 @@ fn vendored_and_test_data_go_files_are_not_project_code_left_uncovered() {
 }
 
 #[test]
-fn uncovered_ok_accepts_known_gaps() {
+fn accepted_gaps_accepts_known_uncovered_files() {
     let (_tmp, root) = fixture("uncovered");
     add_to_policy(
         &root,
-        "uncovered_ok:\n  - { name: 'tools/**', because: build helpers with no go.mod on purpose }\n",
+        "accepted_gaps:\n  - { kind: uncovered, files: 'tools/**', because: build helpers with no go.mod on purpose }\n",
     );
     // Accepted, the files are no evidence gap, but they are still reported.
     let checked = check(&root);
@@ -331,7 +331,9 @@ fn uncovered_ok_accepts_known_gaps() {
     assert!(!said.contains("not covered by an indexer"), "{said}");
     assert!(said.contains("Accepted gaps"), "{said}");
     assert!(
-        said.contains("tools/** because: build helpers with no go.mod on purpose"),
+        said.contains(
+            "  accepted_gaps[0] at easement.yml:7 because: build helpers with no go.mod on purpose\n"
+        ),
         "{said}"
     );
     assert!(said.contains("    tools/gen.go"), "{said}");
@@ -340,15 +342,17 @@ fn uncovered_ok_accepts_known_gaps() {
     assert_eq!(
         report["accepted_gaps"],
         serde_json::json!([{
-            "uncovered_ok": ["tools/**"],
+            "kind": "uncovered",
             "because": "build helpers with no go.mod on purpose",
+            "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
+            "line": 7,
             "files": ["tools/gen.go", "tools/other.go"],
         }])
     );
 }
 
 /// An accepted file is still unread: `suggest`, `impact` and `baseline` cannot
-/// see its imports, so they stay as careful as without `uncovered_ok`.
+/// see its imports, so they stay as careful as without `accepted_gaps`.
 #[test]
 fn an_accepted_file_passes_check_but_stays_unread_for_suggest_and_impact() {
     let (_tmp, root) = project(&[
@@ -361,8 +365,8 @@ components:
   lib: { in: lib }
 rules:
   app: { may_depend_on: [lib] }
-uncovered_ok:
-  - { name: app/race.go, because: race-only helpers }
+accepted_gaps:
+  - { kind: uncovered, files: app/race.go, because: race-only helpers }
 ",
         ),
         ("app/main.go", "package app\n\nfunc Run() {}\n"),
@@ -402,8 +406,10 @@ uncovered_ok:
     assert_eq!(
         impact["accepted_gaps"],
         serde_json::json!([{
-            "uncovered_ok": ["app/race.go"],
+            "kind": "uncovered",
             "because": "race-only helpers",
+            "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
+            "line": 8,
             "files": ["app/race.go"],
         }])
     );
@@ -418,9 +424,9 @@ uncovered_ok:
     );
     assert!(notes.contains("    to close: "), "{notes}");
     assert!(notes.contains("    app/race.go\n"), "{notes}");
-    assert!(notes.contains("Accepted gaps (`uncovered_ok`"), "{notes}");
+    assert!(notes.contains("Accepted gaps (`accepted_gaps`"), "{notes}");
     assert!(
-        notes.contains("  app/race.go because: race-only helpers\n"),
+        notes.contains("  accepted_gaps[0] at easement.yml:8 because: race-only helpers\n"),
         "{notes}"
     );
     assert!(
@@ -431,7 +437,7 @@ uncovered_ok:
 }
 
 /// `--require-evidence` fails a pass that rests on code the check could not read,
-/// with `Outcome::EvidenceRequired`; a gap accepted in `uncovered_ok` does not count.
+/// with `Outcome::EvidenceRequired`; a gap accepted in `accepted_gaps` does not count.
 #[test]
 fn require_evidence_fails_a_pass_with_an_evidence_gap() {
     let (_tmp, root) = fixture("uncovered");
@@ -449,7 +455,7 @@ fn require_evidence_fails_a_pass_with_an_evidence_gap() {
 
     add_to_policy(
         &root,
-        "uncovered_ok:\n  - { name: tools/**, because: build helpers }\n",
+        "accepted_gaps:\n  - { kind: uncovered, files: tools/**, because: build helpers }\n",
     );
     let checked = check_with(&root, |o| o.require_evidence = true);
     assert_eq!(checked.outcome(), Outcome::Passed);
@@ -506,7 +512,7 @@ fn an_import_the_indexer_did_not_resolve_fails_require_evidence() {
 
 /// A scope narrows what is reported, not what is read: a file outside it that
 /// no indexer read can hide a cycle or a reach chain through the scope, so its
-/// gap counts, and `uncovered_ok` still accepts it.
+/// gap counts, and `accepted_gaps` still accepts it.
 #[test]
 fn require_evidence_counts_the_gaps_outside_a_scope() {
     let (_tmp, root) = fixture("uncovered");
@@ -534,7 +540,7 @@ fn require_evidence_counts_the_gaps_outside_a_scope() {
 
     add_to_policy(
         &root,
-        "uncovered_ok:\n  - { name: tools/**, because: build helpers }\n",
+        "accepted_gaps:\n  - { kind: uncovered, files: tools/**, because: build helpers }\n",
     );
     let checked = check_with(&root, |o| {
         o.require_evidence = true;
@@ -589,13 +595,13 @@ fn require_evidence_leaves_a_run_with_violations_failed() {
 }
 
 #[test]
-fn uncovered_ok_takes_a_list_of_globs_under_one_reason() {
+fn an_accepted_gap_takes_a_list_of_globs_under_one_reason() {
     let (_tmp, root) = fixture("uncovered");
     let policy = fs::read_to_string(config(&root)).unwrap();
     fs::write(
         config(&root),
         format!(
-            "{policy}uncovered_ok:\n  - {{ name: ['tools/gen.go', 'tools/other.go'], because: build helpers }}\n"
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: ['tools/gen.go', 'tools/other.go'], because: build helpers }}\n"
         ),
     )
     .unwrap();
@@ -609,7 +615,9 @@ fn uncovered_ok_takes_a_list_of_globs_under_one_reason() {
     // One glob of the list is not enough for the other file.
     fs::write(
         config(&root),
-        format!("{policy}uncovered_ok:\n  - {{ name: ['tools/gen.go'] }}\n"),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: ['tools/gen.go'], because: build helpers }}\n"
+        ),
     )
     .unwrap();
     let checked = check(&root);
@@ -620,8 +628,77 @@ fn uncovered_ok_takes_a_list_of_globs_under_one_reason() {
         serde_json::json!(["tools/other.go"])
     );
     assert_eq!(
-        report["accepted_gaps"],
-        serde_json::json!([{ "uncovered_ok": ["tools/gen.go"], "files": ["tools/gen.go"] }])
+        report["accepted_gaps"][0]["files"],
+        serde_json::json!(["tools/gen.go"])
+    );
+}
+
+/// An entry that accepts nothing is a typo or a gap gone: it fails as
+/// `unmatched` at its line, which the baseline cannot accept, while an entry
+/// whose files are all accepted by an earlier one still matches them.
+#[test]
+fn an_accepted_gap_that_accepts_nothing_fails_as_unmatched_at_its_line() {
+    let (_tmp, root) = fixture("uncovered");
+    add_to_policy(
+        &root,
+        "accepted_gaps:\n  - { kind: uncovered, files: tools/**, because: build helpers }\n  - { kind: uncovered, files: tools/gen.go, because: the generator }\n  - { kind: uncovered, files: [app/**, gone/**], because: an old helper }\n",
+    );
+    let checked = check(&root);
+    assert_eq!(checked.outcome(), Outcome::Failed, "{}", text(&checked));
+    let report = json(&checked);
+    let violations = report["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 1, "{report}");
+    assert_eq!(violations[0]["rule"], "unmatched");
+    assert_eq!(violations[0]["file"], "easement.yml");
+    assert_eq!(violations[0]["line"], 9);
+    assert_eq!(violations[0]["target"], "app/**, gone/**");
+    assert!(
+        violations[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("`accepted_gaps[2]` accepts no uncovered file"),
+        "{report}"
+    );
+    // The baseline never accepts a mistake in the policy, and `--diff` keeps it,
+    // though no changed line is behind it.
+    let recorded = commands::baseline(&config(&root), false, &mut cache()).unwrap();
+    assert_eq!((recorded.written, recorded.config_rules), (0, 1));
+    assert_eq!(check(&root).outcome(), Outcome::Failed);
+    commit_all(&root);
+    let narrowed = check_with(&root, |o| o.diff = Some("main".into()));
+    assert_eq!(narrowed.outcome(), Outcome::Failed, "{}", text(&narrowed));
+    assert_eq!(json(&narrowed)["violations"][0]["rule"], "unmatched");
+}
+
+/// A file easement could not read is accepted like any unread file, so an
+/// entry that names only such a file accepts it and is not stale.
+#[test]
+fn an_accepted_gap_over_an_unreadable_file_accepts_it_and_is_not_stale() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, root) = fixture("kotlin");
+    let file = "src/main/kotlin/com/acme/shop/web/OrderController.kt";
+    add_to_policy(
+        &root,
+        &format!(
+            "accepted_gaps:\n  - {{ kind: uncovered, files: {file}, because: kept unreadable }}\n"
+        ),
+    );
+    fs::set_permissions(root.join(file), fs::Permissions::from_mode(0o000)).unwrap();
+    let checked = check(&root);
+    fs::set_permissions(root.join(file), fs::Permissions::from_mode(0o644)).unwrap();
+    let report = json(&checked);
+    assert_eq!(report["evidence_gaps"], serde_json::json!([]), "{report}");
+    assert_eq!(
+        report["accepted_gaps"][0]["files"],
+        serde_json::json!([file])
+    );
+    assert!(
+        !report["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["rule"] == "unmatched"),
+        "{report}"
     );
 }
 

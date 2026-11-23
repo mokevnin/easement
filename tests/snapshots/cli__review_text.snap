@@ -36,10 +36,19 @@ Policy examples:
 Debt and trust:
   Baseline entries added (1):
     src/web/page.ts: web -> storage (src/storage/db.ts) [dependency]
-  uncovered_ok added: `legacy/**` (because: rewritten next quarter)
+  accepted_gaps added: uncovered `legacy/**` (because: rewritten next quarter)
   exclude added: `docs`
   target_only added: `**/*.gen.ts`
   Moved to warn (their violations fail no more): `unused`
+
+Evidence gaps (the delta and the file lists say nothing about this code):
+  1 source files were not covered by an indexer, so the dependencies in or on them were not checked
+    to close: add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason
+    legacy/old.go
+
+Accepted gaps (`accepted_gaps`: no indexer read them, so their dependencies were not checked):
+  accepted_gaps[0] at easement.yml:13 because: rewritten next quarter
+    legacy/old.go
 
 2 index(es) came from the cache, keyed on the project files, the indexer and its environment but not on dependencies outside the project; if those changed without a lock file, run with `--no-cache` to index again
 

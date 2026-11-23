@@ -124,6 +124,31 @@ impl Scan {
     }
 }
 
+impl Scan {
+    /// Every source file whose dependencies were not read in full: those no
+    /// indexer covered and those easement could not read, each once.
+    pub fn unread_sources(&self) -> Vec<String> {
+        let mut unread: Vec<String> = self
+            .uncovered
+            .iter()
+            .chain(&self.unreadable)
+            .cloned()
+            .collect();
+        unread.sort();
+        unread.dedup();
+        unread
+    }
+
+    /// The source files no index holds because their indexer cannot run on this
+    /// platform: they are among `uncovered`.
+    pub fn cannot_run(&self) -> Vec<String> {
+        self.unavailable
+            .iter()
+            .flat_map(|unavailable| unavailable.files.iter().cloned())
+            .collect()
+    }
+}
+
 /// An import a file writes whose dependency is not in the graph, and why.
 #[derive(Debug, Clone)]
 pub struct Unresolved {

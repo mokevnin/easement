@@ -261,6 +261,59 @@ fn review_lists_files_that_change_component() {
     );
 }
 
+/// What the old policy accepted is no gap of the delta, what it did not accept
+/// is, and an entry taken back is listed under the debt.
+#[test]
+fn review_leaves_out_what_the_old_policy_accepted() {
+    let (_tmp, root) = fixture("uncovered");
+    let policy = fs::read_to_string(config(&root)).unwrap();
+    fs::write(
+        config(&root),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: tools/gen.go, because: generated }}\n  - {{ kind: uncovered, files: tools/other.go, because: a helper }}\n"
+        ),
+    )
+    .unwrap();
+    commit_all(&root);
+    fs::write(
+        config(&root),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: tools/**, because: build helpers }}\n"
+        ),
+    )
+    .unwrap();
+    let report = review_json(&root);
+    assert_eq!(report["evidence_gaps"], serde_json::json!([]), "{report}");
+    assert_eq!(
+        report["debt"]["accepted_gaps_removed"],
+        serde_json::json!([
+            { "kind": "uncovered", "files": "tools/gen.go", "because": "generated" },
+            { "kind": "uncovered", "files": "tools/other.go", "because": "a helper" },
+        ]),
+        "{report}"
+    );
+
+    // Taken back now, the file the old policy accepted is a gap again.
+    fs::write(
+        config(&root),
+        format!(
+            "{policy}accepted_gaps:\n  - {{ kind: uncovered, files: tools/gen.go, because: generated }}\n"
+        ),
+    )
+    .unwrap();
+    let report = review_json(&root);
+    assert_eq!(
+        report["evidence_gaps"][0]["files"],
+        serde_json::json!(["tools/other.go"]),
+        "{report}"
+    );
+    let said = review_text(&root);
+    assert!(
+        said.contains("accepted_gaps removed: uncovered `tools/other.go` (because: a helper)"),
+        "{said}"
+    );
+}
+
 /// The delta rests on both scans: code either could not read is an evidence
 /// gap, and code the new policy accepts unread is an accepted gap.
 #[test]
@@ -286,7 +339,9 @@ fn review_reports_the_gaps_of_both_policies() {
 
     fs::write(
         config(&root),
-        format!("{policy}uncovered_ok: [{{ name: tools/gen.go, because: generated }}]\n"),
+        format!(
+            "{policy}accepted_gaps: [{{ kind: uncovered, files: tools/gen.go, because: generated }}]\n"
+        ),
     )
     .unwrap();
     let report = review_json(&root);
@@ -302,7 +357,11 @@ fn review_reports_the_gaps_of_both_policies() {
         "{report}"
     );
     let said = review_text(&root);
-    assert!(said.contains("Accepted gaps (`uncovered_ok`"), "{said}");
+    assert!(said.contains("Accepted gaps (`accepted_gaps`"), "{said}");
+    assert!(
+        said.contains("accepted_gaps added: uncovered `tools/gen.go` (because: generated)"),
+        "{said}"
+    );
     assert!(
         said.contains("Evidence gaps (the delta and the file lists say nothing about this code):"),
         "{said}"

@@ -10,7 +10,7 @@ expression: "report[\"evidence_gaps\"]"
       "platform": "windows",
       "reason": "scip-python crashes on start there (https://github.com/sourcegraph/scip-python/issues/210, fix pending in https://github.com/sourcegraph/scip-python/pull/224)"
     },
-    "close": "check them on Linux or macOS (or WSL), `exclude` them, or accept them in `uncovered_ok`",
+    "close": "check them on Linux or macOS (or WSL), or `exclude` them; `accepted_gaps` never accepts them, since the policy describes the code, not the machine",
     "count": 2,
     "files": [
       "scripts/seed.py",

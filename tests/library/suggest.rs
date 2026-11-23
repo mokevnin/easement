@@ -159,7 +159,7 @@ fn check_suggest_lists_an_allowance_next_to_unread_files_as_unreliable() {
         ("go.mod", "module example.com/m\n\ngo 1.22\n"),
         (
             "easement.yml",
-            "version: 1\ncomponents:\n  app: { in: app }\n  log: { in: log }\nrules:\n  app: { may_depend_on: [log] }\nuncovered_ok:\n  - { name: app/race.go, because: built with -race only }\n",
+            "version: 1\ncomponents:\n  app: { in: app }\n  log: { in: log }\nrules:\n  app: { may_depend_on: [log] }\naccepted_gaps:\n  - { kind: uncovered, files: app/race.go, because: built with -race only }\n",
         ),
         ("app/main.go", "package app\n\nfunc Run() {}\n"),
         (
@@ -181,7 +181,7 @@ fn check_suggest_lists_an_allowance_next_to_unread_files_as_unreliable() {
         said.contains("app -> log (not indexed: 1 file(s) of app)"),
         "{said}"
     );
-    // `uncovered_ok` accepts the file, so `--require-evidence` still passes.
+    // `accepted_gaps` accepts the file, so `--require-evidence` still passes.
     let required = check_with(&root, |o| {
         o.suggest = true;
         o.require_evidence = true;

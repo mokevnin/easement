@@ -66,4 +66,4 @@ target_only: **/*.pb.ts
 manifests: true
 packages: true
 warn: naming
-uncovered_ok: vendor/**: vendored code
+accepted_gaps: uncovered vendor/**: vendored code

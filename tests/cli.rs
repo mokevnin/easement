@@ -126,9 +126,12 @@ fn the_report_of_review_is_pinned() {
                 "storage: { may_depend_on: [],",
                 "storage: { may_depend_on: [], forbid_external: [lodash],",
             )
-            + "exclude: [docs]\ntarget_only: ['**/*.gen.ts']\nwarn: [unused]\nuncovered_ok: [{ name: legacy/**, because: rewritten next quarter }]\n",
+            + "exclude: [docs]\ntarget_only: ['**/*.gen.ts']\nwarn: [unused]\naccepted_gaps: [{ kind: uncovered, files: legacy/**, because: rewritten next quarter }]\n",
     )
     .unwrap();
+    // A Go file with no go.mod above it: no indexer reads it, and the head accepts it.
+    fs::create_dir_all(root.join("legacy")).unwrap();
+    fs::write(root.join("legacy/old.go"), "package legacy\n").unwrap();
     fs::write(
         root.join("easement.baseline.yml"),
         baseline_of(["src/web/page.ts".to_string()]),
@@ -278,7 +281,9 @@ fn the_text_of_evidence_and_accepted_gaps_is_pinned() {
     let config = fs::read_to_string(root.join("easement.yml")).unwrap();
     fs::write(
         root.join("easement.yml"),
-        format!("{config}uncovered_ok:\n  - {{ name: tools/gen.go, because: generated }}\n"),
+        format!(
+            "{config}accepted_gaps:\n  - {{ kind: uncovered, files: tools/gen.go, because: generated }}\n"
+        ),
     )
     .unwrap();
     // A cache of its own, so the report never says it came from the cache.

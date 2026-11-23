@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::components::{self, ComponentMap};
+use crate::components::ComponentMap;
 use crate::config::Config;
 use crate::policy::Policy;
 use crate::{
     chains, check, diagram, examples, implementations, indexer, lang, manifests, matching, relpath,
-    scan, suppress, symbols, unused,
+    report, scan, suppress, symbols, unused,
 };
 
 pub struct Project {
@@ -116,6 +116,13 @@ impl Project {
             &map,
             &scan.all_files,
             &scan.deps,
+            &config_file,
+        ));
+        violations.extend(matching::unmatched_accepted(
+            policy,
+            &map,
+            &scan.unread_sources(),
+            &scan.cannot_run(),
             &config_file,
         ));
         violations.extend(symbols::unmatched_symbols(
@@ -249,7 +256,7 @@ impl Project {
         );
         stats.files = scan.paths.len();
         (stats.indexed, stats.from_cache) = (scan.indexed, scan.from_cache);
-        let accepted = graph_unread(self.config(), &map, &scan, &mut stats);
+        let accepted = graph_unread(&self.policy, &map, &scan, &mut stats);
         Ok(Analysis {
             unread_diagram,
             accepted,
@@ -319,12 +326,12 @@ pub struct Analysis {
     pub violations: Vec<check::Violation>,
     /// As [`Judgment::suppressions`].
     pub suppressions: Vec<check::HonouredSuppression>,
-    /// Every source file no indexer read, `uncovered_ok` or not: the report
-    /// leaves the accepted ones out, but nobody saw their imports, so what
-    /// `suggest`, `impact`, `why` and `baseline` say about them stays careful.
+    /// Every source file no indexer read, accepted or not: the report leaves
+    /// the accepted ones out, but nobody saw their imports, so what `suggest`,
+    /// `impact`, `why` and `baseline` say about them stays careful.
     pub unindexed: Vec<String>,
-    /// The files of `unindexed` that `uncovered_ok` accepts, by entry.
-    pub accepted: Vec<components::AcceptedGap>,
+    /// The gaps the entries of `accepted_gaps` accept, by entry.
+    pub accepted: Vec<report::AcceptedGap>,
     /// Every file that is not excluded, source or not.
     pub all_files: Vec<String>,
     pub component_deps: Vec<check::ComponentDep>,
@@ -370,22 +377,36 @@ fn parts_reasons(doubts: &[(String, lang::parts::Doubt)]) -> Vec<check::Unjudged
 /// What `scan` left out of the graph, into `stats`: the files no indexer
 /// covered, the imports it did not resolve and, when tests are parts, the files
 /// whose parts it could not tell. Every answer about the graph reports them; the
-/// files `uncovered_ok` accepts are returned apart.
+/// gaps the entries of `accepted_gaps` accept are returned apart, by entry.
 pub fn graph_unread(
-    config: &Config,
+    policy: &Policy,
     map: &ComponentMap,
     scan: &scan::Scan,
     stats: &mut check::Stats,
-) -> Vec<components::AcceptedGap> {
-    let accepted;
-    (stats.uncovered, accepted) = map.split_uncovered(&scan.uncovered);
-    stats.unreadable = map.split_uncovered(&scan.unreadable).0;
+) -> Vec<report::AcceptedGap> {
+    let cannot_run = scan.cannot_run();
+    let decided = map.decide_uncovered(&scan.uncovered, &cannot_run);
+    stats.uncovered = decided.open;
+    stats.unreadable = map.decide_uncovered(&scan.unreadable, &cannot_run).open;
     stats.unavailable = scan.unavailable.clone();
     stats.imports_gaps = unresolved_reasons(&scan.unresolved_imports);
-    if config.tests.is_some() {
+    if policy.config.tests.is_some() {
         stats.parts_gaps = parts_reasons(&scan.parts_doubts);
     }
-    accepted
+    decided
+        .accepted
+        .into_iter()
+        .map(|(entry, files)| {
+            let (provenance, line) = policy.top_item("accepted_gaps", entry);
+            report::AcceptedGap {
+                kind: report::GapKind::Uncovered,
+                because: policy.config.accepted_gaps[entry].because().to_string(),
+                provenance,
+                line,
+                files,
+            }
+        })
+        .collect()
 }
 
 /// How many imports the line about those the indexer did not resolve names.
