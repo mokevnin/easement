@@ -118,11 +118,18 @@ impl Project {
             &scan.deps,
             &config_file,
         ));
+        let unread = scan.unread_sources();
         violations.extend(matching::unmatched_accepted(
             policy,
             &map,
-            &scan.unread_sources(),
+            &unread,
             &scan.cannot_run(),
+            &config_file,
+        ));
+        violations.extend(matching::unmatched_imports(
+            policy,
+            &as_matched(&scan.unresolved_imports),
+            &unread,
             &config_file,
         ));
         violations.extend(symbols::unmatched_symbols(
@@ -385,28 +392,86 @@ pub fn graph_unread(
     stats: &mut check::Stats,
 ) -> Vec<report::AcceptedGap> {
     let cannot_run = scan.cannot_run();
-    let decided = map.decide_uncovered(&scan.uncovered, &cannot_run);
+    // A file easement could not read is accepted like one no indexer covered.
+    let decided = map.decide_uncovered(&scan.unread_sources(), &cannot_run);
     stats.uncovered = decided.open;
     stats.unreadable = map.decide_uncovered(&scan.unreadable, &cannot_run).open;
     stats.unavailable = scan.unavailable.clone();
-    stats.imports_gaps = unresolved_reasons(&scan.unresolved_imports);
+    let unresolved = &scan.unresolved_imports;
+    let imports = matching::decide_imports(&policy.config, &as_matched(unresolved));
+    stats.imports_gaps = unresolved_reasons(imports.open.iter().map(|&i| &unresolved[i]));
+    stats.graph_imports_gaps = unresolved_reasons(unresolved);
     if policy.config.tests.is_some() {
         stats.parts_gaps = parts_reasons(&scan.parts_doubts);
     }
-    decided
-        .accepted
-        .into_iter()
-        .map(|(entry, files)| {
-            let (provenance, line) = policy.top_item("accepted_gaps", entry);
-            report::AcceptedGap {
-                kind: report::GapKind::Uncovered,
-                because: policy.config.accepted_gaps[entry].because().to_string(),
-                provenance,
-                line,
-                files,
-            }
+    let accepted_gap = |entry: usize, kind, files, places| {
+        let (provenance, line) = policy.top_item("accepted_gaps", entry);
+        report::AcceptedGap {
+            kind,
+            because: policy.config.accepted_gaps[entry].because().to_string(),
+            provenance,
+            line,
+            files,
+            places,
+        }
+    };
+    let files = decided.accepted.into_iter().map(|(entry, files)| {
+        (
+            entry,
+            accepted_gap(entry, report::GapKind::Uncovered, files, Vec::new()),
+        )
+    });
+    let imports = imports.accepted.into_iter().map(|(entry, accepted)| {
+        let mut places: Vec<check::Place> =
+            accepted.iter().map(|&i| unresolved[i].place()).collect();
+        places.sort();
+        places.dedup();
+        let mut files: Vec<String> = places.iter().map(|p| p.file.clone()).collect();
+        files.dedup();
+        let gap = accepted_gap(entry, report::GapKind::UnresolvedImports, files, places);
+        (entry, gap)
+    });
+    // In the order of the entries.
+    let mut accepted: Vec<(usize, report::AcceptedGap)> = files.chain(imports).collect();
+    accepted.sort_by_key(|(entry, _)| *entry);
+    accepted.into_iter().map(|(_, gap)| gap).collect()
+}
+
+/// The imports `scan` did not resolve that `config` does not accept.
+pub fn open_imports<'a>(config: &Config, scan: &'a scan::Scan) -> Vec<&'a scan::Unresolved> {
+    let unresolved = &scan.unresolved_imports;
+    let decided = matching::decide_imports(config, &as_matched(unresolved));
+    decided.open.iter().map(|&i| &unresolved[i]).collect()
+}
+
+/// The imports `scan` did not resolve, as an entry of `accepted_gaps` matches them.
+fn as_matched(unresolved: &[scan::Unresolved]) -> Vec<matching::UnresolvedImport<'_>> {
+    unresolved
+        .iter()
+        .map(|import| matching::UnresolvedImport {
+            file: &import.file,
+            specifier: &import.import.specifier,
+            cause: import.cause,
+            close: close_of(import.cause, import.explained),
         })
         .collect()
+}
+
+/// How to close the gap of an import unresolved for `cause`, as its language
+/// `explained` it, or as every unresolved import closes.
+fn close_of(
+    cause: lang::Cause,
+    explained: Option<&'static lang::language::Explained>,
+) -> &'static str {
+    match cause {
+        // What the walk leaves out is the project's to say, in every language.
+        lang::Cause::Unwalked => {
+            "stop hiding the file (generated code the project imports belongs in `target_only`), or review those dependencies by hand"
+        }
+        _ => explained
+            .and_then(|explained| explained.close)
+            .unwrap_or(report::CLOSE_UNRESOLVED),
+    }
 }
 
 /// How many imports the line about those the indexer did not resolve names.
@@ -416,7 +481,9 @@ const IMPORTS_SHOWN: usize = 3;
 /// the language of each explains it: how many, what usually brings the cause about,
 /// the first few by file and line, the place of every one of them and, where the
 /// language says it, how to close it.
-fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
+pub fn unresolved_reasons<'a>(
+    imports: impl IntoIterator<Item = &'a scan::Unresolved>,
+) -> Vec<check::Unjudged> {
     type Key = (lang::Cause, Option<&'static lang::language::Explained>);
     let mut by_cause: std::collections::BTreeMap<Key, Vec<&scan::Unresolved>> =
         std::collections::BTreeMap::new();
@@ -460,22 +527,12 @@ fn unresolved_reasons(imports: &[scan::Unresolved]) -> Vec<check::Unjudged> {
             let because = explained.map_or(String::new(), |explained| {
                 format!(" ({})", explained.because)
             });
-            let unjudged = check::Unjudged::new(format!(
+            check::Unjudged::new(format!(
                 "{what}, so the dependencies they write were not checked{because}: {named}"
             ))
             .in_files(imports.iter().map(|unresolved| unresolved.file.as_str()))
-            .at(places);
-            let close = match cause {
-                // What the walk leaves out is the project's to say, in every language.
-                lang::Cause::Unwalked => Some(
-                    "stop hiding the file (generated code the project imports belongs in `target_only`), or review those dependencies by hand",
-                ),
-                _ => explained.and_then(|explained| explained.close),
-            };
-            match close {
-                Some(close) => unjudged.closed_by(close),
-                None => unjudged,
-            }
+            .at(places)
+            .closed_by(close_of(cause, explained))
         })
         .collect()
 }

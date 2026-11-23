@@ -721,11 +721,17 @@ pub struct Debt {
 }
 
 /// One thing an entry of `accepted_gaps` accepts, with the reason the entry gives:
-/// for `uncovered`, one glob of its files.
+/// for `uncovered`, one glob of its files; for `unresolved_imports`, the imports of
+/// one file written as one specifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Accepted {
     pub kind: &'static str,
-    pub files: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specifier: Option<String>,
     pub because: String,
 }
 
@@ -738,19 +744,26 @@ impl Debt {
                 .accepted_gaps
                 .iter()
                 .flat_map(|entry| {
+                    let accepted = |files: Option<&str>, import: Option<(&str, &str)>| Accepted {
+                        kind: entry.kind(),
+                        files: files.map(str::to_string),
+                        file: import.map(|(file, _)| file.to_string()),
+                        specifier: import.map(|(_, specifier)| specifier.to_string()),
+                        because: entry.because().to_string(),
+                    };
                     entry
                         .uncovered_patterns()
                         .into_iter()
-                        .map(|pattern| Accepted {
-                            kind: entry.kind(),
-                            files: pattern.to_string(),
-                            because: entry.because().to_string(),
-                        })
+                        .map(|pattern| accepted(Some(pattern), None))
+                        .chain(entry.import().map(|import| accepted(None, Some(import))))
+                        .collect::<Vec<_>>()
                 })
                 .collect()
         };
         let (accepted_then, accepted_now) = (accepted(base), accepted(head));
-        let same = |a: &Accepted, b: &Accepted| (a.kind, &a.files) == (b.kind, &b.files);
+        let same = |a: &Accepted, b: &Accepted| {
+            (a.kind, &a.files, &a.file, &a.specifier) == (b.kind, &b.files, &b.file, &b.specifier)
+        };
         let (exclude_added, exclude_removed) = added_and_removed(&base.exclude, &head.exclude);
         let (target_only_added, target_only_removed) =
             added_and_removed(&base.target_only, &head.target_only);
@@ -778,7 +791,12 @@ fn quoted_each(items: &[String]) -> Vec<String> {
 impl Accepted {
     /// What it accepts in backticks, with its kind and reason.
     fn line(&self) -> String {
-        format!("{} `{}` (because: {})", self.kind, self.files, self.because)
+        let what = match (&self.files, &self.file, &self.specifier) {
+            (Some(files), _, _) => format!("`{files}`"),
+            (None, Some(file), Some(specifier)) => format!("`{specifier}` in {file}"),
+            _ => String::new(),
+        };
+        format!("{} {what} (because: {})", self.kind, self.because)
     }
 }
 
@@ -1394,7 +1412,7 @@ components:
     #[test]
     fn exclude_accepted_gaps_and_warn_entries_are_listed_both_ways() {
         let base = format!(
-            "{TWO}exclude: [gen]\nwarn: [unused]\naccepted_gaps:\n  - {{ kind: uncovered, files: old/**, because: rewritten next quarter }}\n  - {{ kind: uncovered, files: tools/**, because: build helpers }}\n"
+            "{TWO}exclude: [gen]\nwarn: [unused]\naccepted_gaps:\n  - {{ kind: uncovered, files: old/**, because: rewritten next quarter }}\n  - {{ kind: uncovered, files: tools/**, because: build helpers }}\n  - {{ kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: by language }}\n"
         );
         let head = format!(
             "{TWO}exclude: [vendor]\nwarn: [dependency]\naccepted_gaps:\n  - {{ kind: uncovered, files: [legacy/**, old/**], because: rewritten next quarter }}\n"
@@ -1411,17 +1429,30 @@ components:
             debt.accepted_gaps_added,
             [Accepted {
                 kind: "uncovered",
-                files: "legacy/**".to_string(),
+                files: Some("legacy/**".to_string()),
+                file: None,
+                specifier: None,
                 because: "rewritten next quarter".to_string(),
             }]
         );
         assert_eq!(
             debt.accepted_gaps_removed,
-            [Accepted {
-                kind: "uncovered",
-                files: "tools/**".to_string(),
-                because: "build helpers".to_string(),
-            }]
+            [
+                Accepted {
+                    kind: "uncovered",
+                    files: Some("tools/**".to_string()),
+                    file: None,
+                    specifier: None,
+                    because: "build helpers".to_string(),
+                },
+                Accepted {
+                    kind: "unresolved_imports",
+                    files: None,
+                    file: Some("src/i18n.ts".to_string()),
+                    specifier: Some("./locales/*.json".to_string()),
+                    because: "by language".to_string(),
+                },
+            ]
         );
     }
 }

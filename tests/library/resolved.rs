@@ -90,7 +90,9 @@ tests: auto
 entry: [src/web/page.ts]
 exclude: ['src/gen/**']
 target_only: ['**/*.pb.ts']
-accepted_gaps: [{ kind: uncovered, files: 'vendor/**', because: vendored code }]
+accepted_gaps:
+  - { kind: uncovered, files: 'vendor/**', because: vendored code }
+  - { kind: unresolved_imports, file: src/web/routes.ts, specifier: './pages/*.ts', because: pages load by route }
 diagram: docs/architecture.md
 manifests: true
 packages: true

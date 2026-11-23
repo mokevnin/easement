@@ -106,10 +106,12 @@ pub struct Config {
     pub unowned: Vec<String>,
     /// Evidence gaps the policy accepts as a decision about the code, each with its `kind`,
     /// the gap of the report it accepts, and the reason: `{ kind: uncovered, files: tools/**,
-    /// because: … }` accepts source files no indexer covers (globs). An accepted gap no longer
-    /// counts against the verdict of `check` but is still listed in the report, under
-    /// `accepted_gaps`. Files whose indexer cannot run on this platform are never accepted. An
-    /// entry that accepts nothing fails as `unmatched` at its line.
+    /// because: … }` accepts source files no indexer covers (globs), and `{ kind:
+    /// unresolved_imports, file: src/i18n.ts, specifier: "./locales/*.json", because: … }`
+    /// every import of that file, written so, whose target is computed at run time. An
+    /// accepted gap no longer counts against the verdict of `check` but is still listed in
+    /// the report, under `accepted_gaps`. Files whose indexer cannot run on this platform are
+    /// never accepted. An entry that accepts nothing fails as `unmatched` at its line.
     #[serde(default)]
     pub accepted_gaps: Vec<AcceptedEntry>,
     /// Settings of an indexer, by the language it reads: `go: { tags: [race] }` indexes Go
@@ -452,6 +454,20 @@ pub enum AcceptedEntry {
         #[schemars(extend("minLength" = 1, "pattern" = "\\S"))]
         because: String,
     },
+    /// Imports whose target is computed at run time (`import.meta.glob`, a `require()` or
+    /// `import()` of a name built at run time), reviewed and accepted as they are. Every
+    /// such import of `file` written as `specifier` is accepted; one unresolved for
+    /// another cause is not.
+    UnresolvedImports {
+        /// The importing file, relative to the root, with no glob.
+        file: String,
+        /// The text of the import, as the report gives it in `places[].specifier`.
+        #[schemars(extend("minLength" = 1))]
+        specifier: String,
+        /// Why the imports may stay unresolved, reported with the places it accepts.
+        #[schemars(extend("minLength" = 1, "pattern" = "\\S"))]
+        because: String,
+    },
 }
 
 impl AcceptedEntry {
@@ -459,13 +475,15 @@ impl AcceptedEntry {
     pub fn kind(&self) -> &'static str {
         match self {
             AcceptedEntry::Uncovered { .. } => "uncovered",
+            AcceptedEntry::UnresolvedImports { .. } => "unresolved_imports",
         }
     }
 
     /// Why the policy accepts the gap.
     pub fn because(&self) -> &str {
         match self {
-            AcceptedEntry::Uncovered { because, .. } => because,
+            AcceptedEntry::Uncovered { because, .. }
+            | AcceptedEntry::UnresolvedImports { because, .. } => because,
         }
     }
 
@@ -473,6 +491,18 @@ impl AcceptedEntry {
     pub fn uncovered_patterns(&self) -> Vec<&str> {
         match self {
             AcceptedEntry::Uncovered { files, .. } => files.as_vec(),
+            AcceptedEntry::UnresolvedImports { .. } => Vec::new(),
+        }
+    }
+
+    /// The file and the specifier of the imports an `unresolved_imports` entry
+    /// accepts; none for another kind.
+    pub fn import(&self) -> Option<(&str, &str)> {
+        match self {
+            AcceptedEntry::UnresolvedImports {
+                file, specifier, ..
+            } => Some((file, specifier)),
+            AcceptedEntry::Uncovered { .. } => None,
         }
     }
 }
@@ -1308,6 +1338,43 @@ tests: auto
         );
         assert!(error("{ kind: uncovered, files: tools/**, because: ' ' }").contains("empty"));
         assert!(error("{ files: tools/**, because: x }").contains("missing field `kind`"));
+        let imports = with(
+            "{ kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: by language }",
+        )
+        .unwrap();
+        assert_eq!(imports.accepted_gaps[0].kind(), "unresolved_imports");
+        assert_eq!(
+            imports.accepted_gaps[0].import(),
+            Some(("src/i18n.ts", "./locales/*.json"))
+        );
+        // A Next.js route is a path, not a glob.
+        let route = with(
+            "{ kind: unresolved_imports, file: 'src/app/[locale]/layout.tsx', specifier: x, because: y }",
+        );
+        assert!(route.is_ok(), "{route:?}");
+        for file in [
+            "src/*.ts",
+            "/src/i18n.ts",
+            "./src/i18n.ts",
+            "../i18n.ts",
+            "''",
+        ] {
+            let said = error(&format!(
+                "{{ kind: unresolved_imports, file: {file}, specifier: x, because: y }}"
+            ));
+            assert!(
+                said.contains("relative to the root, with no glob"),
+                "{file}: {said}"
+            );
+        }
+        assert!(
+            error("{ kind: unresolved_imports, file: a.ts, specifier: '', because: y }")
+                .contains("empty `specifier`")
+        );
+        assert!(
+            error("{ kind: unresolved_imports, file: a.ts, because: y }")
+                .contains("missing field `specifier`")
+        );
         // A gap that is a fault of the tool or the environment is no decision about
         // the code, so it cannot be accepted.
         let fault = error("{ kind: unknown_scheme, files: tools/**, because: x }");

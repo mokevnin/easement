@@ -548,9 +548,14 @@ pub struct Stats {
     /// the copy in the importing file's component, otherwise the first by path.
     #[serde(skip)]
     pub declarations_gaps: Vec<Unjudged>,
-    /// Imports a file writes that the indexer did not resolve.
+    /// Imports a file writes that the indexer did not resolve, those `accepted_gaps`
+    /// accepts aside.
     #[serde(skip)]
     pub imports_gaps: Vec<Unjudged>,
+    /// Every import a file writes that the indexer did not resolve, accepted or not:
+    /// an answer about the graph lists them all, since nobody saw their dependencies.
+    #[serde(skip)]
+    pub graph_imports_gaps: Vec<Unjudged>,
     /// Files whose symbols carry a scheme no entry declares, so none was read.
     #[serde(skip)]
     pub schemes_gaps: Vec<Unjudged>,

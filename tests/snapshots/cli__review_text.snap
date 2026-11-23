@@ -46,8 +46,8 @@ Evidence gaps (the delta and the file lists say nothing about this code):
     to close: add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason
     legacy/old.go
 
-Accepted gaps (`accepted_gaps`: no indexer read them, so their dependencies were not checked):
-  accepted_gaps[0] at easement.yml:13 because: rewritten next quarter
+Accepted gaps (`accepted_gaps`: their dependencies were not checked):
+  accepted_gaps[0] at easement.yml:13 accepts files no indexer read because: rewritten next quarter
     legacy/old.go
 
 2 index(es) came from the cache, keyed on the project files, the indexer and its environment but not on dependencies outside the project; if those changed without a lock file, run with `--no-cache` to index again

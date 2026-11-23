@@ -88,7 +88,9 @@ pub const EXPLAINED: &[Explained] = &[
     Explained {
         cause: Cause::Computed,
         because: "a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file; one whose static prefix is a path into one installed package (`/node_modules/pkg/*.svg`) is judged as a use of that package instead",
-        close: Some("write each target as a literal path, or review those dependencies by hand"),
+        close: Some(
+            "write each target as a literal path, or review those dependencies and accept them in `accepted_gaps` (`kind: unresolved_imports` with the `file` and `specifier` of each) with the reason",
+        ),
     },
 ];
 

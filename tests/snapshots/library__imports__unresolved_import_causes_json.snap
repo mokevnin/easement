@@ -57,7 +57,7 @@ expression: "report[\"evidence_gaps\"]"
     ]
   },
   {
-    "close": "write each target as a literal path, or review those dependencies by hand",
+    "close": "write each target as a literal path, or review those dependencies and accept them in `accepted_gaps` (`kind: unresolved_imports` with the `file` and `specifier` of each) with the reason",
     "count": 1,
     "files": [
       "src/app/main.ts"

@@ -87,9 +87,13 @@ pub struct AcceptedGap {
     pub provenance: Provenance,
     /// The line, counted from 1, of the entry in the input of its provenance.
     pub line: usize,
-    /// The files it accepts, for `uncovered`.
+    /// The files it accepts, for `uncovered`; the files of the imports it accepts,
+    /// for `unresolved_imports`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    /// The places of the imports it accepts, for `unresolved_imports`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub places: Vec<Place>,
 }
 
 impl AcceptedGap {
@@ -101,13 +105,34 @@ impl AcceptedGap {
         }
     }
 
+    /// What it accepts, as a phrase: `files no indexer read`.
+    fn what(&self) -> &'static str {
+        match self.kind {
+            GapKind::UnresolvedImports => "imports whose target is computed at run time",
+            _ => "files no indexer read",
+        }
+    }
+
+    /// Where what it accepts is, after a key: `files: a.go, b.go`, or the
+    /// places of the imports.
+    fn where_(&self) -> String {
+        match self.kind {
+            GapKind::UnresolvedImports => {
+                let places: Vec<String> = self.places.iter().map(ToString::to_string).collect();
+                format!("places: {}", places.join(", "))
+            }
+            _ => format!("files: {}", self.files.join(", ")),
+        }
+    }
+
     /// What it accepts and why, in one line, for a note.
     fn message(&self) -> String {
         format!(
-            "{} accepts files no indexer read, because {}; their dependencies were not checked; files: {}",
+            "{} accepts {}, because {}; their dependencies were not checked; {}",
             self.entry(),
+            self.what(),
             self.because,
-            self.files.join(", ")
+            self.where_()
         )
     }
 }
@@ -285,27 +310,37 @@ impl EvidenceGap {
 
 pub const CLOSE_UNCOVERED: &str = "add them to a project the indexer reads, `exclude` them, or accept them in `accepted_gaps` (`kind: uncovered`) with the reason";
 
+/// What closes the gap of imports the indexer did not resolve, unless their cause
+/// says otherwise.
+pub const CLOSE_UNRESOLVED: &str =
+    "build the code and fix what the compiler reports, then check again";
+
 /// What closes the gap of files whose indexer cannot run on this platform.
 pub const CLOSE_CANNOT_RUN: &str = "check them on Linux or macOS (or WSL), or `exclude` them; `accepted_gaps` never accepts them, since the policy describes the code, not the machine";
 
 /// Code a check could not read or judge, in the order the reasons were always given.
 pub fn evidence_gaps(stats: &Stats) -> Vec<EvidenceGap> {
-    evidence_gaps_unread(stats, &stats.uncovered)
+    evidence_gaps_unread(stats, &stats.uncovered, &stats.imports_gaps)
 }
 
 /// The evidence gaps of a run that leave dependencies out of its graph, for an
 /// answer about the graph (`impact`, `why`, `suggest`, `graph`). `unread` is every file no indexer
-/// read, accepted or not: accepting a file settles the verdict of `check`,
-/// but nobody saw its imports.
+/// read, accepted or not, and every unresolved import counts, accepted or not:
+/// accepting a gap settles the verdict of `check`, but nobody saw its dependencies.
 pub fn graph_gaps(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
-    evidence_gaps_unread(stats, unread)
+    evidence_gaps_unread(stats, unread, &stats.graph_imports_gaps)
         .into_iter()
         .filter(|gap| gap.kind.hides_dependencies())
         .collect()
 }
 
-/// The evidence gaps of a run, with `unread` as the files no indexer read.
-fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
+/// The evidence gaps of a run, with `unread` as the files no indexer read and
+/// `imports` as the lines of the imports it did not resolve.
+fn evidence_gaps_unread(
+    stats: &Stats,
+    unread: &[String],
+    imports: &[Unjudged],
+) -> Vec<EvidenceGap> {
     // A file easement could not read is told apart from one no indexer covered,
     // and one whose indexer cannot run here from both, since what closes the gap differs.
     let mut uncovered: Vec<&String> = unread
@@ -371,11 +406,7 @@ fn evidence_gaps_unread(stats: &Stats, unread: &[String]) -> Vec<EvidenceGap> {
         &stats.declarations_gaps,
         "give the name one home: keep it in one component, or rename it so that it is unique",
     );
-    add(
-        GapKind::UnresolvedImports,
-        &stats.imports_gaps,
-        "build the code and fix what the compiler reports, then check again",
-    );
+    add(GapKind::UnresolvedImports, imports, CLOSE_UNRESOLVED);
     add(
         GapKind::UnknownScheme,
         &stats.schemes_gaps,
@@ -631,16 +662,19 @@ pub fn gap_lines(
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(
-            "Accepted gaps (`accepted_gaps`: no indexer read them, so their dependencies were not checked):\n",
-        );
+        out.push_str("Accepted gaps (`accepted_gaps`: their dependencies were not checked):\n");
         for gap in accepted_gaps {
             out.push_str(&format!(
-                "  {}{}\n",
+                "  {} accepts {}{}\n",
                 gap.entry(),
+                gap.what(),
                 paint(color, DIM, &format!(" because: {}", gap.because))
             ));
-            out.push_str(&item_lines(&gap.files, "    "));
+            // The places say the files too, each at its line.
+            out.push_str(&match gap.kind {
+                GapKind::UnresolvedImports => item_lines(&gap.places, "    "),
+                _ => item_lines(&gap.files, "    "),
+            });
         }
     }
     out
@@ -1019,10 +1053,10 @@ impl<'a> Note<'a> {
     fn accepted(gap: &'a AcceptedGap) -> Self {
         Note {
             out: format!(
-                "accepted gap ({}) because {}; files: {}",
+                "accepted gap ({}) because {}; {}",
                 gap.entry(),
                 gap.because,
-                gap.files.join(", ")
+                gap.where_()
             ),
             ..Note::new(
                 NoteKind::AcceptedGap,
@@ -1839,6 +1873,7 @@ hi</system-out>
             },
             line,
             files: files.iter().map(|f| f.to_string()).collect(),
+            places: Vec::new(),
         }
     }
 
@@ -1864,7 +1899,7 @@ hi</system-out>
         let out = report(false).text();
         assert!(
             out.contains(
-                "  accepted_gaps[0] at easement.yml:12 because: generated\n    gen/b.go\n    tools/a.go\n"
+                "  accepted_gaps[0] at easement.yml:12 accepts files no indexer read because: generated\n    gen/b.go\n    tools/a.go\n"
             ),
             "{out}"
         );
@@ -1879,6 +1914,48 @@ hi</system-out>
                 "::notice title=easement accepted-gap::accepted_gaps[0] at easement.yml:12 accepts files no indexer read, because generated; their dependencies were not checked; files: gen/b.go, tools/a.go"
             ],
             "{github}"
+        );
+    }
+
+    /// An entry that accepts imports is named alike, with the places it accepts.
+    #[test]
+    fn an_accepted_import_is_named_with_its_places_in_every_format() {
+        let mut gap = accepted_gap(0, 5, &["src/i18n.ts"]);
+        gap.kind = GapKind::UnresolvedImports;
+        gap.places = vec![Place {
+            file: "src/i18n.ts".into(),
+            line: 1,
+            specifier: Some("./locales/*.json".into()),
+        }];
+        let coverage = Coverage {
+            accepted_gaps: vec![gap],
+            ..Coverage::default()
+        };
+        let (verdict, stats) = (clean_verdict(), Stats::default());
+        let report = Report {
+            verdict: &verdict,
+            stats: &stats,
+            coverage: &coverage,
+            diff: None,
+            drift: None,
+            require_evidence: true,
+            spared: &NO_SPARED,
+        };
+        let said = "accepted_gaps[0] at easement.yml:5 accepts imports whose target is computed at run time, because generated; their dependencies were not checked; places: src/i18n.ts:1 (`./locales/*.json`)";
+        assert!(report.github().contains(said), "{}", report.github());
+        let sarif: serde_json::Value = serde_json::from_str(&report.sarif()).unwrap();
+        let notes = &sarif["runs"][0]["invocations"][0]["toolExecutionNotifications"];
+        assert_eq!(notes[0]["message"]["text"], said, "{notes}");
+        let xml = report.junit();
+        assert!(
+            xml.contains("accepted gap (accepted_gaps[0] at easement.yml:5) because generated; places: src/i18n.ts:1 (`./locales/*.json`)"),
+            "{xml}"
+        );
+        assert!(xml.contains("failures=\"0\""), "{xml}");
+        let text = report.text();
+        assert!(
+            text.contains("  accepted_gaps[0] at easement.yml:5 accepts imports whose target is computed at run time because: generated\n    src/i18n.ts:1 (`./locales/*.json`)\n"),
+            "{text}"
         );
     }
 

@@ -218,6 +218,27 @@ impl Config {
                 );
             }
             match entry {
+                AcceptedEntry::UnresolvedImports {
+                    file, specifier, ..
+                } => {
+                    if specifier.is_empty() {
+                        bail!(
+                            "{place} has an empty `specifier`; write the import as the report gives it"
+                        );
+                    }
+                    let relative = !file.is_empty()
+                        && !file.starts_with('/')
+                        && !file.starts_with("./")
+                        && !file.contains('\\')
+                        && !file.split('/').any(|part| part == "..");
+                    // Matched as written, so only a `*` says a glob was meant: brackets
+                    // and braces are in real paths (`app/[locale]/page.tsx`).
+                    if !relative || file.contains('*') {
+                        bail!(
+                            "{place}.file `{file}` must be the path of one file relative to the root, with no glob, as the report gives it"
+                        );
+                    }
+                }
                 AcceptedEntry::Uncovered { files, .. } => {
                     let patterns = files.as_vec();
                     if patterns.is_empty() {

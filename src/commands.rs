@@ -692,12 +692,22 @@ pub fn review(config: &Path, base: &str, cache: &mut scan::Cache) -> Result<revi
         .map
         .decide_uncovered(&old_read.uncovered, &old_read.cannot_run())
         .open;
+    // What either policy leaves open of the imports no index resolved: the delta
+    // says nothing of an import the old policy did not accept either.
+    let mut open_imports: Vec<scan::Unresolved> = project::open_imports(&old.config, old_read)
+        .into_iter()
+        .chain(project::open_imports(project.config(), &scan))
+        .cloned()
+        .collect();
+    open_imports.sort_by_key(|import| (import.place(), import.cause));
+    open_imports.dedup_by_key(|import| (import.place(), import.cause));
     let old_files: &[String] = old_scan.as_ref().map_or(&[], |s| &s.paths);
     let old_from_cache = old_scan.as_ref().map_or(0, |s| s.from_cache);
     let mut head = project.analysis_despite_unread_diagram(scan)?;
     head.stats.uncovered.extend(old_uncovered);
     head.stats.uncovered.sort();
     head.stats.uncovered.dedup();
+    head.stats.imports_gaps = project::unresolved_reasons(&open_imports);
     let mut evidence_gaps = report::evidence_gaps(&head.stats);
     for gap in report::evidence_gaps(&old_judgment.stats) {
         if !evidence_gaps.contains(&gap) {

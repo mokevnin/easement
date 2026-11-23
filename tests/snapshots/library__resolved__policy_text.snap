@@ -67,3 +67,4 @@ manifests: true
 packages: true
 warn: naming
 accepted_gaps: uncovered vendor/**: vendored code
+accepted_gaps: unresolved_imports `./pages/*.ts` in src/web/routes.ts: pages load by route

@@ -10,6 +10,12 @@ expression: policy_json(&root)
         "vendor/**"
       ],
       "kind": "uncovered"
+    },
+    {
+      "because": "pages load by route",
+      "file": "src/web/routes.ts",
+      "kind": "unresolved_imports",
+      "specifier": "./pages/*.ts"
     }
   ],
   "common": [

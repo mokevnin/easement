@@ -14,7 +14,7 @@ Evidence gaps (a pass says nothing about this code):
     to close: make each file imported a module with `export {}`, or fix its path
     src/app/main.ts:7 (`../lib/polyfill`)
   the target of 3 import(s) is computed at run time, so the dependencies they write were not checked (a non-literal `import()` or `require()`, or `import.meta.glob`, names no one file; one whose static prefix is a path into one installed package (`/node_modules/pkg/*.svg`) is judged as a use of that package instead): src/app/main.ts:16 (``../lib/${name}``), src/app/main.ts:17 (`"../lib/" + name`), src/app/main.ts:18 (`../lib/*.ts`)
-    to close: write each target as a literal path, or review those dependencies by hand
+    to close: write each target as a literal path, or review those dependencies and accept them in `accepted_gaps` (`kind: unresolved_imports` with the `file` and `specifier` of each) with the reason
     src/app/main.ts:16 (``../lib/${name}``)
     src/app/main.ts:17 (`"../lib/" + name`)
     src/app/main.ts:18 (`../lib/*.ts`)

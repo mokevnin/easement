@@ -10,7 +10,7 @@ Evidence gaps (a pass says nothing about this code):
     src/app/lost.py:5 (`.gone`)
     src/app/lost.py:6 (`not_installed_anywhere`)
   the target of 1 import(s) is computed at run time, so the dependencies they write were not checked (`importlib.import_module()` or `__import__()` of a name that is not a literal names no one module): src/app/lost.py:9 (`m.__name__`)
-    to close: write each module as an `import`, or review those dependencies by hand
+    to close: write each module as an `import`, or review those dependencies and accept them in `accepted_gaps` (`kind: unresolved_imports` with the `file` and `specifier` of each) with the reason
     src/app/lost.py:9 (`m.__name__`)
   the index holds no module of 2 call(s) that import one, so the dependencies they write were not checked (scip-python records no module that `importlib.import_module()` or `__import__()` names): src/app/lost.py:8 (`lib.util`), src/app/lost.py:10 (`.sibling`)
     to close: write each module as an `import`, or review those dependencies by hand

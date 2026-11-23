@@ -10,7 +10,7 @@ use easement::commands::{self, CheckOptions, Checked, Outcome, Proposed};
 use easement::{CacheUse, Coverage, GapKind, GraphFormat, Place};
 use tempfile::TempDir;
 
-use crate::common::{commit_all, fixture, project};
+use crate::common::{commit_all, fixture, project, write_all};
 use crate::run::{
     cache, cache_in, check, check_with, config, json, leaves_out, parse, pinned, text,
 };
@@ -332,7 +332,7 @@ fn accepted_gaps_accepts_known_uncovered_files() {
     assert!(said.contains("Accepted gaps"), "{said}");
     assert!(
         said.contains(
-            "  accepted_gaps[0] at easement.yml:7 because: build helpers with no go.mod on purpose\n"
+            "  accepted_gaps[0] at easement.yml:7 accepts files no indexer read because: build helpers with no go.mod on purpose\n"
         ),
         "{said}"
     );
@@ -426,7 +426,7 @@ accepted_gaps:
     assert!(notes.contains("    app/race.go\n"), "{notes}");
     assert!(notes.contains("Accepted gaps (`accepted_gaps`"), "{notes}");
     assert!(
-        notes.contains("  accepted_gaps[0] at easement.yml:8 because: race-only helpers\n"),
+        notes.contains("  accepted_gaps[0] at easement.yml:8 accepts files no indexer read because: race-only helpers\n"),
         "{notes}"
     );
     assert!(
@@ -729,4 +729,200 @@ fn a_narrowed_run_says_it_judged_only_a_part() {
             { "kind": "scope", "limited_to": "internal" },
         ])
     );
+}
+
+/// A TypeScript project whose `src/i18n.ts` loads its locales by a glob, twice,
+/// with `entries` as its `accepted_gaps`.
+fn locales(entries: &str) -> (TempDir, std::path::PathBuf) {
+    project(&[
+        (
+            "easement.yml",
+            &format!("version: 1\ncomponents:\n  app: {{ in: src }}\naccepted_gaps:\n{entries}"),
+        ),
+        ("package.json", r#"{"name": "app", "private": true}"#),
+        (
+            "tsconfig.json",
+            r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler"},"include":["src"]}"#,
+        ),
+        (
+            "src/i18n.ts",
+            "export const locales = import.meta.glob(\"./locales/*.json\");\nexport const again = import.meta.glob(\"./locales/*.json\");\n",
+        ),
+        (
+            "src/side.ts",
+            "import \"./missing\";\nexport const side = 1;\n",
+        ),
+    ])
+}
+
+/// A reviewed computed import, accepted by its file and specifier, lets
+/// `--require-evidence` pass while the report still names it; an answer about the
+/// graph lists it as an evidence gap too, since nobody saw its dependencies.
+#[test]
+fn an_accepted_computed_import_passes_require_evidence_and_stays_a_gap_of_the_graph() {
+    let (_tmp, root) = locales(
+        "  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: locales load by language at run time }\n  - { kind: unresolved_imports, file: src/side.ts, specifier: ./missing, because: not computed }\n",
+    );
+    let checked = check(&root);
+    let report = json(&checked);
+    assert_eq!(
+        report["accepted_gaps"],
+        serde_json::json!([{
+            "kind": "unresolved_imports",
+            "because": "locales load by language at run time",
+            "provenance": { "field": "accepted_gaps[0]", "input": "easement.yml" },
+            "line": 5,
+            "files": ["src/i18n.ts"],
+            "places": [
+                { "file": "src/i18n.ts", "line": 1, "specifier": "./locales/*.json" },
+                { "file": "src/i18n.ts", "line": 2, "specifier": "./locales/*.json" },
+            ],
+        }]),
+        "{report}"
+    );
+    // The import of a missing file is unresolved for another cause: the entry
+    // that names it accepts nothing and says how that cause closes.
+    let missing = checked
+        .coverage
+        .evidence_gaps
+        .iter()
+        .find(|gap| {
+            gap.places
+                .iter()
+                .any(|p| p.specifier.as_deref() == Some("./missing"))
+        })
+        .expect("the import of a missing file is a gap");
+    let violations = report["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 1, "{report}");
+    assert_eq!(violations[0]["rule"], "unmatched");
+    assert_eq!(violations[0]["line"], 6);
+    let said = violations[0]["message"].as_str().unwrap();
+    assert!(said.contains("for another cause"), "{said}");
+    assert!(said.ends_with(&missing.close), "{said}");
+    assert!(
+        !checked.coverage.evidence_gaps.iter().any(|gap| gap
+            .places
+            .iter()
+            .any(|p| p.specifier.as_deref() == Some("./locales/*.json"))),
+        "{report}"
+    );
+    let said = text(&checked);
+    assert!(
+        said.contains("  accepted_gaps[0] at easement.yml:5 accepts imports whose target is computed at run time because: locales load by language at run time\n    src/i18n.ts:1 (`./locales/*.json`)\n"),
+        "{said}"
+    );
+
+    // Without the entry for the other cause, and with the missing file written,
+    // nothing is left open.
+    let (_tmp, root) = locales(
+        "  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: locales load by language at run time }\n",
+    );
+    write_all(&root, &[("src/missing.ts", "export {};\n")]);
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    assert_eq!(checked.outcome(), Outcome::Passed, "{}", text(&checked));
+    let impacted = commands::impact(
+        &config(&root),
+        &[root.join("src/i18n.ts")],
+        None,
+        &mut cache(),
+    )
+    .unwrap();
+    let impact = parse(&impacted.json().unwrap());
+    assert_eq!(impact["accepted_gaps"][0]["kind"], "unresolved_imports");
+    let computed = serde_json::json!([
+        { "file": "src/i18n.ts", "line": 1, "specifier": "./locales/*.json" },
+        { "file": "src/i18n.ts", "line": 2, "specifier": "./locales/*.json" },
+    ]);
+    assert!(
+        impact["evidence_gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gap| gap["kind"] == "unresolved_imports" && gap["places"] == computed),
+        "{impact}"
+    );
+}
+
+/// Each policy left open the computed import the other accepts, so the delta
+/// read nothing of either: `review` lists both in one evidence gap, beside the
+/// entry the change adds and the gap it accepts.
+#[test]
+fn review_of_an_accepted_computed_import_keeps_what_the_old_policy_left_open() {
+    let plugins = "  - { kind: unresolved_imports, file: src/plugins.ts, specifier: './plugins/*.ts', because: plugins load by name }\n";
+    let (_tmp, root) = locales(plugins);
+    write_all(
+        &root,
+        &[
+            ("src/missing.ts", "export {};\n"),
+            (
+                "src/plugins.ts",
+                "export const plugins = import.meta.glob(\"./plugins/*.ts\");\n",
+            ),
+        ],
+    );
+    commit_all(&root);
+    let policy = fs::read_to_string(config(&root)).unwrap();
+    fs::write(
+        config(&root),
+        policy.replace(
+            plugins,
+            "  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: locales load by language at run time }\n",
+        ),
+    )
+    .unwrap();
+    let review = commands::review(&config(&root), "main", &mut cache()).unwrap();
+    let report = parse(&review.json());
+    let gaps: Vec<&serde_json::Value> = report["evidence_gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|gap| gap["kind"] == "unresolved_imports")
+        .collect();
+    assert_eq!(gaps.len(), 1, "{report}");
+    assert_eq!(
+        gaps[0]["files"],
+        serde_json::json!(["src/i18n.ts", "src/plugins.ts"]),
+        "{report}"
+    );
+    assert_eq!(report["accepted_gaps"][0]["kind"], "unresolved_imports");
+    assert_eq!(
+        report["debt"]["accepted_gaps_added"],
+        serde_json::json!([{
+            "kind": "unresolved_imports",
+            "file": "src/i18n.ts",
+            "specifier": "./locales/*.json",
+            "because": "locales load by language at run time",
+        }]),
+        "{report}"
+    );
+    let said = review.text();
+    assert!(
+        said.contains("accepted_gaps added: unresolved_imports `./locales/*.json` in src/i18n.ts (because: locales load by language at run time)"),
+        "{said}"
+    );
+}
+
+/// An entry whose specifier no import of its file writes accepts nothing: it
+/// fails as `unmatched` at its line.
+#[test]
+fn an_accepted_import_that_matches_no_gap_fails_as_unmatched() {
+    let (_tmp, root) = locales(
+        "  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locale/*.json', because: a typo }\n",
+    );
+    let checked = check(&root);
+    assert_eq!(checked.outcome(), Outcome::Failed, "{}", text(&checked));
+    let report = json(&checked);
+    let violations = report["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 1, "{report}");
+    assert_eq!(violations[0]["rule"], "unmatched");
+    assert_eq!(violations[0]["line"], 5);
+    assert_eq!(violations[0]["target"], "src/i18n.ts: ./locale/*.json");
+    assert!(
+        violations[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("accepts no unresolved import"),
+        "{report}"
+    );
+    assert_eq!(report["accepted_gaps"], serde_json::json!([]));
 }

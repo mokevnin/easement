@@ -15,7 +15,7 @@ status: accepted
 7. **An entry that meets an import of another cause** (its `specifier` is in the file but unresolved for another cause, say no target) fails as `unmatched` with that cause's `close`.
 8. **Graph answers are unchanged:** `impact`, `why`, `suggest` and `graph` still list an accepted gap as an evidence gap too (ADR-0001).
 
-Each item of the report's `accepted_gaps` carries the `kind`, the `because`, where the policy writes the entry (`provenance` and its `line`) and what an evidence gap of that kind would hold (`files`, or `places` for imports). Every format names the entry by where it is written, `accepted_gaps[0] at easement.yml:12`.
+Each item of the report's `accepted_gaps` carries the `kind`, the `because`, where the policy writes the entry (`provenance` and its `line`) and what an evidence gap of that kind would hold (`files`, and `places` for imports). Every format names the entry by where it is written, `accepted_gaps[0] at easement.yml:12`.
 
 ## Considered options
 
@@ -26,6 +26,6 @@ Each item of the report's `accepted_gaps` carries the `kind`, the `because`, whe
 
 ## Consequences
 
-- `uncovered_ok` fails to load, with a message that names `accepted_gaps`. So does a merge-base policy that still writes it: `check --diff` and `review` across the change that replaces it fail to load the old policy, and the change is checked in full instead.
+- `uncovered_ok` fails to load, with a message that names `accepted_gaps`. So does a merge-base policy that still writes it: across the change that replaces it, `check --diff` cannot read the old policy and judges the whole project, saying why, and `review` stops with that error.
 - On Windows, the files of an indexer that cannot run there stay an evidence gap: they are checked on Linux, macOS or WSL.
 - `review` lists what `accepted_gaps` accepts now and did not before under "Debt and trust", each glob apart; an added entry loosens.

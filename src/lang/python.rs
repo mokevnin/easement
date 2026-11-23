@@ -19,7 +19,9 @@ pub const EXPLAINED: &[Explained] = &[
     Explained {
         cause: Cause::Computed,
         because: "`importlib.import_module()` or `__import__()` of a name that is not a literal names no one module",
-        close: Some("write each module as an `import`, or review those dependencies by hand"),
+        close: Some(
+            "write each module as an `import`, or review those dependencies and accept them in `accepted_gaps` (`kind: unresolved_imports` with the `file` and `specifier` of each) with the reason",
+        ),
     },
     Explained {
         cause: Cause::ImportCall,

@@ -812,6 +812,11 @@ pub struct ResolvedAccepted {
     /// The globs of the files, for `uncovered`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    /// The importing file and the specifier, for `unresolved_imports`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specifier: Option<String>,
     pub because: String,
 }
 
@@ -1041,10 +1046,13 @@ impl ResolvedPolicy {
             }
         }
         for accepted in &self.accepted_gaps {
+            let what = match (&accepted.file, &accepted.specifier) {
+                (Some(file), Some(specifier)) => format!("`{specifier}` in {file}"),
+                _ => accepted.files.join(", "),
+            };
             out.push_str(&format!(
-                "accepted_gaps: {} {}{}\n",
+                "accepted_gaps: {} {what}{}\n",
                 accepted.kind,
-                accepted.files.join(", "),
                 reason(Some(&accepted.because))
             ));
         }
@@ -1056,6 +1064,8 @@ fn accepted(entry: &AcceptedEntry) -> ResolvedAccepted {
     ResolvedAccepted {
         kind: entry.kind(),
         files: strings(entry.uncovered_patterns()),
+        file: entry.import().map(|(file, _)| file.to_string()),
+        specifier: entry.import().map(|(_, specifier)| specifier.to_string()),
         because: entry.because().to_string(),
     }
 }

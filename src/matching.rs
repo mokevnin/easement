@@ -2,12 +2,12 @@
 //! that matches nothing (`unmatched`), and a file that no component claims
 //! (`orphan`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::{Place, RuleId, Violation};
 use crate::components::ComponentMap;
 use crate::config::Config;
-use crate::lang::{Dep, Target, registry};
+use crate::lang::{Cause, Dep, Target, registry};
 use crate::policy::Policy;
 
 /// In strict mode, every checked file must belong to a component.
@@ -100,6 +100,114 @@ pub fn unmatched_accepted(
                 target: globs,
                 ..Violation::of(RuleId::Unmatched)
             }
+        })
+        .collect()
+}
+
+/// An import whose dependency is not in the graph, as an `unresolved_imports` entry
+/// of `accepted_gaps` matches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnresolvedImport<'a> {
+    /// The file that writes it.
+    pub file: &'a str,
+    /// Its text, as the report gives it.
+    pub specifier: &'a str,
+    /// Why its dependency is not in the graph.
+    pub cause: Cause,
+    /// How its gap closes, as the report says it.
+    pub close: &'a str,
+}
+
+/// What the `unresolved_imports` entries of `accepted_gaps` decide of the imports
+/// whose dependency is not in the graph, each by its index among them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ImportsDecision {
+    /// The imports no entry accepts.
+    pub open: Vec<usize>,
+    /// By the index in `accepted_gaps` of the entry that accepts them, in that order,
+    /// the imports it accepts.
+    pub accepted: Vec<(usize, Vec<usize>)>,
+    /// The entries that accept none, by index in `accepted_gaps`, each with an import
+    /// of its file and specifier that is unresolved for another cause, when it meets one.
+    pub stale: Vec<(usize, Option<usize>)>,
+}
+
+/// What the `unresolved_imports` entries of `config` decide of `imports`. An entry
+/// accepts every import of its `file` written as its `specifier`, exactly, whose
+/// target is computed at run time: every other cause has a fix in the code.
+pub fn decide_imports(config: &Config, imports: &[UnresolvedImport]) -> ImportsDecision {
+    let mut decided = ImportsDecision::default();
+    let mut accepted_by: Vec<Option<usize>> = vec![None; imports.len()];
+    for (entry, accepted) in config.accepted_gaps.iter().enumerate() {
+        let Some((file, specifier)) = accepted.import() else {
+            continue;
+        };
+        let named: Vec<usize> = imports
+            .iter()
+            .enumerate()
+            .filter(|(_, import)| import.file == file && import.specifier == specifier)
+            .map(|(i, _)| i)
+            .collect();
+        let computed: Vec<usize> = named
+            .iter()
+            .copied()
+            .filter(|&i| imports[i].cause == Cause::Computed)
+            .collect();
+        if computed.is_empty() {
+            decided.stale.push((entry, named.first().copied()));
+            continue;
+        }
+        for &i in &computed {
+            accepted_by[i].get_or_insert(entry);
+        }
+    }
+    let mut by_entry: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (i, entry) in accepted_by.into_iter().enumerate() {
+        match entry {
+            Some(entry) => by_entry.entry(entry).or_default().push(i),
+            None => decided.open.push(i),
+        }
+    }
+    decided.accepted = by_entry.into_iter().collect();
+    decided
+}
+
+/// An `unresolved_imports` entry of `accepted_gaps` that accepts nothing, at its
+/// line: a typo, an import gone or resolved now, or one unresolved for another
+/// cause, which has a fix in the code its gap names. An entry for a file in
+/// `unread` (no indexer read it, or easement could not) is not judged, since what
+/// it imports is unknown.
+pub fn unmatched_imports(
+    policy: &Policy,
+    imports: &[UnresolvedImport],
+    unread: &[String],
+    config_file: &str,
+) -> Vec<Violation> {
+    let config = &policy.config;
+    decide_imports(config, imports)
+        .stale
+        .into_iter()
+        .filter_map(|(entry, other)| {
+            let (file, specifier) = config.accepted_gaps[entry].import()?;
+            if unread.iter().any(|f| f == file) {
+                return None;
+            }
+            let message = match other {
+                Some(other) => format!(
+                    "`accepted_gaps[{entry}]` names `{specifier}` in {file}, whose dependency is not in the graph for another cause than a target computed at run time, which cannot be accepted: {}",
+                    imports[other].close
+                ),
+                None => format!(
+                    "`accepted_gaps[{entry}]` accepts no unresolved import: {file} writes no import `{specifier}` whose target is computed at run time (it is gone, or resolved now); drop the entry, or fix its `file` and `specifier` to what the report gives in `places`"
+                ),
+            };
+            Some(Violation {
+                file: config_file.to_string(),
+                line: policy.config_item_line("accepted_gaps", entry),
+                message,
+                target: format!("{file}: {specifier}"),
+                ..Violation::of(RuleId::Unmatched)
+            })
         })
         .collect()
 }
@@ -222,6 +330,45 @@ fn unmatched_entries<'a>(config: &'a Config, files: &[String]) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_accepts_each_computed_import_of_its_file_and_specifier() {
+        let config: Config = serde_norway::from_str(
+            "version: 1
+components:
+  a: { in: src }
+accepted_gaps:
+  - { kind: uncovered, files: tools/**, because: helpers }
+  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: by language }
+  - { kind: unresolved_imports, file: src/i18n.ts, specifier: './locales/*.json', because: twice }
+  - { kind: unresolved_imports, file: src/other.ts, specifier: './locales/*.json', because: gone }
+  - { kind: unresolved_imports, file: src/side.ts, specifier: ./missing, because: not computed }
+",
+        )
+        .unwrap();
+        let import = |file, specifier, cause| UnresolvedImport {
+            file,
+            specifier,
+            cause,
+            close: "fix it",
+        };
+        let imports = [
+            import("src/i18n.ts", "./locales/*.json", Cause::Computed),
+            import("src/i18n.ts", "./plugins/*.ts", Cause::Computed),
+            import("src/side.ts", "./missing", Cause::NoTarget),
+            import("src/i18n.ts", "./locales/*.json", Cause::Computed),
+        ];
+        // The same text twice in the file: both are accepted, by the first entry
+        // that names them, and the second still meets them, so it is not stale.
+        assert_eq!(
+            decide_imports(&config, &imports),
+            ImportsDecision {
+                open: vec![1, 2],
+                accepted: vec![(1, vec![0, 3])],
+                stale: vec![(3, None), (4, Some(2))],
+            }
+        );
+    }
 
     #[test]
     fn orphans_only_in_strict_mode() {
