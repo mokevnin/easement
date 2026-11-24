@@ -4,5 +4,8 @@ node_modules/
 # Agent skills copied by `mise run skills` and linked by mise; .claude/skills is a link.
 .agents/
 .claude/skills
-# Git worktrees that coding agents work in; the main checkout stays on main.
+# Git worktrees that coding agents work in; the main checkout stays on main. Claude Code puts its
+# own here too (the WorktreeCreate hook, .claude/hooks/worktree.sh).
+/.worktrees/
+# Where Claude Code made them before the hook; trees made then still live there.
 .claude/worktrees/
