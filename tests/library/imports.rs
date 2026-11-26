@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 use crate::common::{fixture, project, write_all};
 use crate::run::{
-    by_message, cannot_index_here, check, check_in, check_with, config, json, pinned, text,
+    by_message, cannot_index_here, check, check_in, check_with, config, found, json, pinned, text,
 };
 
 /// The `ts_imports` fixture, with the packages it imports installed: Vite's
@@ -306,6 +306,44 @@ fn each_cause_of_an_unresolved_python_import_is_pinned() {
     });
 }
 
+/// A comment before the argument of a Python import call is no part of it either:
+/// a literal call stays a gap of its own cause, named by its module, and a computed
+/// one is named by its argument, which an `accepted_gaps` entry accepts it by.
+#[test]
+fn a_comment_before_the_argument_of_a_python_import_call_is_no_part_of_it() {
+    if cannot_index_here(&["python"]) {
+        return;
+    }
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\n  lib: { in: src/lib }\naccepted_gaps:\n  - { kind: unresolved_imports, file: src/app/main.py, specifier: m.__name__, because: the module is known at run time }\n",
+        ),
+        ("src/app/__init__.py", ""),
+        (
+            "src/app/main.py",
+            "import importlib\nimport lib.util as m\na = importlib.import_module(  # c\n    \"lib.util\")\nb = importlib.import_module(  # c\n    m.__name__)\n",
+        ),
+        ("src/lib/__init__.py", ""),
+        ("src/lib/util.py", "X = 1\n"),
+    ]);
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    let report = json(&checked);
+    assert_eq!(
+        places(&checked, "the index holds no module of"),
+        at(&[(4, "lib.util")]),
+        "{report:#}"
+    );
+    assert_eq!(
+        report["accepted_gaps"][0]["places"],
+        serde_json::json!([
+            { "file": "src/app/main.py", "line": 6, "specifier": "m.__name__" },
+        ]),
+        "{report:#}"
+    );
+    assert_eq!(unresolved(&checked).len(), 1, "{:?}", unresolved(&checked));
+}
+
 /// The Python projects whose imports all resolve stay without a gap.
 #[test]
 fn a_python_project_whose_imports_resolve_has_no_unresolved_import() {
@@ -422,5 +460,54 @@ fn a_glob_short_of_one_installed_package_stays_a_gap() {
             (1, "/node_modules/flag-*/x.svg"),
             (2, "flag-icons/flags/*.svg")
         ])
+    );
+}
+
+/// A comment before the argument of an import call is no part of it: a literal
+/// import with one is a dependency, as without it, whether the index resolves it or
+/// it is read from its text (the index ties it to a wildcard declaration); a
+/// computed one is named by its argument, which an `accepted_gaps` entry accepts it
+/// by.
+#[test]
+fn a_comment_before_the_argument_of_an_import_call_is_no_part_of_it() {
+    let (_tmp, root) = project(&[
+        (
+            "easement.yml",
+            "version: 1\ncomponents:\n  app: { in: src/app }\n  lib: { in: src/lib }\nrules:\n  app: { may_depend_on: [] }\naccepted_gaps:\n  - { kind: unresolved_imports, file: src/app/a.ts, specifier: '`${base}runtime.js`', because: the base is known at run time }\n",
+        ),
+        ("package.json", "{\"name\": \"app\", \"private\": true}\n"),
+        (
+            "tsconfig.json",
+            r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler"},"include":["src"]}"#,
+        ),
+        (
+            "src/lib/shims.d.ts",
+            "declare module \"*.svg\" { const src: string; export default src; }\n",
+        ),
+        ("src/lib/logo.svg", "<svg/>\n"),
+        ("src/lib/b.ts", "export const b = 1;\n"),
+        (
+            "src/app/a.ts",
+            "export const logo = import(/* webpackChunkName: \"logo\" */ \"../lib/logo.svg\");\nexport const b = import(/* webpackChunkName: \"b\" */ \"../lib/b\");\nexport const load = (base: string) => import(/* @vite-ignore */ `${base}runtime.js`);\n",
+        ),
+    ]);
+    let checked = check_with(&root, |o| o.require_evidence = true);
+    let report = json(&checked);
+    assert_eq!(
+        found(&report),
+        [1, 2].map(|line| ("src/app/a.ts".to_string(), line, "app -> lib".to_string())),
+        "{report:#}"
+    );
+    assert_eq!(
+        report["accepted_gaps"][0]["places"],
+        serde_json::json!([
+            { "file": "src/app/a.ts", "line": 3, "specifier": "`${base}runtime.js`" },
+        ]),
+        "{report:#}"
+    );
+    assert!(
+        unresolved(&checked).is_empty(),
+        "{:?}",
+        unresolved(&checked)
     );
 }

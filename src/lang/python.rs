@@ -93,13 +93,9 @@ fn imports_at(node: Node, text: &str) -> Vec<Import> {
                     _ => None,
                 })
                 .is_some_and(|called| matches!(source(called), "import_module" | "__import__"));
-            let argument = node
-                .child_by_field_name("arguments")
-                .filter(|_| imports_one)
-                .and_then(|arguments| {
-                    let mut cursor = arguments.walk();
-                    arguments.named_children(&mut cursor).next()
-                });
+            let argument = imports_one
+                .then(|| super::syntax::first_argument(node))
+                .flatten();
             let Some(argument) = argument else {
                 return Vec::new();
             };
@@ -665,6 +661,15 @@ f = importlib.import_module("pkg." + name)
 g = il.import_module("pkg.g")
 h = builtins.__import__("pkg.h")
 i = other.load("not.this")
+j = importlib.import_module(  # c
+    "pkg.j")
+k = importlib.import_module(  # c
+    f"pkg.{name}")
+none = importlib.import_module(  # c
+)
+m = __import__(  # c
+    # d
+    "pkg.m")
 "#;
         assert_eq!(
             written(text),
@@ -678,6 +683,10 @@ i = other.load("not.this")
                 (7, "\"pkg.\" + name", Form::Computed, None),
                 (8, "pkg.g", Form::ImportCall { as_import: false }, None),
                 (9, "pkg.h", Form::ImportCall { as_import: false }, None),
+                // A comment before the argument is no part of it.
+                (12, "pkg.j", Form::ImportCall { as_import: false }, None),
+                (14, "f\"pkg.{name}\"", Form::Computed, None),
+                (19, "pkg.m", Form::ImportCall { as_import: false }, None),
             ])
         );
     }

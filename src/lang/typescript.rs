@@ -194,9 +194,7 @@ fn import_at(node: Node, text: &str, require: Form) -> Option<Import> {
                 (_, "import.meta.glob") => Form::Computed,
                 _ => return None,
             };
-            let arguments = node.child_by_field_name("arguments")?;
-            let mut cursor = arguments.walk();
-            let argument = arguments.named_children(&mut cursor).next()?;
+            let argument = super::syntax::first_argument(node)?;
             match literal(argument, text) {
                 // A glob is a pattern of targets, never one.
                 Some(specifier) if form != Form::Computed => {
@@ -537,6 +535,14 @@ const u = import(`./${name}`);
 const v = import("./" + name);
 const w = import.meta.glob("./pages/*.ts");
 const r = require(name);
+const cz = import(/* webpackChunkName: "z" */ "./z");
+const cy = require(/* c */ "./y");
+const cu = import(/* @vite-ignore */ `./${name}`);
+const cw = import.meta.glob(/* g */ "./pages/*.ts");
+const none = import(/* x */);
+const cl = import(// c
+  "./z");
+const cc = require(/* a */ /* b */ "./y");
 export const q = 1;
 "#;
         let s = Form::Static;
@@ -560,6 +566,13 @@ export const q = 1;
                 (20, "\"./\" + name", Form::Computed),
                 (21, "./pages/*.ts", Form::Computed),
                 (22, "name", Form::Computed),
+                // A comment before the argument is no part of it.
+                (23, "./z", s),
+                (24, "./y", Form::ImportCall { as_import: true }),
+                (25, "`./${name}`", Form::Computed),
+                (26, "./pages/*.ts", Form::Computed),
+                (29, "./z", s),
+                (30, "./y", Form::ImportCall { as_import: true }),
             ]
             .map(|(line, specifier, form)| (line, specifier.to_string(), form))
         );
@@ -616,6 +629,15 @@ export const q = 1;
                 Some("/node_modules/pkg/".into()),
             ),
             ("import(`pkg/${x}`);\n".into(), Some("pkg/".into())),
+            // A comment before the argument changes nothing.
+            (
+                "import(/* @vite-ignore */ `/node_modules/pkg/${x}.js`);\n".into(),
+                Some("/node_modules/pkg/".into()),
+            ),
+            (
+                "import.meta.glob(/* g */ '/node_modules/a/*.js');\n".into(),
+                Some("/node_modules/a/".into()),
+            ),
             (
                 "import(`/node_modules/pkg-${x}/a.js`);\n".into(),
                 Some("/node_modules/".into()),
