@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/mokevnin/easement/compare/v0.11.1...v0.11.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* read the argument of an import call past a comment before it ([03b313b](https://github.com/mokevnin/easement/commit/03b313b0eabfc417d4be7b60d01d5c4022a8ce74)), closes [#258](https://github.com/mokevnin/easement/issues/258)
+
 ## [0.11.1](https://github.com/mokevnin/easement/compare/v0.11.0...v0.11.1) (2026-11-23)
 
 
